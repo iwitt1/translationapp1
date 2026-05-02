@@ -6,50 +6,6 @@ import { supabase } from "./lib/supabase";
 🌍 AI TRANSLATION
 ========================================================
 */
-async function translateMessage(text, targetLanguage) {
-  try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `
-You are a translation engine.
-
-Translate the message into ${targetLanguage}.
-Also detect the original language.
-
-Return ONLY JSON:
-{
-  "detected_language": "...",
-  "translated_text": "..."
-}
-            `.trim(),
-          },
-          { role: "user", content: text },
-        ],
-        temperature: 0,
-      }),
-    });
-
-    const data = await res.json();
-    if (!res.ok) throw new Error(JSON.stringify(data));
-
-    return JSON.parse(data.choices[0].message.content);
-  } catch (err) {
-    console.error("AI error:", err);
-    return {
-      detected_language: "unknown",
-      translated_text: text,
-    };
-  }
-}
 
 /*
 ========================================================
@@ -94,10 +50,17 @@ function MessageBubble({ message, userProfile, userId }) {
         }
 
         // ✅ 3. TRANSLATE ONLY IF NEEDED
-        const result = await translateMessage(
-          message.original_text,
-          targetLanguage
-        );
+        const res = await fetch("/api/translate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: message.original_text,
+            targetLanguage,
+            mode: "translate",
+          }),
+        });
+        
+        const result = await res.json();
 
         if (cancelled) return;
 
@@ -241,7 +204,16 @@ export default function App() {
     if (!input.trim()) return;
 
     // ✅ Detect language ONCE here
-    const detection = await translateMessage(input, "en");
+    const detectionRes = await fetch("/api/translate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: input,
+        mode: "detect",
+      }),
+    });
+    
+    const detection = await detectionRes.json();
 
     await supabase.from("messages").insert([
       {
