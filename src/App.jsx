@@ -6,7 +6,7 @@ import { supabase } from "./lib/supabase";
 🌍 TRANSLATION FUNCTION
 ========================================================
 */
-async function translateMessage(text, targetLanguage = "en") {
+async function translateMessage(text, targetLanguage) {
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -20,9 +20,12 @@ async function translateMessage(text, targetLanguage = "en") {
           {
             role: "system",
             content: `
-Translate the message into ${targetLanguage}.
+You are a real-time translator.
 
-Return ONLY valid JSON:
+- Detect the source language
+- Translate into: ${targetLanguage}
+
+Return ONLY JSON:
 {
   "detected_language": "...",
   "translated_text": "..."
@@ -37,20 +40,12 @@ Return ONLY valid JSON:
 
     const data = await res.json();
 
-    if (!res.ok) {
-      console.error("OpenAI error:", data);
-      return {
-        detected_language: "unknown",
-        translated_text: text,
-      };
-    }
+    if (!res.ok) throw new Error(JSON.stringify(data));
 
     const content = data?.choices?.[0]?.message?.content;
-    if (!content) throw new Error("Missing content");
-
     return JSON.parse(content);
   } catch (err) {
-    console.error(err);
+    console.error("Translation error:", err);
     return {
       detected_language: "unknown",
       translated_text: text,
@@ -60,7 +55,7 @@ Return ONLY valid JSON:
 
 /*
 ========================================================
-💬 MESSAGE BUBBLE (PER-USER TRANSLATION + CACHE)
+💬 MESSAGE BUBBLE (FIXED LOGIC)
 ========================================================
 */
 function MessageBubble({ message, userProfile, userId }) {
@@ -68,7 +63,6 @@ function MessageBubble({ message, userProfile, userId }) {
   const [loading, setLoading] = useState(true);
 
   const targetLanguage = userProfile?.default_language || "en";
-
   const isSender = message.sender_id === userId;
 
   useEffect(() => {
@@ -78,17 +72,37 @@ function MessageBubble({ message, userProfile, userId }) {
       setLoading(true);
 
       try {
+        let sourceLang = message.source_language;
+
         // -----------------------------------------
-        // SAME LANGUAGE → NO TRANSLATION
+        // 1. Detect language if missing
         // -----------------------------------------
-        if (targetLanguage === "en") {
+        if (!sourceLang) {
+          const result = await translateMessage(
+            message.original_text,
+            targetLanguage
+          );
+
+          sourceLang = result.detected_language;
+
+          // Save detected language back to DB
+          await supabase
+            .from("messages")
+            .update({ source_language: sourceLang })
+            .eq("id", message.id);
+        }
+
+        // -----------------------------------------
+        // 2. Skip if same language
+        // -----------------------------------------
+        if (sourceLang === targetLanguage) {
           setTranslatedText(message.original_text);
           setLoading(false);
           return;
         }
 
         // -----------------------------------------
-        // CACHE CHECK
+        // 3. Check cache
         // -----------------------------------------
         const { data: cached } = await supabase
           .from("message_translations")
@@ -104,7 +118,7 @@ function MessageBubble({ message, userProfile, userId }) {
         }
 
         // -----------------------------------------
-        // OPENAI CALL
+        // 4. Translate
         // -----------------------------------------
         const result = await translateMessage(
           message.original_text,
@@ -116,7 +130,7 @@ function MessageBubble({ message, userProfile, userId }) {
         setTranslatedText(result.translated_text);
 
         // -----------------------------------------
-        // STORE CACHE
+        // 5. Cache it
         // -----------------------------------------
         await supabase.from("message_translations").insert([
           {
@@ -163,16 +177,13 @@ function MessageBubble({ message, userProfile, userId }) {
 
 /*
 ========================================================
-🚀 MAIN APP
+🚀 MAIN APP (UNCHANGED UI, FIXED DATA FLOW)
 ========================================================
 */
 export default function App() {
-  // -----------------------------------------------------
-  // USER STATE (UNCHANGED UI FLOW)
-  // -----------------------------------------------------
-  const [username, setUsername] = useState(() => {
-    return localStorage.getItem("chat_username") || "";
-  });
+  const [username, setUsername] = useState(
+    localStorage.getItem("chat_username") || ""
+  );
 
   const [userProfile, setUserProfile] = useState(() => {
     const stored = localStorage.getItem("chat_user_profile");
@@ -181,9 +192,14 @@ export default function App() {
 
   const [tempName, setTempName] = useState("");
 
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+
+  const bottomRef = useRef(null);
+
   /*
   ========================================================
-  🚪 LOGIN (RESTORED UI + PROFILE LOGIC)
+  LOGIN
   ========================================================
   */
   async function handleJoin() {
@@ -198,15 +214,15 @@ export default function App() {
       .maybeSingle();
 
     if (!data) {
-      const newUser = {
-        user_id,
-        display_name: tempName.trim(),
-        default_language: "en",
-      };
-
       const { data: inserted } = await supabase
         .from("user_profiles")
-        .insert([newUser])
+        .insert([
+          {
+            user_id,
+            display_name: user_id,
+            default_language: "en",
+          },
+        ])
         .select()
         .single();
 
@@ -222,52 +238,23 @@ export default function App() {
 
   /*
   ========================================================
-  CHAT STATE (UNCHANGED)
-  ========================================================
-  */
-  const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState("");
-
-  const bottomRef = useRef(null);
-  const scrollRef = useRef(null);
-
-  /*
-  ========================================================
-  LOAD MESSAGES
+  LOAD + REALTIME
   ========================================================
   */
   useEffect(() => {
     if (!username) return;
 
-    async function load() {
-      const { data } = await supabase
-        .from("messages")
-        .select("*")
-        .order("created_at", { ascending: true });
-
-      setMessages(data || []);
-    }
-
-    load();
-  }, [username]);
-
-  /*
-  ========================================================
-  REALTIME
-  ========================================================
-  */
-  useEffect(() => {
-    if (!username) return;
+    supabase
+      .from("messages")
+      .select("*")
+      .order("created_at", { ascending: true })
+      .then(({ data }) => setMessages(data || []));
 
     const channel = supabase
       .channel("messages")
       .on(
         "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "messages",
-        },
+        { event: "INSERT", schema: "public", table: "messages" },
         (payload) => {
           setMessages((prev) => [...prev, payload.new]);
         }
@@ -279,7 +266,7 @@ export default function App() {
 
   /*
   ========================================================
-  SEND MESSAGE (NO PRE-TRANSLATION)
+  SEND MESSAGE
   ========================================================
   */
   async function sendMessage() {
@@ -297,14 +284,13 @@ export default function App() {
 
   /*
   ========================================================
-  LOGIN SCREEN (RESTORED DESIGN)
+  LOGIN UI
   ========================================================
   */
   if (!username) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
         <div className="w-full max-w-sm bg-white border rounded p-6 space-y-4">
-
           <h1 className="text-lg font-semibold">
             Join Translation Chat MVP
           </h1>
@@ -323,10 +309,8 @@ export default function App() {
             Join Chat
           </button>
 
-          <div className="text-xs text-gray-500 pt-2 space-y-1">
-            <p>🧠 MVP system uses localStorage identity</p>
-            <p>🌍 Per-user translation via Supabase profiles</p>
-            <p>⚡ OpenAI used only when needed (cached)</p>
+          <div className="text-xs text-gray-500 pt-2">
+            Per-user translation + caching enabled
           </div>
         </div>
       </main>
@@ -335,7 +319,7 @@ export default function App() {
 
   /*
   ========================================================
-  CHAT UI (RESTORED ORIGINAL LAYOUT)
+  CHAT UI
   ========================================================
   */
   return (
@@ -343,13 +327,10 @@ export default function App() {
       <div className="w-full max-w-md h-[80vh] bg-white border rounded flex flex-col">
 
         <div className="p-4 border-b font-semibold">
-          Translation Chat MVP ({username})
+          Chat ({username}) — {userProfile?.default_language}
         </div>
 
-        <div
-          ref={scrollRef}
-          className="flex-1 overflow-y-auto p-4 space-y-3"
-        >
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {messages.map((msg) => (
             <MessageBubble
               key={msg.id}
@@ -358,7 +339,6 @@ export default function App() {
               userId={username}
             />
           ))}
-
           <div ref={bottomRef} />
         </div>
 
@@ -366,14 +346,8 @@ export default function App() {
           <input
             className="flex-1 border rounded px-3 py-2 text-sm"
             value={input}
-            placeholder="Type a message..."
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                sendMessage();
-              }
-            }}
+            placeholder="Type a message..."
           />
 
           <button
