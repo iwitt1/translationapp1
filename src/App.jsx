@@ -55,7 +55,7 @@ Return ONLY JSON:
 
 /*
 ========================================================
-💬 MESSAGE BUBBLE (FIXED LOGIC)
+💬 MESSAGE BUBBLE (FIXED + SAFE CACHE)
 ========================================================
 */
 function MessageBubble({ message, userProfile, userId }) {
@@ -73,19 +73,19 @@ function MessageBubble({ message, userProfile, userId }) {
 
       try {
         let sourceLang = message.source_language;
+        let translationResult = null;
 
         // -----------------------------------------
-        // 1. Detect language if missing
+        // 1. Detect language ONLY IF missing
         // -----------------------------------------
         if (!sourceLang) {
-          const result = await translateMessage(
+          translationResult = await translateMessage(
             message.original_text,
             targetLanguage
           );
 
-          sourceLang = result.detected_language;
+          sourceLang = translationResult.detected_language;
 
-          // Save detected language back to DB
           await supabase
             .from("messages")
             .update({ source_language: sourceLang })
@@ -93,7 +93,7 @@ function MessageBubble({ message, userProfile, userId }) {
         }
 
         // -----------------------------------------
-        // 2. Skip if same language
+        // 2. Skip if already correct language
         // -----------------------------------------
         if (sourceLang === targetLanguage) {
           setTranslatedText(message.original_text);
@@ -104,12 +104,16 @@ function MessageBubble({ message, userProfile, userId }) {
         // -----------------------------------------
         // 3. Check cache
         // -----------------------------------------
-        const { data: cached } = await supabase
+        const { data: cached, error: cacheError } = await supabase
           .from("message_translations")
           .select("translated_text")
           .eq("message_id", message.id)
           .eq("language", targetLanguage)
           .maybeSingle();
+
+        if (cacheError) {
+          console.error("CACHE READ ERROR:", cacheError);
+        }
 
         if (cached?.translated_text) {
           setTranslatedText(cached.translated_text);
@@ -118,29 +122,35 @@ function MessageBubble({ message, userProfile, userId }) {
         }
 
         // -----------------------------------------
-        // 4. Translate
+        // 4. Translate (reuse result if we already have it)
         // -----------------------------------------
-        const result = await translateMessage(
-          message.original_text,
-          targetLanguage
-        );
+        const result =
+          translationResult ||
+          (await translateMessage(message.original_text, targetLanguage));
 
         if (cancelled) return;
 
         setTranslatedText(result.translated_text);
 
         // -----------------------------------------
-        // 5. Cache it
+        // 5. Cache (FIXED → UPSERT)
         // -----------------------------------------
-        await supabase.from("message_translations").insert([
-          {
-            message_id: message.id,
-            language: targetLanguage,
-            translated_text: result.translated_text,
-          },
-        ]);
+        const { error: insertError } = await supabase
+          .from("message_translations")
+          .upsert(
+            {
+              message_id: message.id,
+              language: targetLanguage,
+              translated_text: result.translated_text,
+            },
+            { onConflict: "message_id,language" }
+          );
+
+        if (insertError) {
+          console.error("CACHE INSERT ERROR:", insertError);
+        }
       } catch (err) {
-        console.error(err);
+        console.error("MessageBubble error:", err);
         setTranslatedText(message.original_text);
       } finally {
         if (!cancelled) setLoading(false);
@@ -177,7 +187,7 @@ function MessageBubble({ message, userProfile, userId }) {
 
 /*
 ========================================================
-🚀 MAIN APP (UNCHANGED UI, FIXED DATA FLOW)
+🚀 MAIN APP (UNCHANGED)
 ========================================================
 */
 export default function App() {
@@ -197,11 +207,6 @@ export default function App() {
 
   const bottomRef = useRef(null);
 
-  /*
-  ========================================================
-  LOGIN
-  ========================================================
-  */
   async function handleJoin() {
     if (!tempName.trim()) return;
 
@@ -236,11 +241,6 @@ export default function App() {
     setUserProfile(data);
   }
 
-  /*
-  ========================================================
-  LOAD + REALTIME
-  ========================================================
-  */
   useEffect(() => {
     if (!username) return;
 
@@ -264,11 +264,6 @@ export default function App() {
     return () => supabase.removeChannel(channel);
   }, [username]);
 
-  /*
-  ========================================================
-  SEND MESSAGE
-  ========================================================
-  */
   async function sendMessage() {
     if (!input.trim()) return;
 
@@ -282,11 +277,6 @@ export default function App() {
     setInput("");
   }
 
-  /*
-  ========================================================
-  LOGIN UI
-  ========================================================
-  */
   if (!username) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
@@ -317,11 +307,6 @@ export default function App() {
     );
   }
 
-  /*
-  ========================================================
-  CHAT UI
-  ========================================================
-  */
   return (
     <main className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
       <div className="w-full max-w-md h-[80vh] bg-white border rounded flex flex-col">
