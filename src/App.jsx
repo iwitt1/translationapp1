@@ -3,7 +3,7 @@ import { supabase } from "./lib/supabase";
 
 /*
 ========================================================
-🌍 TRANSLATION FUNCTION
+🌍 AI TRANSLATION
 ========================================================
 */
 async function translateMessage(text, targetLanguage) {
@@ -20,10 +20,10 @@ async function translateMessage(text, targetLanguage) {
           {
             role: "system",
             content: `
-You are a real-time translator.
+You are a translation engine.
 
-- Detect the source language
-- Translate into: ${targetLanguage}
+Translate the message into ${targetLanguage}.
+Also detect the original language.
 
 Return ONLY JSON:
 {
@@ -39,13 +39,11 @@ Return ONLY JSON:
     });
 
     const data = await res.json();
-
     if (!res.ok) throw new Error(JSON.stringify(data));
 
-    const content = data?.choices?.[0]?.message?.content;
-    return JSON.parse(content);
+    return JSON.parse(data.choices[0].message.content);
   } catch (err) {
-    console.error("Translation error:", err);
+    console.error("AI error:", err);
     return {
       detected_language: "unknown",
       translated_text: text,
@@ -55,7 +53,7 @@ Return ONLY JSON:
 
 /*
 ========================================================
-💬 MESSAGE BUBBLE (FIXED + SAFE CACHE)
+💬 MESSAGE BUBBLE (CACHE-FIRST)
 ========================================================
 */
 function MessageBubble({ message, userProfile, userId }) {
@@ -72,48 +70,22 @@ function MessageBubble({ message, userProfile, userId }) {
       setLoading(true);
 
       try {
-        let sourceLang = message.source_language;
-        let translationResult = null;
+        const sourceLang = message.source_language;
 
-        // -----------------------------------------
-        // 1. Detect language ONLY IF missing
-        // -----------------------------------------
-        if (!sourceLang) {
-          translationResult = await translateMessage(
-            message.original_text,
-            targetLanguage
-          );
-
-          sourceLang = translationResult.detected_language;
-
-          await supabase
-            .from("messages")
-            .update({ source_language: sourceLang })
-            .eq("id", message.id);
-        }
-
-        // -----------------------------------------
-        // 2. Skip if already correct language
-        // -----------------------------------------
-        if (sourceLang === targetLanguage) {
+        // ✅ 1. NO TRANSLATION NEEDED
+        if (!sourceLang || sourceLang === targetLanguage) {
           setTranslatedText(message.original_text);
           setLoading(false);
           return;
         }
 
-        // -----------------------------------------
-        // 3. Check cache
-        // -----------------------------------------
-        const { data: cached, error: cacheError } = await supabase
+        // ✅ 2. CACHE FIRST
+        const { data: cached } = await supabase
           .from("message_translations")
           .select("translated_text")
           .eq("message_id", message.id)
           .eq("language", targetLanguage)
           .maybeSingle();
-
-        if (cacheError) {
-          console.error("CACHE READ ERROR:", cacheError);
-        }
 
         if (cached?.translated_text) {
           setTranslatedText(cached.translated_text);
@@ -121,36 +93,27 @@ function MessageBubble({ message, userProfile, userId }) {
           return;
         }
 
-        // -----------------------------------------
-        // 4. Translate (reuse result if we already have it)
-        // -----------------------------------------
-        const result =
-          translationResult ||
-          (await translateMessage(message.original_text, targetLanguage));
+        // ✅ 3. TRANSLATE ONLY IF NEEDED
+        const result = await translateMessage(
+          message.original_text,
+          targetLanguage
+        );
 
         if (cancelled) return;
 
         setTranslatedText(result.translated_text);
 
-        // -----------------------------------------
-        // 5. Cache (FIXED → UPSERT)
-        // -----------------------------------------
-        const { error: insertError } = await supabase
-          .from("message_translations")
-          .upsert(
-            {
-              message_id: message.id,
-              language: targetLanguage,
-              translated_text: result.translated_text,
-            },
-            { onConflict: "message_id,language" }
-          );
-
-        if (insertError) {
-          console.error("CACHE INSERT ERROR:", insertError);
-        }
+        // ✅ 4. CACHE (UPSERT SAFE)
+        await supabase.from("message_translations").upsert(
+          {
+            message_id: message.id,
+            language: targetLanguage,
+            translated_text: result.translated_text,
+          },
+          { onConflict: "message_id,language" }
+        );
       } catch (err) {
-        console.error("MessageBubble error:", err);
+        console.error(err);
         setTranslatedText(message.original_text);
       } finally {
         if (!cancelled) setLoading(false);
@@ -159,9 +122,7 @@ function MessageBubble({ message, userProfile, userId }) {
 
     run();
 
-    return () => {
-      cancelled = true;
-    };
+    return () => (cancelled = true);
   }, [message.id, targetLanguage]);
 
   return (
@@ -173,9 +134,7 @@ function MessageBubble({ message, userProfile, userId }) {
             : "bg-gray-200 text-gray-900"
         }`}
       >
-        <p className="text-sm">
-          {loading ? "..." : translatedText}
-        </p>
+        <p className="text-sm">{loading ? "..." : translatedText}</p>
 
         <p className={`mt-1 text-xs ${isSender ? "text-blue-100" : "text-gray-500"}`}>
           {message.original_text}
@@ -187,7 +146,7 @@ function MessageBubble({ message, userProfile, userId }) {
 
 /*
 ========================================================
-🚀 MAIN APP (UNCHANGED)
+🚀 MAIN APP
 ========================================================
 */
 export default function App() {
@@ -201,12 +160,16 @@ export default function App() {
   });
 
   const [tempName, setTempName] = useState("");
-
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
 
   const bottomRef = useRef(null);
 
+  /*
+  ========================================================
+  LOGIN
+  ========================================================
+  */
   async function handleJoin() {
     if (!tempName.trim()) return;
 
@@ -241,6 +204,11 @@ export default function App() {
     setUserProfile(data);
   }
 
+  /*
+  ========================================================
+  LOAD + REALTIME
+  ========================================================
+  */
   useEffect(() => {
     if (!username) return;
 
@@ -264,19 +232,33 @@ export default function App() {
     return () => supabase.removeChannel(channel);
   }, [username]);
 
+  /*
+  ========================================================
+  SEND MESSAGE (DETECTION HERE ✅)
+  ========================================================
+  */
   async function sendMessage() {
     if (!input.trim()) return;
+
+    // ✅ Detect language ONCE here
+    const detection = await translateMessage(input, "en");
 
     await supabase.from("messages").insert([
       {
         sender_id: username,
         original_text: input,
+        source_language: detection.detected_language,
       },
     ]);
 
     setInput("");
   }
 
+  /*
+  ========================================================
+  LOGIN UI
+  ========================================================
+  */
   if (!username) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
@@ -298,15 +280,16 @@ export default function App() {
           >
             Join Chat
           </button>
-
-          <div className="text-xs text-gray-500 pt-2">
-            Per-user translation + caching enabled
-          </div>
         </div>
       </main>
     );
   }
 
+  /*
+  ========================================================
+  CHAT UI
+  ========================================================
+  */
   return (
     <main className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
       <div className="w-full max-w-md h-[80vh] bg-white border rounded flex flex-col">
