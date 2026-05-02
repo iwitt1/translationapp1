@@ -10,6 +10,10 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "node-fetch": "^3.3.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -19,5 +23,18 @@
     "postcss": "^8.5.13",
     "tailwindcss": "^3.4.19",
     "vite": "^5.4.10"
-  }
+  },
+  "description": "First iteration of a translation app for dating across languages and regions",
+  "main": "postcss.config.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iwitt1/translationapp1.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/iwitt1/translationapp1/issues"
+  },
+  "homepage": "https://github.com/iwitt1/translationapp1#readme"
 }
