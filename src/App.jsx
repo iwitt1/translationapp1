@@ -132,16 +132,12 @@ function MessageBubble({ message, userProfile, userId }) {
         // -----------------------------------------
         // 5. Cache it
         // -----------------------------------------
-        await supabase
-        .from("message_translations")
-        .upsert(
+        await supabase.from("message_translations").insert([
           {
             message_id: message.id,
             language: targetLanguage,
             translated_text: result.translated_text,
           },
-          { onConflict: "message_id,language" }
-        );,
         ]);
       } catch (err) {
         console.error(err);
