@@ -3,11 +3,10 @@ import { supabase } from "./lib/supabase";
 
 /*
 ========================================================
-🌍 TRANSLATION FUNCTION (AI LAYER)
+🌍 TRANSLATION FUNCTION (AI LAYER - NOW USER AWARE)
 ========================================================
-MVP: detects language + translates to English
 */
-async function translateMessage(text) {
+async function translateMessage(text, targetLanguage = "en") {
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -20,8 +19,18 @@ async function translateMessage(text) {
         messages: [
           {
             role: "system",
-            content:
-              "Detect language and translate into English. Return JSON: { detected_language, translated_text }",
+            content: `
+You are a real-time chat translator.
+
+Task:
+- Detect the language of the message
+- Translate it into: ${targetLanguage}
+
+Rules:
+- Preserve meaning, tone, slang, and intent
+- Return ONLY valid JSON:
+{ "detected_language": "...", "translated_text": "..." }
+            `.trim(),
           },
           { role: "user", content: text },
         ],
@@ -60,7 +69,7 @@ async function translateMessage(text) {
 
 /*
 ========================================================
-💬 MESSAGE BUBBLE (PURE UI)
+💬 MESSAGE BUBBLE
 ========================================================
 */
 function MessageBubble({ message, userId }) {
@@ -76,11 +85,7 @@ function MessageBubble({ message, userId }) {
         <p className="text-sm">{message.translated_text}</p>
 
         {message.original_text && (
-          <p
-            className={`mt-1 text-xs ${
-              isSender ? "text-blue-100" : "text-gray-500"
-            }`}
-          >
+          <p className={`mt-1 text-xs ${isSender ? "text-blue-100" : "text-gray-500"}`}>
             {message.original_text}
           </p>
         )}
@@ -93,27 +98,76 @@ function MessageBubble({ message, userId }) {
 ========================================================
 🚀 MAIN APP
 ========================================================
-PHASED ARCHITECTURE:
-1. MVP identity (username)
-2. Realtime chat (Supabase)
-3. AI translation layer
-4. Later: Supabase Auth + Rooms + Security
 */
 export default function App() {
   // -----------------------------------------------------
-  // 🧑 MVP IDENTITY (NO AUTH YET)
+  // 🧑 USER STATE
   // -----------------------------------------------------
   const [username, setUsername] = useState(() => {
     return localStorage.getItem("chat_username") || "";
   });
 
+  const [userProfile, setUserProfile] = useState(() => {
+    const stored = localStorage.getItem("chat_user_profile");
+    return stored ? JSON.parse(stored) : null;
+  });
+
   const [tempName, setTempName] = useState("");
 
-  function handleJoin() {
+  /*
+  ========================================================
+  🚪 HANDLE JOIN (PROFILE-AWARE)
+  ========================================================
+  */
+  async function handleJoin() {
     if (!tempName.trim()) return;
 
-    localStorage.setItem("chat_username", tempName);
-    setUsername(tempName);
+    const user_id = tempName.trim();
+
+    try {
+      // 1. try fetch existing profile
+      const { data, error } = await supabase
+        .from("user_profiles")
+        .select("*")
+        .eq("user_id", user_id)
+        .maybeSingle();
+
+      if (error) console.error(error);
+
+      let profile = data;
+
+      // 2. create if not exists
+      if (!profile) {
+        const newUser = {
+          user_id,
+          display_name: tempName.trim(),
+          default_language: "en",
+        };
+
+        const { data: inserted, error: insertError } = await supabase
+          .from("user_profiles")
+          .insert([newUser])
+          .select()
+          .single();
+
+        if (insertError) {
+          console.error(insertError);
+          return;
+        }
+
+        profile = inserted;
+      }
+
+      // 3. persist
+      localStorage.setItem("chat_username", user_id);
+      localStorage.setItem("chat_user_profile", JSON.stringify(profile));
+
+      setUsername(user_id);
+      setUserProfile(profile);
+
+    } catch (err) {
+      console.error("handleJoin error:", err);
+    }
   }
 
   // -----------------------------------------------------
@@ -143,10 +197,7 @@ export default function App() {
         .select("*")
         .order("created_at", { ascending: true });
 
-      if (error) {
-        console.error(error);
-        return;
-      }
+      if (error) return console.error(error);
 
       setMessages(data || []);
     }
@@ -156,7 +207,7 @@ export default function App() {
 
   /*
   ========================================================
-  ⚡ REALTIME SUBSCRIPTION
+  ⚡ REALTIME
   ========================================================
   */
   useEffect(() => {
@@ -172,12 +223,10 @@ export default function App() {
           table: "messages",
         },
         (payload) => {
-          const newMessage = payload.new;
-
           setMessages((prev) => {
-            const exists = prev.some((m) => m.id === newMessage.id);
+            const exists = prev.some((m) => m.id === payload.new.id);
             if (exists) return prev;
-            return [...prev, newMessage];
+            return [...prev, payload.new];
           });
         }
       )
@@ -188,25 +237,29 @@ export default function App() {
 
   /*
   ========================================================
-  📤 SEND MESSAGE (AI + DB)
+  📤 SEND MESSAGE (NOW PROFILE-AWARE)
   ========================================================
   */
   async function sendMessage() {
-    console.log("SEND:", input);
-
     if (!input.trim() || isSending) return;
 
     setIsSending(true);
 
     try {
-      const translation = await translateMessage(input);
+      const targetLanguage =
+        userProfile?.default_language || "en";
+
+      const translation = await translateMessage(
+        input,
+        targetLanguage
+      );
 
       const message = {
-        sender_id: username, // 👈 MVP identity
+        sender_id: username,
         original_text: input,
         translated_text: translation.translated_text,
         source_language: translation.detected_language,
-        target_language: "en",
+        target_language: targetLanguage,
         room_id: null,
         tone: null,
       };
@@ -215,10 +268,7 @@ export default function App() {
         .from("messages")
         .insert([message]);
 
-      if (error) {
-        console.error(error);
-        return;
-      }
+      if (error) console.error(error);
 
       setInput("");
     } finally {
@@ -228,7 +278,7 @@ export default function App() {
 
   /*
   ========================================================
-  📜 SCROLL BEHAVIOR
+  📜 SCROLL
   ========================================================
   */
   function scrollToBottom() {
@@ -259,7 +309,7 @@ export default function App() {
 
   /*
   ========================================================
-  🚪 LOGIN SCREEN (MVP GATE)
+  🚪 LOGIN SCREEN
   ========================================================
   */
   if (!username) {
@@ -273,7 +323,7 @@ export default function App() {
 
           <input
             className="w-full border rounded px-3 py-2 text-sm"
-            placeholder="Enter a username (e.g. isaac, alex)"
+            placeholder="Enter a username"
             value={tempName}
             onChange={(e) => setTempName(e.target.value)}
           />
@@ -285,21 +335,8 @@ export default function App() {
             Join Chat
           </button>
 
-          {/* 🧠 MVP NOTES */}
-          <div className="text-xs text-gray-500 space-y-2 pt-2">
-            <p>📌 MVP Architecture Notes:</p>
-            <ul className="list-disc pl-4 space-y-1">
-              <li>No authentication (intentional for MVP)</li>
-              <li>Identity stored in localStorage</li>
-              <li>sender_id = username (not secure)</li>
-              <li>Realtime via Supabase</li>
-              <li>AI translation layer active</li>
-            </ul>
-
-            <p className="pt-2">
-              🔜 Next upgrades:
-              Supabase Auth → Rooms → Security → Multi-device identity
-            </p>
+          <div className="text-xs text-gray-500 pt-2">
+            User profiles stored in Supabase (user_profiles table)
           </div>
         </div>
       </main>
