@@ -1,7 +1,15 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "./lib/supabase";
 
-const API_URL = "http://localhost:3001/api/translate";
+/*
+========================================================
+🌐 API CONFIG (LOCAL + PROD SAFE)
+========================================================
+*/
+const API_URL =
+  import.meta.env.DEV
+    ? "http://localhost:3001/api/translate"
+    : "/api/translate";
 
 /*
 ========================================================
@@ -24,7 +32,7 @@ function MessageBubble({ message, userProfile, userId }) {
 
         const sourceLang = message.source_language;
 
-        // ✅ 1. NO TRANSLATION
+        // ✅ 1. NO TRANSLATION NEEDED
         if (!sourceLang || sourceLang === targetLanguage) {
           setTranslatedText(message.original_text);
           return;
@@ -43,7 +51,7 @@ function MessageBubble({ message, userProfile, userId }) {
           return;
         }
 
-        // ✅ 3. TRANSLATE (backend only)
+        // ✅ 3. BACKEND TRANSLATION
         const res = await fetch(API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -54,7 +62,10 @@ function MessageBubble({ message, userProfile, userId }) {
           }),
         });
 
-        if (!res.ok) throw new Error("API failed");
+        if (!res.ok) {
+          console.error("API failed:", await res.text());
+          throw new Error("API failed");
+        }
 
         const result = await res.json();
 
@@ -65,7 +76,7 @@ function MessageBubble({ message, userProfile, userId }) {
 
         setTranslatedText(finalText);
 
-        // ✅ 4. CACHE
+        // ✅ 4. CACHE RESULT
         await supabase.from("message_translations").upsert(
           {
             message_id: message.id,
@@ -195,7 +206,7 @@ export default function App() {
 
   /*
   ========================================================
-  SEND MESSAGE (DETECT ONLY ONCE)
+  SEND MESSAGE (DETECT ONCE)
   ========================================================
   */
   async function sendMessage() {
@@ -210,6 +221,10 @@ export default function App() {
           mode: "detect",
         }),
       });
+
+      if (!res.ok) {
+        console.error("Detect failed:", await res.text());
+      }
 
       const detection = res.ok ? await res.json() : null;
 
