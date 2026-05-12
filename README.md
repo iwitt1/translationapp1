@@ -12,6 +12,7 @@ The substantive documentation lives in [`/docs/`](docs/). Read these before touc
 - [`docs/roadmap.md`](docs/roadmap.md) — Phased roadmap with checklists
 - [`docs/parking-lot.md`](docs/parking-lot.md) — Ideas not currently committed
 - [`docs/decisions.md`](docs/decisions.md) — Decisions log
+- [`docs/verification.md`](docs/verification.md) — Post-feature verification and debugging checklists
 
 If you're using Cursor, [`.cursorrules`](.cursorrules) at the repo root encodes the project's never-violate rules and points at `/docs/`.
 

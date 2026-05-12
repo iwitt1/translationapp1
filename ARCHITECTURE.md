@@ -10,3 +10,4 @@ All project documentation now lives under [`/docs/`](docs/):
 - [`docs/roadmap.md`](docs/roadmap.md) — Phased roadmap with checklists
 - [`docs/parking-lot.md`](docs/parking-lot.md) — Uncommitted ideas
 - [`docs/decisions.md`](docs/decisions.md) — Decisions log
+- [`docs/verification.md`](docs/verification.md) — Verification and debugging checklists

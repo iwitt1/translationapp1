@@ -16,6 +16,51 @@
 
 ---
 
+## 2026-05-12 — Defer staging environment to Phase 2; local + prod is enough through Phase 1
+
+**Decision:** Through Phase 1, the environment topology is "local dev on Isaac's laptop" + "production on Vercel/Supabase." No separate staging environment, no Vercel preview deployments routinely used. A second Supabase project for staging is added to the Phase 2 roadmap.
+
+**Context:** Question raised whether to set up a separate staging environment after Phase 0 shipped. The motivation would be ability to test changes without risking prod data; the cost would be additional setup and an extra Supabase project to maintain.
+
+**Alternatives considered:**
+- *Vercel preview deployments now.* Free, automatic, requires no setup. Rejected because previews would share the production Supabase database, so they're only marginally safer than pushing to main, and the workflow overhead (always branch first) isn't worth it for solo dev.
+- *Full staging now (second Supabase + Vercel preview env vars).* Real isolation. Rejected as premature — there are no other users, breaking prod for an hour is harmless, and the time spent setting this up is better spent on Phase 1.
+- *Defer until growth pressure or a real incident.* Same outcome as the current decision but without explicit roadmap placement. Worse because it leaves an undocumented "we should do this someday" rattling around.
+
+**Reasoning:** Through Phase 1 the only user is Isaac and the only data is test data. The cost of a brief prod outage is negligible. The cost of setting up and maintaining staging is real (small but real). Phase 2 is when prod starts holding data worth not breaking (auth, real user profiles, eventually RLS-protected data) — that's the natural moment to add staging.
+
+**Implications:**
+- Phase 1 work is committed directly to `main`. No branching workflow expected.
+- Migrations are run directly against the production Supabase database, with the SQL versioned in `/migrations/`.
+- Roadmap Phase 2 includes adding a staging Supabase project + Vercel environment variable configuration.
+
+**Revisit when:** Anyone other than Isaac uses the app, the data in prod becomes valuable enough that breaking it would be costly, or a migration goes wrong against prod.
+
+---
+
+## 2026-05-12 — Add `/docs/verification.md` for feature verification and debugging checklists
+
+**Decision:** A seventh file in `/docs/` — `verification.md` — owns post-feature verification checklists and debugging playbooks, growing as we ship features. First entry is the Phase 0 verification checklist used after the 2026-05-12 push.
+
+**Context:** After Phase 0 shipped, Isaac needed a checklist to verify production was working correctly. The list was generated in conversation. Isaac asked whether it should be a persistent doc so future verification steps don't have to be re-derived from scratch, saving Claude compute.
+
+**Alternatives considered:**
+- *Add to operations.md.* operations.md owns cost, hiring, workflow conventions; adding feature-specific verification steps would dilute its focus and make it harder to scan.
+- *Add to architecture.md.* That doc describes what the system is, not how to test it. Wrong audience.
+- *Keep verification ad-hoc.* Means re-deriving the same checklists every time, which costs both attention and money.
+- *A separate file.* Clean, scannable, easy to add to as we ship features. Chosen.
+
+**Reasoning:** Verification checklists are operational knowledge that compounds — every shipped feature should leave behind a "here's how to confirm this works in prod" section. A dedicated doc grows naturally; folding into operations.md would force awkward subsections in an unrelated context.
+
+**Implications:**
+- `/docs/` is now seven files instead of six.
+- The maintenance rule in earlier docs ("five files") should be updated wherever it appears (decisions log, architecture, README, Cowork project instructions, `.cursorrules`).
+- Each phase or significant feature gets its own section in `verification.md` when it ships.
+
+**Revisit when:** Two files in `/docs/` start covering overlapping ground, or `verification.md` gets large enough to need splitting (~600+ lines).
+
+---
+
 ## 2026-05-12 — Add `ambiguity` block to translate API response contract
 
 **Decision:** The translate API response includes an `ambiguity` block: `{ detected: bool, confidence: float, alternatives: [{ translated_text, interpretation, confidence }] }`. The model is prompted to populate it when a phrase has multiple plausible interpretations (sarcasm vs literal, idiom collisions, pronoun ambiguity).

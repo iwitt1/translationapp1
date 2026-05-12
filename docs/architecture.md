@@ -493,7 +493,8 @@ The OpenAI API key never leaves the backend. Frontend never calls OpenAI directl
 │   ├── operations.md         Cost model, hiring, workflow
 │   ├── roadmap.md            Phased roadmap with checklists
 │   ├── parking-lot.md        Uncommitted ideas
-│   └── decisions.md          Dated decisions log
+│   ├── decisions.md          Dated decisions log
+│   └── verification.md       Verification and debugging checklists
 ├── .cursorrules              Cursor rules and pointer to /docs
 ├── .env                      Frontend env vars
 ├── .gitignore                

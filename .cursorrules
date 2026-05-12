@@ -51,7 +51,7 @@ This is a real-time multilingual chat app backed by an LLM-powered translation A
 - `/server/` is the local Express server.
 - `/src/` is the React frontend.
 - `/src/lib/` is for service clients and shared utilities.
-- `/docs/` is project documentation. Five files: architecture, strategy, operations, roadmap, parking-lot, decisions. Don't add new files here without a decision.
+- `/docs/` is project documentation. Seven files: architecture, strategy, operations, roadmap, parking-lot, decisions, verification. Don't add new files here without a decisions.md entry.
 - New top-level folders at the repo root require a /docs/decisions.md entry explaining why.
 
 ## AI prompt patterns

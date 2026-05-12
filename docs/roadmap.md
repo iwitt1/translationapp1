@@ -91,6 +91,11 @@
 - [ ] `data_deletion_requests` table
 - [ ] Deletion job that anonymizes corrections (strips user_id and PII, keeps translation pairs) rather than hard-deleting
 
+### Staging environment
+- [ ] Create a second Supabase project as a staging database. Same schema, no real data. Lets us run destructive migrations and feature tests without touching production data.
+- [ ] Vercel environment variables: production points at the prod Supabase project; preview branches point at the staging project. Configure in Vercel dashboard.
+- [ ] Establish migration workflow: all SQL migrations run against staging first, verified, then run against production.
+
 ### What "Phase 2 done" means
 - Two test users on two devices can each see only their own messages.
 - An adversarial test (one user attempting to read another's data via direct Supabase calls with their token) fails.
