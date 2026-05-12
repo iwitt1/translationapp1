@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "./lib/supabase";
+import { CHAT_APP_TENANT_ID } from "./lib/config";
 
 /*
 ========================================================
@@ -8,8 +9,8 @@ import { supabase } from "./lib/supabase";
 */
 const API_URL =
   import.meta.env.DEV
-    ? "http://localhost:3001/api/translate"
-    : "/api/translate";
+    ? "http://localhost:3001/api/v1/translate"
+    : "/api/v1/translate";
 
 /*
 ========================================================
@@ -82,6 +83,7 @@ function MessageBubble({ message, userProfile, userId }) {
             message_id: message.id,
             language: targetLanguage,
             translated_text: finalText,
+            tenant_id: CHAT_APP_TENANT_ID,
           },
           { onConflict: "message_id,language" }
         );
@@ -161,6 +163,7 @@ export default function App() {
             user_id,
             display_name: user_id,
             default_language: "en",
+            tenant_id: CHAT_APP_TENANT_ID,
           },
         ])
         .select()
@@ -234,6 +237,7 @@ export default function App() {
           original_text: input,
           source_language:
             detection?.detected_language || "unknown",
+          tenant_id: CHAT_APP_TENANT_ID,
         },
       ]);
 

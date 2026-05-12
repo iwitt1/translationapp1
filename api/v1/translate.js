@@ -24,11 +24,12 @@ export default async function handler(req, res) {
           `.trim()
           : `
   You are a translation engine.
-  
+
   Translate into ${targetLanguage}.
-  
+
   Preserve tone, slang, and intent.
-  
+  Handle idioms naturally instead of literal translation.
+
   Return ONLY JSON:
   {
     "detected_language": "...",

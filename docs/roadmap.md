@@ -21,19 +21,19 @@
 - [x] Parking lot (`/docs/parking-lot.md`)
 - [x] Decisions log (`/docs/decisions.md`)
 - [x] `.cursorrules` at repo root
-- [ ] Project instructions updated in Cowork (Isaac to paste into the project settings UI)
-- [ ] Flesh out README with setup and run instructions
+- [x] Project instructions updated in Cowork
+- [x] Flesh out README with setup and run instructions
 
 ### Code hygiene
-- [ ] Delete stray files at repo root (`Bash`, `echo`, `which`)
-- [ ] Reconcile prod and local translate prompts. Pick one prompt; both files use the same source-of-truth string.
-- [ ] Baseline the live deployment — visit the production URL, verify what's actually shipping matches `main`
+- [x] Delete stray files at repo root (`Bash`, `echo`, `which`)
+- [x] Reconcile prod and local translate prompts. Picked the local version (with "Handle idioms naturally" line); api/v1/translate.js updated to match server/index.js.
+- [ ] Baseline the live deployment — visit the production URL, verify what's actually shipping matches `main`. **Isaac to do after merging Phase 0 changes.**
 
 ### API-first prep (cheap now, painful later)
-- [ ] Rename API routes from `/api/translate` to `/api/v1/translate`
-- [ ] Add a stub `/api/v1/detect` if we want to split detect from translate cleanly (or keep them in one endpoint with a mode parameter — design decision to make during this work)
-- [ ] Add `tenants` table to Supabase. Seed with one tenant row representing the chat app itself.
-- [ ] Add `tenant_id` column (FK) to `messages`, `message_translations`, `user_profiles`. Backfill with the chat-app tenant ID.
+- [x] Rename API routes from `/api/translate` to `/api/v1/translate`. File moved to `api/v1/translate.js`; Express route updated; frontend updated.
+- [ ] ~~Add a stub `/api/v1/detect`~~ — Decision: keep the single `/api/v1/translate` endpoint with a `mode` parameter for now. Will split into separate `/v1/detect` and `/v1/translate` endpoints in Phase 1 when we restructure the prompt for JSON-mode and structured inference return anyway.
+- [x] Add `tenants` table to Supabase + seed row + add `tenant_id` columns + backfill. Migration written at `migrations/001_tenants_and_tenant_id.sql`. **Isaac to run in Supabase SQL editor.**
+- [x] Frontend (`src/App.jsx`) now includes `tenant_id` on inserts via `src/lib/config.js` constant.
 
 ### Frontend cleanup, non-functional
 - [ ] No changes yet — Phase 1 is where the frontend grows. Phase 0 leaves it as-is.
@@ -45,8 +45,9 @@
 **Goal:** Turn translation from "single-message, idiom-flat" into "context-aware, register-sensitive, idiomatic." This is where the project's stated value proposition becomes real.
 
 ### Backend
-- [ ] Restructure the translate prompt to return structured JSON: `{ translated_text, detected_language, inferences: { dialect, register, gender, domain, idiomatic_elements } }`
+- [ ] Restructure the translate prompt to return structured JSON: `{ translated_text, detected_language, inferences: { dialect, register, gender, domain, idiomatic_elements }, ambiguity: { detected, confidence, alternatives } }`
 - [ ] Add JSON-mode (or equivalent) to the OpenAI call so parsing is reliable
+- [ ] System prompt instructs the model: when a phrase has multiple plausible interpretations (sarcasm, idiom collisions, pronoun ambiguity), return `ambiguity.detected: true` and populate `alternatives`. Defaults to `detected: false, alternatives: []` for unambiguous cases.
 - [ ] Add the lean context object as a request parameter. Backend takes it, includes it in the prompt
 - [ ] Backend assembles context from request: user-level (from profile), conversation-level (from conversation context), conversation-history (last N=3 messages by default)
 - [ ] Add `context_type` parameter on the conversation (`casual`, `dating`, `professional`, `academic`, etc.). Default casual. Selects a system-prompt modifier

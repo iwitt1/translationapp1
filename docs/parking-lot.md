@@ -40,6 +40,18 @@ A slider in the UI for how casual / formal / playful the user wants outgoing tra
 - **Why interesting:** Power users will want this; surface complexity that most users won't need.
 - **Trigger:** User research shows enough power users to justify the UI complexity.
 
+### Pre-send clarification UX for ambiguous translations
+When the user hits send and the translation API returns `ambiguity.detected: true` with multiple plausible interpretations, intercept before the message goes through and ask the user to pick which interpretation they meant. Especially useful for sarcasm, idioms that have literal alternatives, ambiguous pronouns, and similar cases where surface meaning and intent diverge.
+- **Why interesting:** Catches the highest-friction translation failures (sarcasm being read literally, idioms being mistranslated) before they're sent rather than after they cause confusion. Higher signal than post-hoc corrections.
+- **API contract is already built for this** — the translate response carries `ambiguity.detected`, `ambiguity.confidence`, and `ambiguity.alternatives` as of Phase 1 (see architecture.md §5). The UX surface is what's parked.
+- **Open design questions:** How confident does ambiguity need to be before we interrupt the user? Do we let them dismiss without picking? Do we record their pick as a correction-equivalent (high-signal training data — user disambiguating their own meaning)?
+- **Trigger:** Phase 1 ships with the ambiguity signal flowing; we have at least anecdotal data on how often it fires and whether the alternatives are meaningfully different.
+
+### Receiver-side ambiguity hints
+The viewer's side of the same feature: when a received translation is flagged ambiguous, the message bubble shows a small indicator and the alternatives are viewable on tap/hover.
+- **Why interesting:** Even if the sender didn't clarify, the receiver knows to read carefully. Lower-friction than the send-side intervention.
+- **Trigger:** Same as above. Could ship before or after the send-side clarification.
+
 ---
 
 ## Translation quality and intelligence

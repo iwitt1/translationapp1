@@ -16,6 +16,29 @@
 
 ---
 
+## 2026-05-12 — Add `ambiguity` block to translate API response contract
+
+**Decision:** The translate API response includes an `ambiguity` block: `{ detected: bool, confidence: float, alternatives: [{ translated_text, interpretation, confidence }] }`. The model is prompted to populate it when a phrase has multiple plausible interpretations (sarcasm vs literal, idiom collisions, pronoun ambiguity).
+
+**Context:** Isaac raised the case of sarcasm and ambiguous phrases — situations where the model probably picks one interpretation but the user might have meant another. Surfacing the ambiguity from the model gives downstream clients (the chat app, future API consumers) the option to handle it well: prompt the user to disambiguate, show alternatives to the receiver, weight ambiguous translations differently in quality tracking.
+
+**Alternatives considered:**
+- *Don't expose ambiguity at all.* Model picks one; user gets a literal-vs-sarcastic mistake silently. Cheapest in tokens. Loses the highest-friction translation failure cases.
+- *Always return alternatives, even when unambiguous.* Wasted tokens on every call. Inflated response sizes. Rejected.
+- *Add the ambiguity signal in Phase 2 or later, not Phase 1.* Could work — the API contract is forward-extensible. But since we're already restructuring the response in Phase 1 to add structured inferences, adding this field at the same time is essentially free. Retrofitting later would mean another round of prompt and parser changes.
+
+**Reasoning:** The model is already doing the ambiguity assessment implicitly (it just doesn't tell us). Asking for the output costs essentially nothing in tokens (a small fixed addition to the system prompt + a few tokens in the response for the unambiguous default case). The downstream UX value is substantial — sarcasm-read-literally is one of the most universally-felt translation failures.
+
+**Implications:**
+- Phase 1 backend work includes prompting the model to return the ambiguity block.
+- The clarification-on-send UX is *not* committed yet; it lives in the parking lot. But the API contract is built ready for it, so the UX feature can ship later without an API change.
+- Receiver-side ambiguity hints similarly available as a parking-lot UX option.
+- Corrections schema may eventually want a "user clarified ambiguity" source type alongside `user_edit`, `thumbs_down`, etc. — defer the schema change until we actually ship the clarification UX.
+
+**Revisit when:** Phase 1 ships and we have data on how often `ambiguity.detected: true` fires, whether the alternatives are meaningfully different from each other, and whether the model is over- or under-detecting ambiguity. May need prompt tuning or threshold guidance.
+
+---
+
 ## 2026-05-12 — Adopt trojan-horse two-phase strategy
 
 **Decision:** The project is committed to a two-phase strategy: Phase 1 builds the consumer chat app as a distribution vehicle and data flywheel; Phase 2 opens the underlying translation engine as a B2B API and treats that as the actual business.

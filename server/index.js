@@ -40,7 +40,7 @@ app.get("/api/health", (req, res) => {
 🌍 TRANSLATE / DETECT
 ========================================================
 */
-app.post("/api/translate", async (req, res) => {
+app.post("/api/v1/translate", async (req, res) => {
   try {
     const { text, targetLanguage, mode } = req.body;
 

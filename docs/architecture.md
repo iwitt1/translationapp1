@@ -38,14 +38,14 @@ A real-time multilingual chat application backed by an LLM-powered translation A
 3. **No row-level security (RLS).** Frontend uses Supabase anon key; without RLS, anyone with the public URL can read every message, profile, and translation in the database.
 4. **No real authentication.** `user_id` is literally the typed username string. Same username on two browsers = same identity.
 5. **No conversation / room model.** Every message lives in one global `messages` table.
-6. **No `tenant_id` on tables.** Will be retrofitted in Phase 0 — easy now, painful later.
-7. **No versioned API routes.** Current endpoint is `/api/translate`; needs to become `/api/v1/translate` in Phase 0.
+6. ~~**No `tenant_id` on tables.** Will be retrofitted in Phase 0 — easy now, painful later.~~ Migration written 2026-05-12 (`migrations/001_tenants_and_tenant_id.sql`). Awaiting execution in Supabase.
+7. ~~**No versioned API routes.** Current endpoint is `/api/translate`; needs to become `/api/v1/translate` in Phase 0.~~ Done 2026-05-12.
 8. **No context-type parameter** (dating, professional, etc.) wired through.
-9. **Prompt drift between prod and local.** Local `server/index.js` has an extra prompt line that production `api/translate.js` lacks. Reconciled in Phase 0.
+9. ~~**Prompt drift between prod and local.** Local `server/index.js` has an extra prompt line that production `api/translate.js` lacks. Reconciled in Phase 0.~~ Done 2026-05-12.
 10. **Wasteful detect-on-every-send.** Every message triggers an OpenAI detect call even when the sender's language is known.
 11. **No error UX.** Translation failures silently fall back to the original text.
 12. **No way for users to set preferred language in the UI.** Hardcoded to `en` at user creation.
-13. **Stray files at repo root** (`Bash`, `echo`, `which`). Gitignored but ugly; delete in Phase 0.
+13. ~~**Stray files at repo root** (`Bash`, `echo`, `which`). Gitignored but ugly; delete in Phase 0.~~ Done 2026-05-12.
 
 ---
 
@@ -135,11 +135,39 @@ POST /api/v1/translate
     "gender_confidence": 0.73,
     "domain_signal": null,
     "idiomatic_elements": ["vos construction", "che"]
+  },
+  "ambiguity": {
+    "detected": false,
+    "confidence": 0.94,
+    "alternatives": []
   }
 }
 ```
 
 The `inferences` object is the second product of every translate call. The chat layer compares each inferred value against the user's stored profile and decides whether to update the profile (see §8 on profile update logic).
+
+The `ambiguity` object is the third product. When the model recognizes a phrase that has multiple plausible interpretations (sarcasm vs literal, idiom vs surface meaning, ambiguous pronoun reference, etc.), it returns `detected: true` along with the top alternatives. Example for an ambiguous case:
+
+```json
+"ambiguity": {
+  "detected": true,
+  "confidence": 0.55,
+  "alternatives": [
+    {
+      "translated_text": "Oh great, just what I needed.",
+      "interpretation": "sarcastic",
+      "confidence": 0.55
+    },
+    {
+      "translated_text": "Oh great, just what I needed!",
+      "interpretation": "literal/grateful",
+      "confidence": 0.45
+    }
+  ]
+}
+```
+
+The chat layer decides what to do with the ambiguity signal. Likely uses: pre-send clarification UX ("we read this as sarcasm — is that what you meant?"), receiver-side hints showing the translation might be ambiguous, or quality tracking (ambiguity-flagged translations weighted differently in corrections). The clarification-on-send UX itself is parking-lot for now; the API contract is built ready for it.
 
 ---
 
@@ -445,16 +473,20 @@ The OpenAI API key never leaves the backend. Frontend never calls OpenAI directl
 ```
 /V1
 ├── api/
-│   └── translate.js          Vercel serverless backend
+│   └── v1/
+│       └── translate.js      Vercel serverless backend (versioned routes)
 ├── server/
 │   ├── index.js              Local dev backend (Express)
 │   └── .env                  Local OPENAI_API_KEY (not committed)
+├── migrations/
+│   └── 001_tenants_and_tenant_id.sql   Run in Supabase SQL editor, manually for now
 ├── src/
 │   ├── App.jsx               Frontend UI (login, chat, message bubble) — single file currently
 │   ├── main.jsx              React entry point
 │   ├── index.css             Tailwind directives
 │   └── lib/
-│       └── supabase.js       Supabase client initialization
+│       ├── supabase.js       Supabase client initialization
+│       └── config.js         Non-secret constants (CHAT_APP_TENANT_ID etc.)
 ├── docs/
 │   ├── architecture.md       This file
 │   ├── strategy.md           Product vision, two-phase plan, market
