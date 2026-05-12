@@ -1,0 +1,211 @@
+# Translation App — Parking Lot
+
+> Living document. Holds every idea that isn't on the active roadmap but is worth not forgetting. Add to this freely. Promote items into `roadmap.md` when they get committed.
+>
+> Format: each item has a short description, a "why interesting" note, and (if relevant) a "trigger" — the condition under which it should be reconsidered for the roadmap.
+
+**Last updated:** 2026-05-12
+
+---
+
+## Product features
+
+### Voice translation and audio messages
+Real-time spoken-to-spoken translation, or voice-note translation in chat. Audio in one language, transcript + audio out in another. The user-facing equivalent of what we do for text.
+- **Why interesting:** Audio is how most people actually communicate over distance with people they're close to. Text-only is a real limitation for the consumer chat product.
+- **Trigger:** Consumer chat has meaningful active-user retention; text translation quality is proven.
+
+### Voice cloning (preserve sender's voice in translated audio)
+Translation that sounds like the sender, not a generic TTS voice.
+- **Why interesting:** Intent app is doing this and it's a meaningful product moat. Emotionally resonant for the dating use case.
+- **Trigger:** Voice translation is shipped; user testing confirms voice identity matters in the use cases we care about.
+
+### Cultural interpretation layer
+Inline explanation of cultural references the translation cannot fully convey ("the speaker is making a reference to a Brazilian children's TV show…"). Optional, surfaced as a footnote-style annotation.
+- **Why interesting:** Translation is one thing, comprehension is another. This is the "natural-sounding" thesis extended.
+- **Trigger:** Translation quality is solved; user research surfaces "I don't get what they meant" as a real friction even with good translations.
+
+### Conversation memory across conversations
+The model remembers things about the user from past conversations (their job, their kids' names, that they hate small talk) and uses that in future translations.
+- **Why interesting:** Real personalization beyond linguistic profile. Closer to "talking through a friend" than "talking through a tool."
+- **Trigger:** User base demonstrates demand for it; privacy framing solved.
+
+### AI-assisted communication beyond translation
+Suggested responses, conversation coaching, tone adjustment ("you sound passive-aggressive, want me to soften this?"). Stretches the product from translation to communication-assistant.
+- **Why interesting:** Significant TAM expansion if it lands. Also significant scope creep risk.
+- **Trigger:** Translation is unambiguously solved and the product needs a new growth vector.
+
+### User-controllable tone knob
+A slider in the UI for how casual / formal / playful the user wants outgoing translations to be, overriding inferred register.
+- **Why interesting:** Power users will want this; surface complexity that most users won't need.
+- **Trigger:** User research shows enough power users to justify the UI complexity.
+
+---
+
+## Translation quality and intelligence
+
+### Multi-model AI routing
+Per-message routing between cheap and expensive models. Short literal messages go to `gpt-4o-mini`. Long, idiomatic, or context-heavy messages go to `gpt-4o` or a fine-tuned model. 15x cost delta makes this real money at scale.
+- **Why interesting:** Cost reduction without quality reduction.
+- **Trigger:** Small-scale stage; volume makes the cost difference matter financially.
+
+### Fine-tuning on corrections data
+Train a model derived from base + our corrections. The pivot from "we call OpenAI" to "we call our own model" makes the product technically defensible in a way it isn't yet.
+- **Why interesting:** This is the actual moat. Until we do this we're a smart wrapper. After we do this we have a proprietary asset.
+- **Trigger:** ~50k high-quality correction pairs in the corpus. Estimated cost when ready: $200–800 for the first meaningful training run.
+
+### Cross-model AI audit pipeline
+A second AI model (different family from the translator) reviews each translation and flags suspicious output. GPT-4o translates, Claude audits. Same-model auditing has a known blind spot — models agree with themselves. Schema already designed (`translation_reviews`); auto-audit not yet running.
+- **Why interesting:** Cheap way to generate medium-quality corrections data at scale without needing human review on every translation.
+- **Trigger:** Phase 4 begins (corrections capture). Schema is already there from Phase 1–2.
+
+### DeepSeek as alternative model
+$0.14/M tokens vs ~$3/M for Claude Sonnet. Strong on CJK languages. Emerging player worth watching.
+- **Why interesting:** Cost reduction; potential quality wins on Asian language pairs.
+- **Trigger:** Small-scale stage; evaluate as alternative provider once backend is provably model-agnostic.
+
+### Dialect clustering from corrections
+Once corrections from regionally-identified users accumulate, cluster them to discover dialect patterns the base model doesn't know. Map regional preferences for vocabulary, idiom, and pronoun use empirically rather than from linguistics literature.
+- **Why interesting:** Differentiated dataset; foundation for region-specific fine-tunes.
+- **Trigger:** Corrections corpus is non-trivial (thousands of pairs from multiple regions).
+
+### Internal translation quality benchmark
+Curated set of hard translation cases drawn from corrections where generic models fail. Used internally to evaluate new model versions, externally as a sales tool when the API opens.
+- **Why interesting:** Quantifies our advantage. Sales tool.
+- **Trigger:** Phase 4 underway, corrections corpus large enough to draw a meaningful sample.
+
+### Additional region inference signals
+Beyond the lexical and spelling signals already designed: timestamp/timezone activity patterns, character input patterns (which accented characters used or avoided), IP geolocation (weakest, VPN-vulnerable, used as one signal among many).
+- **Why interesting:** More signal sources → better dialect inference.
+- **Trigger:** When dialect inference accuracy is measurably weak and we have analytics showing where.
+
+---
+
+## Infrastructure and scale
+
+### Translation deduplication / orchestration layer
+A central layer that dedupes identical concurrent translation requests across users. If 50 users in a group chat all need the same Spanish→English translation, the cache solves serial case; an in-flight queue solves the concurrent case.
+- **Why interesting:** Prevents N parallel OpenAI calls for the same translation when N users land on a message simultaneously.
+- **Trigger:** Real concurrent traffic; identified instances of the race condition causing real cost.
+
+### Idempotency keys on API calls
+Standard API practice — a unique key per call so retries don't double-charge.
+- **Why interesting:** Required hygiene for any serious API. Cheap to add early.
+- **Trigger:** Phase 0–1; reasonable to fold into the API-first work.
+
+### Async / batch translation endpoint
+A separate endpoint for clients submitting large batches of text. Returns a job ID; webhook fires when complete.
+- **Why interesting:** Enterprise customers will want it. Different cost/latency tradeoff than the synchronous endpoint.
+- **Trigger:** First serious B2B customer interest in batch use cases.
+
+### Webhook support architecture
+Standard pattern for delivering async results and event notifications.
+- **Why interesting:** Required infrastructure for batch translation and probably for billing/usage notifications.
+- **Trigger:** Phase 6 (API open).
+
+### SDKs
+Client libraries in JavaScript and Python (priority order) that wrap the API. Reduces friction for developer adoption.
+- **Why interesting:** Standard API expectation. Could be community-built, but quality SDKs are usually first-party.
+- **Trigger:** Phase 6.
+
+### Migration off Vercel / Supabase to dedicated infrastructure
+Containerized backend, dedicated Postgres, Redis cache layer, dedicated realtime infrastructure (Ably or Pusher).
+- **Why interesting:** Vercel/Supabase scale fine to small-scale; dedicated infrastructure becomes a meaningful cost win and reliability win at high volume.
+- **Trigger:** Costs at the Vercel/Supabase tier exceed roughly the equivalent dedicated infrastructure cost, or reliability becomes a customer concern.
+
+### Translation cache normalization
+Before computing the cache key, normalize the input: lowercase, whitespace trim, contraction expansion. So `"don't go"` and `"Don't go"` cache as one entry, not two.
+- **Why interesting:** Higher cache hit rate, lower cost.
+- **Trigger:** Cache hit rate plateaus below expectations.
+
+### Rate limiting and usage metering
+Internal first (catch our own bugs that cause runaway calls), external second (billing infrastructure for the API).
+- **Why interesting:** Required for the API; useful for the chat app's own safety.
+- **Trigger:** Small-scale; before Phase 6.
+
+### Data residency
+Where data physically lives matters for some markets (EU, healthcare). Supabase region was chosen by default; may need EU region or self-hosted Postgres at some point.
+- **Why interesting:** Compliance requirement for some verticals.
+- **Trigger:** Entering a market with data residency requirements (EU healthcare especially).
+
+---
+
+## Business model
+
+### Vertical-specific API tiers with domain routing
+Pricing tiers that map to domain-specific routing (medical, legal, gaming, dating). Each domain has its own fine-tuned model variant or system-prompt addition. Higher-tier customers get higher-quality output for their vertical.
+- **Why interesting:** Natural pricing structure that aligns price with delivered value.
+- **Trigger:** Phase 6 going well enough to think about pricing tiers.
+
+### Corrections-data revenue share
+Tenants who opt in to the shared corrections pool get a price discount. The `shared` ownership tier on `translation_corrections` exists for this. Effectively, customers who contribute data subsidize their own usage.
+- **Why interesting:** Self-funding data acquisition at scale.
+- **Trigger:** Phase 6; second or third B2B customer onboarded.
+
+### Consumer chat app monetization
+Stay free? Freemium with paid tier (priority routing, unlimited messages, premium translations)? Ad-supported? B2C subscription? All open questions.
+- **Why interesting:** Eventually need to decide. Strong case for staying free as a data-generation vehicle, but real money would help.
+- **Trigger:** Consumer app has retention proven; clear signal on user willingness to pay.
+
+### Target verticals beyond the primary ones
+Education (language-learning platforms), publishing (in-flow document translation), travel apps, accessibility (sign-language pipelines?), interpreter staffing tools. Many adjacencies once translation quality is proven.
+- **Trigger:** Two named verticals landed (dating + one other), free capacity to explore.
+
+---
+
+## Markets we deliberately deferred
+
+### The at-risk user market (LGBTQ+ in criminalizing countries)
+A potential market where the product would serve users whose safety depends on metadata privacy and content secrecy. Real demand exists. Building this responsibly requires:
+- Genuine E2EE (not performative). Use audited libraries (libsodium, Signal Protocol). Never roll our own crypto.
+- Minimal metadata collection — who talked to whom is as dangerous as content.
+- Anonymous account creation; no phone number required.
+- Plausible deniability in the app's presentation.
+- A formal security audit before claiming to users.
+- Acknowledged ethical responsibility — these users' lives can depend on us not screwing up.
+
+**Why parked, not on the roadmap:** This is a separate product with separate requirements, not a feature of the main app. It also raises operational and legal questions that need to be answered before serious work, not during it.
+
+**Trigger to reconsider:** Either (a) the company is in a position to dedicate genuine resources and ethical seriousness to this, or (b) a clear partner with the operational maturity to bear most of the risk emerges.
+
+### On-device translation
+The clean architectural resolution to the E2EE / AI-translation tension. Translation happens on the user's device; plaintext never leaves.
+- **Why interesting:** Solves a fundamental architectural conflict. Privacy positioning becomes uncomplicated.
+- **Why hard:** Significant engineering investment. Either we ship a smaller model that runs locally (quality risk) or we wait for hardware/OS support for the larger models (timing risk).
+- **Trigger:** Version 3+ of the product. Not before mobile is shipped. Not before E2EE concerns become commercially important.
+
+---
+
+## Research and exploration (not commitments)
+
+### What the per-user linguistic profile *could* eventually track beyond what's in the schema
+- Personality-level signals (verbose vs terse, formal vs playful baseline)
+- Topic affinity (this user talks about food more than work)
+- Code-switching patterns (when they mix languages and why)
+- Time-of-day register shifts (more formal in mornings, casual at night?)
+- Mood signals from punctuation, capitalization, and emoji density
+
+None of these are obvious wins. Worth experimentation when we have data to experiment on.
+
+### What the per-conversation context *could* eventually track
+- Trajectory of relationship closeness over time, not just current state
+- Dominant emotional tone (collaborative, conflictual, supportive)
+- Power dynamics (who initiates, who responds)
+- Topic flow (this conversation moved from work to personal — register should shift)
+
+Same caveat as above. Speculative.
+
+### "Translation as conversation partner" thesis
+A more ambitious framing: the translation engine isn't just rendering A→B, it's an active participant maintaining conversational coherence. It would notice when the literal translation misses the social meaning, when register shifts, when one party's English is failing them. Surfaces those moments to the user.
+- **Why parked:** Big product change, unclear demand, ambiguous UX.
+- **Trigger:** Translation quality is solved and we're hunting the next product direction.
+
+---
+
+## How to use this doc
+
+- Add new ideas freely, even half-baked ones. Capture them; refine later.
+- When something here gets committed to a phase in `roadmap.md`, remove it from here (or annotate "promoted to roadmap on YYYY-MM-DD").
+- When something here is conclusively rejected, remove it (or annotate "killed on YYYY-MM-DD because X").
+- Don't try to estimate or prioritize items in this file. Estimation lives in the roadmap or in implementation conversations.
+- This file should grow over time. If it stops growing, we've stopped thinking creatively.

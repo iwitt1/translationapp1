@@ -1,0 +1,73 @@
+# Cursor Rules — Translation App
+
+> Short rules file. The long story lives in /docs/. Cursor's AI reads this on every prompt in this project.
+
+## Project context (one paragraph)
+
+This is a real-time multilingual chat app backed by an LLM-powered translation API. The chat app is the first-party client of its own translation API. The long-term business is the API itself (sold to dating apps, gaming platforms, legal/immigration tools, healthcare, support SaaS); the chat app is the distribution vehicle and data flywheel. Read /docs/strategy.md for the full strategy and /docs/architecture.md for the system design. Read /docs/roadmap.md before starting new work — phase order is firm.
+
+## Never violate
+
+1. The frontend never calls OpenAI directly. All AI traffic goes through our backend.
+2. The chat app calls its own API the same way an external developer would. No internal bypasses. The API is built before it's opened.
+3. The translation layer knows nothing about chat. It accepts text, target language, optional source hint, and a context object — nothing else.
+4. Every table that holds user content has a `tenant_id` foreign key. Non-negotiable, even with one tenant today.
+5. Every table with user-attributable data has a `user_id` foreign key. Required for GDPR Right to Erasure.
+6. All API routes are versioned (`/api/v1/...`). New behavior gets a new version; old versions stay supported until deprecated.
+7. Translation prompts return structured JSON including the translation AND the model's inferences (dialect, register, gender, domain). Never discard inference data.
+8. Corrections data is append-only. Snapshot the context at the moment of correction. Never mutate a correction record.
+9. Caching is aggressive. Same translation for the same (message, target language) is computed once.
+10. Backend stays model-agnostic. The model name lives in one configuration point, never hardcoded in business logic.
+
+## Always prefer
+
+- Minimal surgical changes. Don't refactor for elegance during a feature change; refactor in a separate commit.
+- Reading the relevant /docs/ file before suggesting an architectural choice.
+- Updating /docs/ in the same commit as the code change that motivated it.
+- Recording non-trivial decisions in /docs/decisions.md with date and reasoning.
+- Storing new ideas not being built yet in /docs/parking-lot.md.
+
+## Code style and patterns
+
+- React 18 with hooks. No class components in new code.
+- Tailwind CSS. No custom CSS files unless there's a clear reason.
+- Express on the local backend; Vercel serverless functions in production. The translate handler logic should be shared, not copy-pasted.
+- Supabase JS client for all database access from the frontend (subject to RLS post-Phase 2).
+- Async/await over callbacks or raw `.then()` chains.
+- Errors caught and surfaced. Translation failures should show a clear state to the user, not silently fall back to the original text.
+
+## Schema conventions
+
+- Primary keys are `uuid` from Phase 0 forward, except where current MVP rows use text usernames as IDs (those migrate in Phase 2).
+- Foreign keys always named `{table_singular}_id` (e.g. `tenant_id`, `user_id`, `conversation_id`).
+- Timestamps named `created_at`, `updated_at`, `requested_at`, `completed_at` (no `_date`, no `_time`).
+- Enums for finite-choice fields. Don't use free-text strings where a discrete set is meant.
+- Append-only tables (corrections, profile events) must have an `id` UUID and a `created_at` timestamp.
+- Profile fields that can be inferred must have a `_source` companion (`'explicit' | 'inferred'`). Explicit always wins.
+
+## File and folder conventions
+
+- `/api/` is Vercel serverless functions (production backend).
+- `/server/` is the local Express server.
+- `/src/` is the React frontend.
+- `/src/lib/` is for service clients and shared utilities.
+- `/docs/` is project documentation. Five files: architecture, strategy, operations, roadmap, parking-lot, decisions. Don't add new files here without a decision.
+- New top-level folders at the repo root require a /docs/decisions.md entry explaining why.
+
+## AI prompt patterns
+
+- System prompts are kept short. Static instructions only.
+- User-specific personalization goes into a structured context object (~60–100 tokens of JSON), not into the system prompt as natural language.
+- Every translate prompt returns structured JSON with `translated_text`, `detected_language`, and an `inferences` object.
+- Temperature 0 for translation. Higher temperatures may be appropriate for other AI uses (parking lot items like response suggestions) but not for translation.
+
+## What's out of scope (don't suggest these)
+
+- E2EE in any near-term phase. The position is "encrypted in transit and at rest, plaintext exists transiently, never logged or trained on without consent." If a user asks about full E2EE, point them at /docs/parking-lot.md.
+- Voice / audio features in any near-term phase. Parking lot.
+- Cultural interpretation, conversation memory, user-controllable tone knob, AI-assisted communication. Parking lot.
+- Fine-tuning. Not before thousands of high-quality correction pairs exist. Parking lot.
+
+## When in doubt
+
+Read /docs/architecture.md. If it doesn't answer the question, propose a /docs/decisions.md entry.
