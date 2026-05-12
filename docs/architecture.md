@@ -215,6 +215,8 @@ The `_source` fields in `user_linguistic_profiles` (e.g., `dialect_source: 'expl
 | `message_id` | uuid | FK to `messages.id` |
 | `language` | text | Target language code |
 | `translated_text` | text | The translation |
+| `tenant_id` | uuid | FK to `tenants.id` |
+| `prompt_version` | text | Semver of the prompt that produced this translation (nullable; null = pre-versioning) |
 
 Unique: `(message_id, language)` — one cached translation per message per target.
 
@@ -251,7 +253,7 @@ Seeded with one row representing the chat app itself. Every other table gets a `
 | `dialect_source` | enum | `'explicit' \| 'inferred'` |
 | `formality_preference` | enum | `'formal' \| 'neutral' \| 'casual'` |
 | `formality_source` | enum | `'explicit' \| 'inferred'` |
-| `gender_signal` | enum | `'masculine' \| 'feminine' \| 'neutral' \| 'unknown'` |
+| `gender_signal` | enum | `'masculine' \| 'feminine' \| 'neutral' \| 'nonbinary' \| 'unknown'` — `neutral` = language has no grammatical gender (Finnish, Turkish, etc.); `nonbinary` = speaker actively uses gender-inclusive forms |
 | `gender_source` | enum | `'explicit' \| 'inferred'` |
 | `script_preference` | text | e.g. `"latin"`, `"traditional"`, `"simplified"` |
 | `script_source` | enum | `'explicit' \| 'inferred'` |
@@ -392,6 +394,14 @@ If we translate and discard the inferred dialect/register/gender, we throw away 
 - Feed the corrections pipeline with rich snapshots.
 
 Retrofitting this into a prompt architecture that's been baked across many call sites is painful. Doing it now is one prompt change.
+
+### Prompt versioning
+
+Every meaningful prompt change increments `PROMPT_VERSION` in `lib/translatePrompt.js` (semver: major for schema changes, minor for new instructions/modifiers, patch for wording tweaks that could affect output). The version is stamped on `message_translations.prompt_version` at cache time.
+
+This lets Phase 4 corrections analysis ask: "did quality improve after prompt version X?" without having to reconstruct what the prompt looked like at the time of translation. Translations cached before versioning was introduced have `prompt_version = null`.
+
+Convention: increment the version in the same commit as the prompt change. The version string is the single source of truth — do not track prompt history in this doc.
 
 ### Model strategy
 

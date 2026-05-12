@@ -5,7 +5,7 @@
 > **What lives here:** committed work in priority order.
 > **What does NOT live here:** ideas we haven't decided to build. Those go in `parking-lot.md`.
 
-**Last updated:** 2026-05-12
+**Last updated:** 2026-05-12 (Phase 1 backend + frontend complete; migration 002 written, awaiting Supabase execution)
 
 ---
 
@@ -45,25 +45,30 @@
 **Goal:** Turn translation from "single-message, idiom-flat" into "context-aware, register-sensitive, idiomatic." This is where the project's stated value proposition becomes real.
 
 ### Backend
-- [ ] Restructure the translate prompt to return structured JSON: `{ translated_text, detected_language, inferences: { dialect, register, gender, domain, idiomatic_elements }, ambiguity: { detected, confidence, alternatives } }`
-- [ ] Add JSON-mode (or equivalent) to the OpenAI call so parsing is reliable
-- [ ] System prompt instructs the model: when a phrase has multiple plausible interpretations (sarcasm, idiom collisions, pronoun ambiguity), return `ambiguity.detected: true` and populate `alternatives`. Defaults to `detected: false, alternatives: []` for unambiguous cases.
-- [ ] Add the lean context object as a request parameter. Backend takes it, includes it in the prompt
-- [ ] Backend assembles context from request: user-level (from profile), conversation-level (from conversation context), conversation-history (last N=3 messages by default)
-- [ ] Add `context_type` parameter on the conversation (`casual`, `dating`, `professional`, `academic`, etc.). Default casual. Selects a system-prompt modifier
-- [ ] Backend compares each returned inference against stored profile; updates inferred values when confidence improves; never overwrites explicit values
-- [ ] Add `user_profile_events` table (append-only log of inference and profile changes)
+- [x] Restructure the translate prompt to return structured JSON: `{ translated_text, detected_language, inferences: { dialect, register, gender, domain, idiomatic_elements }, ambiguity: { detected, confidence, alternatives } }`. Prompt lives in `lib/translatePrompt.js` (shared module).
+- [x] Add JSON-mode (or equivalent) to the OpenAI call so parsing is reliable. `response_format: { type: 'json_object' }` on all translate calls.
+- [x] System prompt instructs the model: when a phrase has multiple plausible interpretations (sarcasm, idiom collisions, pronoun ambiguity), return `ambiguity.detected: true` and populate `alternatives`. Defaults to `detected: false, alternatives: []` for unambiguous cases.
+- [x] Add the lean context object as a request parameter. Backend takes it, includes it in the prompt.
+- [x] Backend assembles context from request: user-level (from profile), conversation-level (from conversation context), conversation-history (last N=3 messages by default). Context assembly happens in the chat layer (App.jsx); backend receives the assembled object.
+- [x] Add `context_type` parameter on the conversation (`casual`, `dating`, `professional`, `academic`, etc.). Default casual. Selects a system-prompt modifier.
+- [x] Backend compares each returned inference against stored profile; updates inferred values when confidence improves; never overwrites explicit values. **Note:** runs client-side in MessageBubble (chat-layer concern per architecture.md §4). See decisions.md.
+- [x] Add `user_profile_events` table (append-only log of inference and profile changes). Schema in `migrations/002_phase1_schema.sql`. Events written from App.jsx after each profile update.
 
 ### Schema additions
-- [ ] `user_linguistic_profiles` table (per architecture.md §7). Even if MVP only populates a few columns, the schema is complete on day one.
-- [ ] `conversation_contexts` table (per architecture.md §7)
+- [x] `user_linguistic_profiles` table (per architecture.md §7). Schema complete in `migrations/002_phase1_schema.sql`. **Isaac to run in Supabase SQL editor.**
+- [x] `conversation_contexts` table (per architecture.md §7). Schema in `migrations/002_phase1_schema.sql`. **Isaac to run in Supabase SQL editor.**
 
 ### Frontend
-- [ ] Wire user's preferred language into context object on every translate call
-- [ ] Add a basic UI for the user to set their preferred language explicitly (overrides the hardcoded `en`)
-- [ ] Add a basic UI for setting conversation register/context type
-- [ ] Wire conversation history into the translate call (last 3 messages)
-- [ ] Show a clearer loading state during translation; surface translation failures instead of silently falling back to original text
+- [x] Wire user's preferred language into context object on every translate call.
+- [x] Add a basic UI for the user to set their preferred language explicitly (overrides the hardcoded `en`). Language selector in chat header.
+- [x] Add a basic UI for setting conversation register/context type. Context-type selector in chat header.
+- [x] Wire conversation history into the translate call (last 3 messages). Passed as `history` prop to MessageBubble; sliced from messages array.
+- [x] Show a clearer loading state during translation; surface translation failures instead of silently falling back to original text. Error state + "⚠ Translation failed" message added to MessageBubble.
+
+### Cleanup (post-testing)
+- [x] Fix: remove `contextType` from MessageBubble `useEffect` dependency array — context-type changes should apply to new translations only, not retrigger re-render of existing history.
+- [x] Add `PROMPT_VERSION` constant to `lib/translatePrompt.js`; stamp `message_translations.prompt_version` on every cached translation. Migration 003.
+- [x] Add `nonbinary` to `gender_signal` enum in `user_linguistic_profiles`. Update prompt to distinguish `neutral` (no grammatical gender in source language) from `nonbinary` (speaker uses gender-inclusive forms). Migration 003.
 
 ### What "Phase 1 done" means
 - A bilingual tester does a 30-message conversation in mixed languages and reports translations feel native, not literal. Quality is qualitatively better than DeepL on idiom, register, and pronouns for the chosen language pair.

@@ -16,6 +16,133 @@
 
 ---
 
+## 2026-05-12 — Add prompt versioning: PROMPT_VERSION constant + prompt_version column on message_translations
+
+**Decision:** `lib/translatePrompt.js` exports a `PROMPT_VERSION` semver string. Every cached translation row in `message_translations` stores the prompt version that produced it. Version is incremented on any meaningful prompt change.
+
+**Context:** Without versioning, there is no way to know which prompt produced a given translation. This matters in Phase 4 when corrections analysis needs to ask whether a quality shift correlates with a prompt change — the data is worthless without a timestamp anchor on the prompt state.
+
+**Alternatives considered:**
+- *Log prompt changes in decisions.md only.* Human-readable but not machine-queryable. Can't join against it in SQL.
+- *Hash the full prompt string as the version.* Unique but opaque — can't tell at a glance what changed or when. Also changes on every whitespace edit.
+- *Defer until Phase 4.* By then, months of translations exist with no version information. Retroactively assigning versions would be approximate at best.
+
+**Reasoning:** A semver string costs essentially nothing to add now (one constant, one nullable column). The alternative is a permanently unbridgeable gap in the corrections corpus.
+
+**Implications:** `PROMPT_VERSION` must be incremented in the same commit as any meaningful prompt change. All future prompt work carries this as a standing requirement.
+
+**Revisit when:** We have multiple prompt variants running simultaneously (A/B testing). At that point versioning may need to become a per-request field rather than a global constant.
+
+---
+
+## 2026-05-12 — Add 'nonbinary' to gender_signal enum; distinguish from 'neutral'
+
+**Decision:** `gender_signal` gains a fifth value: `'nonbinary'`. The existing `'neutral'` value is redefined strictly as "the source language has no grammatical gender" (Finnish, Turkish, Hungarian, etc.). `'nonbinary'` means the speaker is actively using gender-inclusive or nonbinary language forms.
+
+**Context:** Several gendered languages have emerging nonbinary forms that speakers actively use: Spanish `-e` endings and `elle`, French `iel`, Portuguese `-x`/`-@` forms, German gender star/colon. Using `'neutral'` to cover these cases conflates two unrelated things — a language property and a speaker's identity expression — and causes the model to miss gender-inclusive translation opportunities.
+
+**Alternatives considered:**
+- *Keep 'neutral' and document it covers nonbinary.* Technically workable but semantically wrong, and produces worse translations — the model won't know to use inclusive target-language forms.
+- *Add a separate boolean `uses_inclusive_forms`.* More granular but adds a column for something the enum already captures cleanly.
+
+**Reasoning:** The distinction is linguistically meaningful and directly affects translation output. `'nonbinary'` in the speaker context tells the model to use inclusive forms in the target language. `'neutral'` does not. They must be separate values.
+
+**Implications:** Migration 003 drops and recreates the check constraint on `user_linguistic_profiles.gender_signal`. The prompt in `lib/translatePrompt.js` explicitly explains the distinction to the model and adds a rule for nonbinary-aware translation. Quality of nonbinary form usage will vary by language pair and model knowledge — this is an evolving area.
+
+**Revisit when:** Model quality on nonbinary forms is measurably poor for a specific language pair, warranting language-specific prompt additions or routing.
+
+---
+
+## 2026-05-12 — Phase 1: profile update logic runs client-side, not on the backend
+
+**Decision:** After a translate call returns inferences, the chat layer (App.jsx / MessageBubble) is responsible for comparing them to the stored profile and writing updates to `user_linguistic_profiles`. The backend returns inferences and nothing else.
+
+**Context:** The architecture principle is "translation layer knows nothing about chat." Profile updates are a chat-layer concern — they require knowing who the sender is, querying their profile, comparing confidence, and deciding whether to write. Putting this on the backend would require the backend to have Supabase credentials and knowledge of conversation structure.
+
+**Alternatives considered:**
+- *Backend updates profiles directly.* Requires `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` in backend env vars. Couples the translation API to a specific database. Violates the layer separation principle. Deferred to Phase 2 at earliest if we add a backend-to-Supabase pattern for other reasons.
+- *Skip profile updates for now.* Would mean inferences get returned and thrown away. Defeats the data flywheel goal.
+
+**Reasoning:** The backend's job is to return structured inferences. What the chat layer does with them is not the backend's concern. Client-side update also works fine with the current anon-key Supabase setup; no additional credentials needed.
+
+**Implications:** Profile update code lives in `App.jsx`. If we ever add server-side rendering or a mobile app, this logic will need to be moved or duplicated. Recorded here so Phase 2 auth work can revisit.
+
+**Revisit when:** Phase 2 adds backend auth tokens. At that point, moving profile updates server-side becomes possible and may be cleaner for a multi-client world.
+
+---
+
+## 2026-05-12 — Phase 1: user_id stays text in new schema tables
+
+**Decision:** `user_linguistic_profiles`, `conversation_contexts`, and `user_profile_events` use `text` for `user_id` in Phase 1, matching `user_profiles.user_id` (also text, the typed username string).
+
+**Context:** The long-term schema uses `uuid` for user_id (driven by Supabase Auth in Phase 2). But Phase 1 has no real auth — users are just username strings. Using `uuid` now would require fake UUIDs or type coercion everywhere and give no benefit.
+
+**Alternatives considered:**
+- *Use uuid now, generate fake UUIDs per username.* Possible but fake UUIDs add indirection with zero value. The "real" UUIDs come from Supabase Auth in Phase 2 and will be different values anyway.
+- *Don't create the tables until Phase 2.* Defers the schema but also defers all Phase 1 profile inference work. Not compatible with Phase 1 completion criteria.
+
+**Reasoning:** Match the existing pattern (user_id as text) for zero friction. Phase 2 migration will update these columns to uuid and backfill from Supabase Auth.
+
+**Implications:** Phase 2 requires a migration that alters `user_id` column type and maps old text user_ids to new UUIDs. Document this debt clearly in Phase 2 roadmap.
+
+**Revisit when:** Phase 2 auth adoption. Expect a deliberate migration step.
+
+---
+
+## 2026-05-12 — Phase 1: context.user = sender's profile, not viewer's
+
+**Decision:** When the chat layer calls the translate API, `context.user` is populated from the **sender's** linguistic profile, not the viewer's. Inferences returned by the model update the **sender's** profile.
+
+**Context:** The translate call is "translate sender's message into viewer's language." The context object guides dialect/register/gender-aware translation. Knowing the sender's dialect is what helps the model translate idioms correctly (e.g., knowing "che" is Argentine Spanish). The viewer's identity is fully captured by `targetLanguage`.
+
+**Alternatives considered:**
+- *context.user = viewer's profile.* The viewer's profile tells the model about the audience, not the source text. Less useful for idiom/dialect translation. Also ambiguous — what do gender/dialect of the viewer have to do with translating someone else's message?
+- *Include both sender and viewer profiles.* More tokens, more complexity. Deferred: if multi-party context proves useful, we can add `context.viewer` as an additional field later without breaking the contract.
+
+**Reasoning:** Accurate translation of the source text is the primary job. The source text's dialect, register, and gender signal are what the model needs. These come from the sender's profile.
+
+**Implications:** MessageBubble queries the sender's profile (not the viewer's) before each translate call. Inferences write back to the sender's profile. The viewer's profile is used only to determine `targetLanguage`.
+
+**Revisit when:** A use case emerges where the viewer's linguistic profile should influence the translation output (e.g., "translate into formal Spanish for a Castilian speaker" rather than generic Spanish).
+
+---
+
+## 2026-05-12 — Phase 1: shared prompt module at lib/translatePrompt.js
+
+**Decision:** All prompt logic lives in `lib/translatePrompt.js`, imported by both `api/v1/translate.js` (Vercel serverless) and `server/index.js` (Express). No inline prompt construction in route handlers.
+
+**Context:** Phase 0 identified prompt drift between prod and local as an active bug — the two files had diverged. The fix was manual. With Phase 1 adding a substantially more complex prompt (context injection, history block, JSON schema, context-type modifiers), the drift risk multiplies.
+
+**Alternatives considered:**
+- *Keep prompts inline, reconcile manually.* The Phase 0 approach. Already failed once.
+- *Single backend only (drop Express local dev server).* Would eliminate the duplication entirely but removes useful dev tooling (AbortController timeout, rich logging, health check). Not worth the tradeoff.
+
+**Reasoning:** ES module imports work in both Vercel and Express environments (both use `"type": "module"`). The shared module costs nothing to introduce. Prompt drift is now structurally impossible.
+
+**Implications:** Any future prompt change touches exactly one file. New context parameters are added to `buildMessages()` signature and both callers just pass the new field.
+
+**Revisit when:** We switch to a proper monorepo tool or the project layout changes significantly.
+
+---
+
+## 2026-05-12 — Phase 1: JSON mode enabled for translate calls
+
+**Decision:** All translate calls (not detect) set `response_format: { type: 'json_object' }` on the OpenAI request.
+
+**Context:** Phase 1 restructures the translate response to a multi-field JSON object. Without JSON mode, the model sometimes wraps output in markdown code fences or adds prose commentary. The current parser (`JSON.parse(raw)`) would break on these.
+
+**Alternatives considered:**
+- *Rely on prompt-only JSON enforcement.* What we had before. Works most of the time; breaks occasionally. The Phase 1 response schema is complex enough that a parse failure is a visible user-facing bug.
+- *Strip markdown fences in the parser.* Defensive but whack-a-mole — the model can produce other non-JSON wrapping.
+
+**Reasoning:** JSON mode is designed exactly for this. The model is constrained to valid JSON output. One-line change, zero downside for gpt-4o-mini.
+
+**Implications:** The system prompt must contain the word "JSON" for JSON mode to work (OpenAI requirement). Our prompt does. Detect mode stays as plain-text because the detect prompt is minimal and JSON mode is unnecessary overhead.
+
+**Revisit when:** We switch models. Not all models support JSON mode or the same `response_format` parameter. Verify on any model change.
+
+---
+
 ## 2026-05-12 — Defer staging environment to Phase 2; local + prod is enough through Phase 1
 
 **Decision:** Through Phase 1, the environment topology is "local dev on Isaac's laptop" + "production on Vercel/Supabase." No separate staging environment, no Vercel preview deployments routinely used. A second Supabase project for staging is added to the Phase 2 roadmap.

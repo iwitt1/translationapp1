@@ -4,11 +4,28 @@
 >
 > Format: each item has a short description, a "why interesting" note, and (if relevant) a "trigger" — the condition under which it should be reconsidered for the roadmap.
 
-**Last updated:** 2026-05-12
+**Last updated:** 2026-05-12 (three UX items added post-Phase 1 testing)
 
 ---
 
 ## Product features
+
+### Language preference as account setting, not session toggle
+The language selector is currently in the chat header — accessible mid-conversation. This makes it easy to accidentally trigger a full re-translation of chat history and burn credits. Language preference should live in user account/profile settings and be changed deliberately, not casually.
+- **Why interesting:** Prevents unintended credit burn; better UX signal — language is a stable identity attribute, not a per-session mode.
+- **Trigger:** Phase 2 (real auth + user profiles). Natural moment to move this out of the header and into a settings screen.
+
+### Context type: auto-inferred, not manually set
+The context-type dropdown (casual / dating / professional / academic) is a useful dev tool but wrong for end users. The right long-term behavior is for context type to be inferred automatically from conversation content — which is what `conversation_contexts` (Phase 3) is designed for. API clients (B2B) should be able to set it explicitly per-conversation. The manual UI toggle can be removed once auto-inference is wired.
+- **Why interesting:** Removes a decision users shouldn't have to make; auto-inference is a better product and a better API.
+- **Related:** `conversation_contexts` table already exists from Phase 1 schema. The inference logic and background job are the missing pieces.
+- **Trigger:** Phase 3 (conversation model). The `conversation_contexts` table is the natural home for this; wiring the inference job is Phase 3 work.
+
+### Lazy / proximity-based translation on language change
+When a user changes their preferred language, only translate messages as they are viewed (or as they approach the viewport), rather than immediately re-translating the entire chat history. This prevents a language toggle from triggering a large batch of OpenAI calls on a long conversation.
+- **Why interesting:** Eliminates a credit-burn and latency spike that scales linearly with conversation length. More importantly, it's the architecturally correct behavior — translation is a view-time concern, not a state-change concern.
+- **Implementation sketch:** Track scroll position; only fire translate calls for messages within N pixels of the viewport. Messages outside the viewport stay in their cached state until scrolled into range. Already partially aligned with MessageBubble's per-message translate model — needs a visibility/intersection observer rather than a dep-array trigger.
+- **Trigger:** Language preference is moved to account settings (above). These two should ship together since they address the same root cause.
 
 ### Voice translation and audio messages
 Real-time spoken-to-spoken translation, or voice-note translation in chat. Audio in one language, transcript + audio out in another. The user-facing equivalent of what we do for text.
@@ -55,6 +72,12 @@ The viewer's side of the same feature: when a received translation is flagged am
 ---
 
 ## Translation quality and intelligence
+
+### Prompt A/B testing framework
+Once `prompt_version` is flowing on every cached translation, the next step is running two prompt variants simultaneously and comparing quality metrics (correction rate, ambiguity detection rate, user thumbs-down rate) between them. Currently `PROMPT_VERSION` is a global constant — a single version runs for all calls. A/B testing would require routing a percentage of calls to an alternate prompt and tagging their cached translations with the variant version.
+- **Why interesting:** Closes the loop between prompt changes and measurable quality outcomes. Right now we change the prompt and hope it helped; A/B testing tells us whether it actually did.
+- **Depends on:** Phase 4 corrections capture (need the quality signal to measure against). Prompt versioning infrastructure is already in place as of Phase 1 cleanup.
+- **Trigger:** Phase 4 is underway and we have enough translation volume to get statistically meaningful split-test results.
 
 ### Multi-model AI routing
 Per-message routing between cheap and expensive models. Short literal messages go to `gpt-4o-mini`. Long, idiomatic, or context-heavy messages go to `gpt-4o` or a fine-tuned model. 15x cost delta makes this real money at scale.
@@ -129,6 +152,11 @@ Containerized backend, dedicated Postgres, Redis cache layer, dedicated realtime
 Before computing the cache key, normalize the input: lowercase, whitespace trim, contraction expansion. So `"don't go"` and `"Don't go"` cache as one entry, not two.
 - **Why interesting:** Higher cache hit rate, lower cost.
 - **Trigger:** Cache hit rate plateaus below expectations.
+
+### Bulk translation-cache lookup
+On page load, the frontend currently fires one `GET /rest/v1/message_translations` per existing message in the conversation history. For a chat with N messages, that's N round-trips just to check the cache. Replace with either (a) a single bulk lookup using `message_id=in.(uuid1,uuid2,...)`, or (b) a server-side join so the messages query returns each message's cached translation in one response.
+- **Why interesting:** Linear-with-conversation-length network overhead becomes a real load-time problem at scale. Confirmed in the Phase 0 verification HAR: 17 messages → 17 separate cache GETs.
+- **Trigger:** Conversations grow past roughly 50 messages, or page load latency becomes a felt problem in testing. Likely candidate for Phase 1 or Phase 3 when we're already restructuring how the frontend talks to the backend.
 
 ### Rate limiting and usage metering
 Internal first (catch our own bugs that cause runaway calls), external second (billing infrastructure for the API).
