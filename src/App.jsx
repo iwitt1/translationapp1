@@ -42,6 +42,29 @@ const INFERENCE_CONFIDENCE_THRESHOLD = 0.6;
 
 /*
 ========================================================
+🔤 LANGUAGE CODE NORMALIZER
+========================================================
+The detect API sometimes returns full language names ('English', 'Spanish')
+instead of BCP 47 codes ('en', 'es'). This caused the skip check
+(sourceLang === targetLanguage) to always fail, sending every message through
+the translate path even when source and target were the same language.
+Normalise both sides before comparing so 'English' and 'en' are treated as equal.
+*/
+const LANG_NAME_TO_CODE = {
+  english: 'en', spanish: 'es', french: 'fr', german: 'de',
+  japanese: 'ja', korean: 'ko', portuguese: 'pt', arabic: 'ar',
+  russian: 'ru', chinese: 'zh', italian: 'it', dutch: 'nl',
+  hindi: 'hi', turkish: 'tr', polish: 'pl', swedish: 'sv',
+};
+
+function normalizeLang(lang) {
+  if (!lang) return lang;
+  const lower = lang.toLowerCase();
+  return LANG_NAME_TO_CODE[lower] ?? lower;
+}
+
+/*
+========================================================
 🧠 PROFILE INFERENCE HELPER
 ========================================================
 Applies inferences returned by the translate API to the sender's
@@ -176,7 +199,11 @@ function MessageBubble({ message, userProfile, userId, contextType, history }) {
         const sourceLang = message.source_language;
 
         // ── 1. No translation needed ──────────────────────────────────────
-        if (!sourceLang || sourceLang === targetLanguage) {
+        // Skip if: (a) source matches target (normalised — 'English'==='en'),
+        // (b) no source detected, or (c) this is the viewer's own message.
+        const normSource = normalizeLang(sourceLang);
+        const normTarget = normalizeLang(targetLanguage);
+        if (!sourceLang || normSource === normTarget || isSender) {
           setTranslatedText(message.original_text);
           return;
         }
@@ -297,9 +324,11 @@ function MessageBubble({ message, userProfile, userId, contextType, history }) {
           </p>
         )}
 
-        <p className="mt-1 text-xs opacity-60">
-          {message.original_text}
-        </p>
+        {translatedText !== message.original_text && (
+          <p className="mt-1 text-xs opacity-60">
+            {message.original_text}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -429,10 +458,21 @@ export default function App() {
 
       const detection = res.ok ? await res.json() : null;
 
+      // If detect confidence is low (Spanglish, mixed-language, ambiguous),
+      // fall back to the sender's own preferred language rather than guessing.
+      // Threshold 0.85: below this the detection is too uncertain to act on.
+      const DETECT_CONFIDENCE_THRESHOLD = 0.85;
+      const detectedLang = normalizeLang(detection?.detected_language);
+      const detectedConf = detection?.confidence ?? 1.0; // legacy: if no confidence field, trust it
+      const sourceLang =
+        detectedLang && detectedConf >= DETECT_CONFIDENCE_THRESHOLD
+          ? detectedLang
+          : (userProfile?.default_language || 'unknown');
+
       await supabase.from('messages').insert([{
         sender_id: username,
         original_text: input,
-        source_language: detection?.detected_language || 'unknown',
+        source_language: sourceLang,
         tenant_id: CHAT_APP_TENANT_ID,
       }]);
 

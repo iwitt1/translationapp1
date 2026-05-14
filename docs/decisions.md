@@ -16,6 +16,62 @@
 
 ---
 
+## 2026-05-12 — Normalise source_language codes; detect prompt returns BCP 47
+
+**Decision:** All language codes are normalised to BCP 47 short codes (`'en'`, `'es'`, `'pt'`) before comparison or storage. The detect prompt explicitly instructs the model to return BCP 47 codes, never full language names. A `normalizeLang()` helper in App.jsx handles legacy full-name values already in the DB.
+
+**Context:** Phase 1 testing revealed that the detect API was returning full language names (`'English'`, `'Spanish'`, `'Portuguese'`) instead of codes. The skip check `source_language === targetLanguage` compared `'English'` to `'en'`, which is always false. Every message therefore went through the translate path — including messages in the same language as the viewer. Combined with a corrupted `es-AR` dialect profile on a user (see separate entry), the model was producing Spanish output for English messages and caching it under `language='en'`. This is why the viewer was seeing Spanish in their own English message bubbles.
+
+**Alternatives considered:**
+- *Fix the detect prompt only.* Fixes new data but doesn't handle the existing `'English'` / `'Spanish'` values already stored in the `messages` table.
+- *Normalise only at storage time.* Fixes future rows but still breaks the skip check for the 50+ existing messages with full-name values.
+- *Coerce at both points.* Handles old data and new data correctly. Small function, applied in two places.
+
+**Reasoning:** Normalisation at both the skip check and storage is the only option that fixes the live UI immediately (old cache entries) and keeps future data clean.
+
+**Implications:** `normalizeLang()` must cover all languages we support. Any new language added to the LANGUAGES array should have a corresponding entry in `LANG_NAME_TO_CODE`. The detect prompt now explicitly specifies BCP 47 — if the model deviates, the normaliser catches it.
+
+**Revisit when:** We switch to a dedicated language-detection library (lingua, franc) rather than GPT-4o-mini for detect calls. At that point the normaliser is still useful as a safety net but the format issue goes away.
+
+---
+
+## 2026-05-12 — Detect API returns confidence; Spanglish falls back to sender's language
+
+**Decision:** The detect prompt now requests a `confidence` float alongside `detected_language`. In `sendMessage`, if confidence is below 0.85, the message is stored with the sender's own preferred language as `source_language` rather than the uncertain detection result.
+
+**Context:** Phase 1 testing found that Spanglish messages (English with a few Spanish words) were being detected as Spanish with confidence 1.0. This caused: (a) the translate path to fire unnecessarily on the viewer's side, (b) the translation model to infer es-AR dialect at high confidence and write it to the sender's `user_linguistic_profiles` row, self-poisoning their linguistic profile, and (c) the sender seeing a "re-translated" version of their own mixed message.
+
+**Alternatives considered:**
+- *Accept misclassification.* Simple but creates a self-reinforcing profile corruption loop — once a wrong dialect is written at high confidence, context injection makes every subsequent translation reinforce it.
+- *Detect with a separate high-quality model or library.* Better accuracy but adds latency and cost on every send; overkill for Phase 1.
+- *Use the sender's language as source unconditionally.* Too aggressive — a genuine Spanish speaker sending Spanish should get `source_language = 'es'`.
+
+**Reasoning:** Confidence-gated fallback is cheap and directly addresses the root cause without over-engineering. The 0.85 threshold leaves room for genuine mixed-language messages to be detected correctly while protecting against low-confidence guesses on Spanglish.
+
+**Implications:** The detect prompt schema changed (added `confidence` field). `PROMPT_VERSION` bumped to `1.2.0`. Old detect calls without a confidence field are treated as confidence=1.0 (backward compatible). Detect confidence is not stored anywhere — it's used only at send time to decide `source_language`.
+
+**Revisit when:** We have enough data to evaluate whether 0.85 is the right threshold, or when we switch to a dedicated language-detection library.
+
+---
+
+## 2026-05-12 — Viewer's own messages are never translated; always show as-typed
+
+**Decision:** In the consumer chat app, a user's own outgoing messages always display exactly as typed. Translation is skipped entirely for `isSender = true` messages, regardless of the viewer's target language setting.
+
+**Context:** Phase 1 testing revealed that when a user changes their target language, the translation engine was treating their own messages as translatable — an English-speaking user who briefly set their language to Spanish would see their own English messages "translated" into Spanish. This also caused their English messages to be cached in `message_translations` with Spanish translations, polluting the cache and creating confusing profile inferences.
+
+**Alternatives considered:**
+- *Translate own messages like any other.* Architecturally consistent — the translation layer shouldn't care who sent what. But bad product UX: users expect to see what they typed, not a back-translation of it.
+- *Translate but don't show translated text for own messages (suppress at render layer only).* Wastes API calls and produces misleading inference data. The skip should happen before the translate call.
+
+**Reasoning:** For the consumer chat app, a user's own message is ground truth — they know what they meant, they don't need it translated for them. The translation layer exists to bridge language gaps between parties, not to re-render your own speech. This is a UX decision, not a translation architecture decision: B2B API callers can still translate any text they want.
+
+**Implications:** The `isSender` check is in MessageBubble's useEffect, before the cache check and before the API call. Own messages produce no `message_translations` rows and no profile inference events when viewed by the sender. Profile inference for a user still happens when OTHER users translate that user's messages (correct behavior — we infer from how they write, not how we translate for them).
+
+**Revisit when:** A use case emerges where users want to see how their message was rendered in the recipient's language (e.g., a "preview outgoing translation" feature). At that point this could become a user preference rather than a hard rule.
+
+---
+
 ## 2026-05-12 — Add prompt versioning: PROMPT_VERSION constant + prompt_version column on message_translations
 
 **Decision:** `lib/translatePrompt.js` exports a `PROMPT_VERSION` semver string. Every cached translation row in `message_translations` stores the prompt version that produced it. Version is incremented on any meaningful prompt change.
