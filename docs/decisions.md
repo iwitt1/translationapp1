@@ -16,7 +16,7 @@
 
 ---
 
-## 2026-05-12 — Normalise source_language codes; detect prompt returns BCP 47
+## 2026-05-14 — Normalise source_language codes; detect prompt returns BCP 47
 
 **Decision:** All language codes are normalised to BCP 47 short codes (`'en'`, `'es'`, `'pt'`) before comparison or storage. The detect prompt explicitly instructs the model to return BCP 47 codes, never full language names. A `normalizeLang()` helper in App.jsx handles legacy full-name values already in the DB.
 
@@ -35,7 +35,7 @@
 
 ---
 
-## 2026-05-12 — Detect API returns confidence; Spanglish falls back to sender's language
+## 2026-05-14 — Detect API returns confidence; Spanglish falls back to sender's language
 
 **Decision:** The detect prompt now requests a `confidence` float alongside `detected_language`. In `sendMessage`, if confidence is below 0.85, the message is stored with the sender's own preferred language as `source_language` rather than the uncertain detection result.
 
@@ -54,7 +54,7 @@
 
 ---
 
-## 2026-05-12 — Viewer's own messages are never translated; always show as-typed
+## 2026-05-14 — Viewer's own messages are never translated; always show as-typed
 
 **Decision:** In the consumer chat app, a user's own outgoing messages always display exactly as typed. Translation is skipped entirely for `isSender = true` messages, regardless of the viewer's target language setting.
 

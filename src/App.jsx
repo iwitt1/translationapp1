@@ -112,13 +112,15 @@ async function applyInferences(senderId, inferences, currentProfile) {
     prev.formality_source !== 'explicit'
   ) {
     const mapped = REGISTER_TO_FORMALITY[inferences.detected_register] ?? 'neutral';
-    updates.formality_preference = mapped;
-    updates.formality_source = 'inferred';
-    events.push({
-      event_type: 'formality_preference_inferred',
-      previous_value: { value: prev.formality_preference ?? null },
-      new_value: { value: mapped },
-    });
+    if (mapped !== prev.formality_preference) {
+      updates.formality_preference = mapped;
+      updates.formality_source = 'inferred';
+      events.push({
+        event_type: 'formality_preference_inferred',
+        previous_value: { value: prev.formality_preference ?? null },
+        new_value: { value: mapped },
+      });
+    }
   }
 
   // ── Gender ──
@@ -127,13 +129,15 @@ async function applyInferences(senderId, inferences, currentProfile) {
     inferences.gender_confidence >= INFERENCE_CONFIDENCE_THRESHOLD &&
     prev.gender_source !== 'explicit'
   ) {
-    updates.gender_signal = inferences.gender_signal;
-    updates.gender_source = 'inferred';
-    events.push({
-      event_type: 'gender_signal_inferred',
-      previous_value: { value: prev.gender_signal ?? null },
-      new_value: { value: inferences.gender_signal },
-    });
+    if (inferences.gender_signal !== prev.gender_signal) {
+      updates.gender_signal = inferences.gender_signal;
+      updates.gender_source = 'inferred';
+      events.push({
+        event_type: 'gender_signal_inferred',
+        previous_value: { value: prev.gender_signal ?? null },
+        new_value: { value: inferences.gender_signal },
+      });
+    }
   }
 
   if (Object.keys(updates).length === 0) return;
