@@ -16,6 +16,62 @@
 
 ---
 
+## 2026-05-15 — Dialect-language consistency guard in applyInferences
+
+**Decision:** `applyInferences` now checks that an inferred dialect is linguistically consistent with the message's detected source language before writing it to the sender's profile. The function accepts a new `detectedLanguage` parameter (the top-level `detected_language` from the translate response). If the dialect's language prefix doesn't match the detected language prefix (e.g. `es-AR` prefix `es` vs. detected `en`), the dialect block is skipped entirely.
+
+**Context:** After all prior fixes (normalizeLang, isSender skip, prompt scoping), Sam's profile continued accumulating `es-AR` on every test run. Root-cause analysis confirmed the writes fired at app load when Marco had a stale `default_language = 'es'` in localStorage from a prior session. With `targetLanguage = 'es'`, Sam's old English messages passed the skip check (`source='en' ≠ target='es'`), went through translate, and the model — seeing "So what do you do back in Buenos Aires?" — inferred `es-AR` for Sam. The fix is structural: no dialect signal should ever be written to a sender's profile if it contradicts that message's detected language.
+
+**Alternatives considered:**
+- *Refresh localStorage on login.* Fixes the stale cache trigger for this specific bug but doesn't protect against the class of bug — any future path that sends a message through translate with a mismatched target could produce the same result.
+- *Prompt-only fix (already done).* Scoping inferences to the sender's own message helps, but the model can still return a dialect inference based on place names or cultural content in the message text even for English messages. A hard consistency check at write time is the reliable safety net.
+- *Only run applyInferences when the viewer is the sender.* Would require restructuring MessageBubble's translate flow; more invasive than a two-line guard.
+
+**Reasoning:** The guard is the minimal, robust fix. A dialect of `es-AR` on an `en`-detected message is definitionally wrong — it doesn't matter what the model returned. Checking at write time is the right layer because it's independent of who triggered the translation, what language they had selected, or what the model inferred.
+
+**Implications:** Any future dialect that could span language boundaries (e.g. a mixed-language dialect code) would need the guard relaxed. This seems hypothetical. The `detectedLanguage` parameter is now part of the `applyInferences` public signature — don't remove it.
+
+**Revisit when:** A legitimate dialect code emerges whose language prefix doesn't match its speakers' primary language, and we need to handle that case.
+
+---
+
+## 2026-05-15 — Suppress no-op profile event writes; only log real changes
+
+**Decision:** `applyInferences` now guards formality and gender writes with a value-change check. An event is only logged and a profile upsert only fires when the inferred value differs from what is already stored.
+
+**Context:** Phase 1 testing showed `user_profile_events` accumulating ~100 rows per 30-message conversation, the vast majority being `casual → casual` or `neutral → neutral` — the same value being re-written on every translate call. This created noise that made the event log unreadable and wasted unnecessary DB writes.
+
+**Alternatives considered:**
+- *Write events unconditionally, filter at read time.* Keeps the write path simple but the table grows without bound and query costs scale with volume. The log becomes useless as an audit trail.
+- *Debounce writes with a timer.* Adds complexity for no benefit — the right behaviour is simply "don't write if nothing changed."
+
+**Reasoning:** The event log is an audit trail of meaningful state changes. A `casual → casual` write is not a state change. The guard is two lines and eliminates the noise at the source.
+
+**Implications:** The dialect write already had an implicit guard (only fires when new confidence exceeds stored confidence). Formality and gender now have the same behaviour. Any future inference field added to `applyInferences` should follow the same pattern: write only on actual value change.
+
+**Revisit when:** Never — this is just correct behaviour. No reason to reopen.
+
+---
+
+## 2026-05-15 — Inferences scoped to sender's own message; history excluded from dialect attribution
+
+**Decision:** The translate prompt now explicitly instructs the model that all inferences (dialect, register, gender) must reflect the sender of the message being translated, inferred from their own message text only. Conversation history is provided for translation quality only and must not be used to attribute dialect or register signals to the current sender.
+
+**Context:** Phase 1 testing found that both users in a two-person conversation were acquiring `dialect_region = es-AR` at confidence 1.0, even the English-speaking user who had no Argentine Spanish in their writing. Tracing the event log showed the English user's profile getting es-AR inferred within 4 seconds of sending their first message — immediately after it was translated in the other user's view. The conversation history at that point contained only the Argentine Spanish user's first message. The model was attributing the Argentine Spanish dialect signals from the history to the English sender.
+
+**Alternatives considered:**
+- *Strip history from the translate call entirely.* Fixes the contamination but degrades translation quality — history is what gives the model register and conversational context for better translations.
+- *Separate the translate call from the inference call.* Two separate API calls per message: one for translation (with history), one for inference (message only, no history). Cleaner separation but doubles inference-related API calls and adds latency.
+- *Add a prompt instruction clarifying the scope of inferences.* One sentence. Keeps the single-call architecture, costs nothing extra.
+
+**Reasoning:** A prompt-level instruction is the simplest fix that preserves translation quality. The model is capable of honouring the constraint — it was only attributing history dialect signals because nothing told it not to. The single-call architecture is worth preserving.
+
+**Implications:** `PROMPT_VERSION` bumped to `1.2.1`. Any future inference field added to the schema should be covered by this instruction implicitly, but it's worth reviewing the prompt if new fields are added that might be ambiguously attributable to sender vs. history participants.
+
+**Revisit when:** Inference quality is measurably poor even with the constraint in place — at that point the two-call architecture (translate + infer separately) becomes worth the cost.
+
+---
+
 ## 2026-05-14 — Normalise source_language codes; detect prompt returns BCP 47
 
 **Decision:** All language codes are normalised to BCP 47 short codes (`'en'`, `'es'`, `'pt'`) before comparison or storage. The detect prompt explicitly instructs the model to return BCP 47 codes, never full language names. A `normalizeLang()` helper in App.jsx handles legacy full-name values already in the DB.

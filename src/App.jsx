@@ -77,7 +77,7 @@ Rules (per architecture.md §6):
   - For formality/gender: update any 'inferred' value if confidence >= threshold.
   - Logs each change to user_profile_events (append-only).
 */
-async function applyInferences(senderId, inferences, currentProfile) {
+async function applyInferences(senderId, inferences, currentProfile, detectedLanguage) {
   if (!inferences) return;
 
   const updates = {};
@@ -85,8 +85,20 @@ async function applyInferences(senderId, inferences, currentProfile) {
   const prev = currentProfile ?? {};
 
   // ── Dialect ──
+  // Guard: only apply a dialect signal if it's linguistically consistent with
+  // the message's detected source language. Prevents e.g. 'es-AR' being written
+  // to an English speaker's profile because their message was translated on a
+  // viewer's screen that had a stale/wrong targetLanguage set.
+  // 'es-AR'.split('-')[0] === 'es'; that must match 'en'.split('-')[0] === 'en'
+  // before we proceed — if they don't match, skip the dialect block entirely.
+  const dialectLangPrefix = inferences.detected_dialect?.split('-')[0];
+  const detectedLangPrefix = detectedLanguage?.split('-')[0];
+  const dialectConsistent =
+    !dialectLangPrefix || !detectedLangPrefix || dialectLangPrefix === detectedLangPrefix;
+
   if (
     inferences.detected_dialect &&
+    dialectConsistent &&
     inferences.dialect_confidence >= INFERENCE_CONFIDENCE_THRESHOLD &&
     prev.dialect_source !== 'explicit' &&
     inferences.dialect_confidence > (prev.dialect_confidence ?? 0)
@@ -293,8 +305,10 @@ function MessageBubble({ message, userProfile, userId, contextType, history }) {
           });
 
         // ── 6. Apply inferences to sender's profile (fire and forget) ─────
+        // Pass result.detected_language so the dialect consistency guard can
+        // reject e.g. 'es-AR' being written to an English speaker's profile.
         if (result?.inferences) {
-          applyInferences(message.sender_id, result.inferences, senderProfile);
+          applyInferences(message.sender_id, result.inferences, senderProfile, result.detected_language);
         }
       } catch (err) {
         console.error('Translation error:', err);
