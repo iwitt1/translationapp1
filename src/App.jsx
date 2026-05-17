@@ -534,6 +534,11 @@ export default function App() {
   */
   return (
     <main className="min-h-screen flex items-center justify-center">
+      {/* Build marker — bottom-left, shows git commit hash stamped at deploy time */}
+      <div className="fixed bottom-2 left-2 text-xs text-gray-400 font-mono select-none">
+        {__COMMIT_HASH__}
+      </div>
+
       <div className="w-full max-w-md h-[80vh] flex flex-col border">
 
         {/* Header: username + language picker + context type picker */}
