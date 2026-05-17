@@ -93,8 +93,12 @@ async function applyInferences(senderId, inferences, currentProfile, detectedLan
   // before we proceed — if they don't match, skip the dialect block entirely.
   const dialectLangPrefix = inferences.detected_dialect?.split('-')[0];
   const detectedLangPrefix = detectedLanguage?.split('-')[0];
+  // Require BOTH prefixes to be present and match.
+  // If detectedLanguage is missing/null, err on the side of blocking — we can't
+  // verify consistency so we must not write. The previous OR-based logic had the
+  // opposite null-safety: !detectedLangPrefix === true allowed null to bypass.
   const dialectConsistent =
-    !dialectLangPrefix || !detectedLangPrefix || dialectLangPrefix === detectedLangPrefix;
+    !!detectedLangPrefix && dialectLangPrefix === detectedLangPrefix;
 
   if (
     inferences.detected_dialect &&
