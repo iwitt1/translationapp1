@@ -309,10 +309,13 @@ function MessageBubble({ message, userProfile, userId, contextType, history }) {
           });
 
         // ── 6. Apply inferences to sender's profile (fire and forget) ─────
-        // Pass result.detected_language so the dialect consistency guard can
-        // reject e.g. 'es-AR' being written to an English speaker's profile.
+        // Pass the message's own source_language (already stored in DB, set by
+        // the dedicated detect call when the sender typed it) as the reference
+        // language for the dialect consistency guard. This is more reliable than
+        // result.detected_language, which can come back null or wrong from the
+        // translate API and was causing the guard to be bypassed.
         if (result?.inferences) {
-          applyInferences(message.sender_id, result.inferences, senderProfile, result.detected_language);
+          applyInferences(message.sender_id, result.inferences, senderProfile, normalizeLang(sourceLang));
         }
       } catch (err) {
         console.error('Translation error:', err);

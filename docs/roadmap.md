@@ -5,7 +5,7 @@
 > **What lives here:** committed work in priority order.
 > **What does NOT live here:** ideas we haven't decided to build. Those go in `parking-lot.md`.
 
-**Last updated:** 2026-05-12 (Phase 1 backend + frontend complete; migration 002 written, awaiting Supabase execution)
+**Last updated:** 2026-05-17 (Phase 1 near-complete; dialect consistency guard shipped; server-side inference deferred to Phase 2)
 
 ---
 
@@ -72,7 +72,7 @@
 
 ### What "Phase 1 done" means
 - A bilingual tester does a 30-message conversation in mixed languages and reports translations feel native, not literal. Quality is qualitatively better than DeepL on idiom, register, and pronouns for the chosen language pair.
-- Every translation call returns structured inferences that are correctly persisted to `user_linguistic_profiles`.
+- Every translation call returns structured inferences that are persisted to `user_linguistic_profiles` without cross-language contamination. **Known limitation:** inference runs client-side with a race condition under concurrent viewers, and dialect accuracy depends on the stored `source_language` being correct. These are accepted for Phase 1 and addressed in Phase 2 (see below).
 - The same conversation, repeated with different `context_type` settings, produces meaningfully different translation tone.
 
 ---
@@ -100,11 +100,18 @@
 - [ ] Create a second Supabase project as a staging database. Same schema, no real data. Lets us run destructive migrations and feature tests without touching production data.
 - [ ] Vercel environment variables: production points at the prod Supabase project; preview branches point at the staging project. Configure in Vercel dashboard.
 - [ ] Establish migration workflow: all SQL migrations run against staging first, verified, then run against production.
+- **Note:** If an autonomous build agent (e.g. Hermes) is introduced before Phase 2, pull this forward — the agent needs a safe target to deploy to and validate against before anything touches production.
+
+### Profile inference (migrated from client-side)
+- [ ] Move `applyInferences` logic to a server-side function (Supabase edge function or dedicated API endpoint). Client fires inference payload to the endpoint; server applies guards and writes atomically — eliminates the race condition from concurrent client-side writes.
+- [ ] Dialect consistency guard updated to validate against the live translate response rather than the stored `source_language` field, now that the server has both in scope.
+- [ ] All inference writes go through the server endpoint regardless of which viewer triggered the translation — single code path, auditable, no client-side divergence.
 
 ### What "Phase 2 done" means
 - Two test users on two devices can each see only their own messages.
 - An adversarial test (one user attempting to read another's data via direct Supabase calls with their token) fails.
 - A test deletion request results in the user's profile and metadata being removed while the anonymized translation pairs remain.
+- Profile inference runs server-side; no client-side writes to `user_linguistic_profiles` or `user_profile_events`.
 
 ---
 

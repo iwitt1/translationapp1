@@ -71,7 +71,37 @@ The viewer's side of the same feature: when a received translation is flagged am
 
 ---
 
+## Known technical debt
+
+### Autonomous test harness for agent-driven builds
+A scripted, repeatable test conversation that an agent (e.g. Hermes) can run end-to-end without human involvement: create two test users, exchange a fixed set of messages across a known language pair, then assert specific outcomes — translation quality within acceptable range, correct profile inference (right dialect for the Spanish speaker, no dialect bleed onto the English speaker), no duplicate messages, event log clean. Currently testing requires a human to manually run the conversation and eyeball the Supabase tables.
+- **Why interesting:** Required infrastructure before an autonomous agent can safely build and deploy. Without it, the agent has no way to verify a change didn't break translation quality or inference logic.
+- **Implementation sketch:** A Node.js script (or Supabase edge function) that drives the chat API directly, inserts messages as named test users, then queries the DB and asserts against expected values. Could also drive the UI via browser automation for a fuller end-to-end check.
+- **Depends on:** Staging environment (can't run destructive test scripts against prod). Prioritise staging first, then this.
+- **Trigger:** Before onboarding any autonomous build agent. Also useful for regression testing after prompt version bumps.
+
+### Move profile inference to server-side (current approach is client-side, race-prone)
+Profile inference (`applyInferences`) currently runs in each viewer's browser when they translate a message. This means: (a) multiple viewers watching the same conversation fire simultaneous writes to the same profile row with no coordination — race condition; (b) the dialect consistency guard relies on `message.source_language` being correct, which is good enough for Phase 1 but is a dependency on detect-call accuracy at send time; (c) inference logic lives in client code, harder to evolve, instrument, or audit.
+
+The right architecture is a server-side function (Supabase edge function or a dedicated `/api/v1/infer-profile` endpoint) that receives the inference payload, applies the guards, and writes atomically. Client fires and forgets to that endpoint; profile updates are serialized.
+
+- **Why parked:** Phase 1 scope. Client-side inference is simpler to ship and the race condition is low-impact at current scale (two users).
+- **Trigger:** Multiple concurrent users or any evidence of race-condition corruption in `user_linguistic_profiles`. Definitely before Phase 2 API opens.
+
+### Dialect consistency guard uses stored `source_language`, not live re-detection
+The guard preventing cross-language dialect contamination (e.g. `es-AR` being written to an English speaker's profile) currently uses `message.source_language` as its reference — the BCP 47 code stored in the DB when the sender originally sent the message. This is correct and reliable for new messages, but has two edge cases: (a) legacy messages with `source_language = 'unknown'` will conservatively block all dialect inference (right behavior, but means some early test messages never build a profile); (b) the original detect call could theoretically have been wrong, making `source_language` the wrong anchor. These are acceptable for Phase 1; ideally the server-side inference move (above) would validate language consistency against the live translate response instead of relying on the stored code.
+
+- **Trigger:** Server-side inference migration. Resolve both issues at once.
+
+---
+
 ## Translation quality and intelligence
+
+### Punctuation and formatting fidelity in translations
+The translation output should preserve the sender's punctuation style exactly — if they didn't end a sentence with a period, the translation shouldn't add one; if they used an ellipsis mid-thought, that carries emotional meaning and should be preserved. More broadly, the model should not introduce punctuation or formatting that wasn't in the source (em dashes are a common AI tell). This is a prompt-level fix: explicit instructions not to add, remove, or substitute punctuation beyond what's grammatically required in the target language.
+- **Why interesting:** Punctuation is a register and tone signal. A missing period is casual; a period makes it formal. Unauthorised em dashes make translations feel AI-generated rather than human. Both undermine the product's core promise.
+- **Implementation sketch:** Add a rule to the translate system prompt: "Preserve the sender's punctuation exactly. Do not add terminal punctuation if absent in the source. Do not introduce em dashes, ellipses, or other punctuation not present in the original." Bump PROMPT_VERSION on change.
+- **Trigger:** Any point — this is a low-effort, high-signal prompt tweak. Good candidate for the next PROMPT_VERSION increment once Phase 1 testing is complete.
 
 ### Prompt A/B testing framework
 Once `prompt_version` is flowing on every cached translation, the next step is running two prompt variants simultaneously and comparing quality metrics (correction rate, ambiguity detection rate, user thumbs-down rate) between them. Currently `PROMPT_VERSION` is a global constant — a single version runs for all calls. A/B testing would require routing a percentage of calls to an alternate prompt and tagging their cached translations with the variant version.
