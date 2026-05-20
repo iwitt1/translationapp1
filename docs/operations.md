@@ -2,7 +2,7 @@
 
 > Living document. Owns cost model, hiring plan, development workflow, and vendor decisions.
 
-**Last updated:** 2026-05-12
+**Last updated:** 2026-05-18 (staging environment added; §3 expanded with a new "Staging environment" subsection)
 
 ---
 
@@ -106,6 +106,43 @@ For most changes:
 3. Open Cursor, review the diff, test locally, hit save.
 4. Commit and push. Vercel auto-deploys.
 5. Cowork updates `/docs/` to reflect what was built. Decisions of consequence land in `/docs/decisions.md`.
+
+### Staging environment
+
+Set up 2026-05-18, pulled forward from Phase 2 to give Hermes (and us) a safe target to deploy and validate against before anything touches production. See decisions.md.
+
+**Topology:**
+- **Production:** Supabase project `translationapp1` + Vercel production environment. Deploys from `main` branch.
+- **Staging:** Supabase project `translationapp1-staging` (same region as prod, free tier) + Vercel Preview environment. Auto-deploys from any branch other than `main`.
+- **Local dev:** Unchanged. Your local Express server (`server/index.js`) and frontend dev (`npm run dev`) still talk to prod Supabase via the root `.env`. The local workflow isn't routed through staging.
+
+**How env-var routing works:**
+- Vercel's Preview environment has `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `OPENAI_API_KEY` set as Project-scoped env vars pointing at staging. Vercel applies them at build time to any Preview deployment.
+- Production env vars are untouched and continue pointing at prod Supabase.
+- A push to any branch other than `main` triggers a Preview build using the staging values. A merge to `main` triggers a Production build using the prod values. The branch determines which database the deploy talks to.
+
+**Migration workflow:**
+1. New schema changes are written as new `.sql` files in `/migrations/` with a sequential number prefix.
+2. Run the migration against staging Supabase first (SQL Editor → New query → paste → run).
+3. Verify on staging using the verification queries embedded in each migration.
+4. Run the same migration against prod Supabase.
+5. Verify on prod.
+6. The migration file lives in the repo as the canonical record. Any future fresh deploy can replay all migrations in order to reach the same state.
+
+**What's in `/migrations/` today (running them in order against an empty Postgres reproduces the prod schema):**
+- `000_base_schema.sql` — base tables (`messages`, `message_translations`, `user_profiles`). Captures the pre-migration state of those tables, which were created via Supabase Studio UI before the migrations folder existed. See parking-lot.md for cleanup of vestigial columns surfaced during this work.
+- `001_tenants_and_tenant_id.sql` — adds the `tenants` table, seeds the chat-app tenant row, retrofits `tenant_id` on the base tables.
+- `002_phase1_schema.sql` — adds `user_linguistic_profiles`, `conversation_contexts`, `user_profile_events`.
+- `003_prompt_version_and_gender_nonbinary.sql` — adds `prompt_version` to `message_translations`, expands `gender_signal` enum.
+- `004_enable_realtime_publication.sql` — adds `messages` to the `supabase_realtime` publication. Captures a setting previously configured only via Supabase Studio UI on prod.
+
+**Test users seeded on staging (not prod):**
+- `staging_test_a` (display name "Staging Test A (EN)", `default_language = 'en'`)
+- `staging_test_b` (display name "Staging Test B (ES)", `default_language = 'es'`)
+
+Use these to smoke-test without polluting any real-looking data.
+
+**Smoke-test runbook:** see `/docs/verification.md` "Staging environment" section.
 
 ### When to use Cowork vs Cursor
 

@@ -16,6 +16,66 @@
 
 ---
 
+## 2026-05-18 — Adopt Hermes Agent framework + tiered Claude model architecture
+
+**Decision:** Adopt Hermes Agent (NousResearch's open-source, MIT-licensed agent framework) as the operational layer for autonomous engineering and routine work, with Claude as the underlying model and a three-tier split: Sonnet for routine execution, Opus for hard problems via Hermes self-escalation, Cowork conversation for strategy and approvals.
+
+**Context:** As Phase 1 wraps up and Phase 2 work expands, Isaac wants to move code execution and automation off his personal machine, gain multi-platform access (Telegram/Slack/Email/CLI), reduce per-task cost of operational work, and gain practical exposure to agent internals as part of a PM career pivot. Cowork-with-Opus is excellent for strategy but becomes a bottleneck for routine execution that doesn't need Isaac's direct involvement.
+
+**Alternatives considered:**
+- *Stay on Cowork-only.* Simplest; doesn't get work off personal machine; doesn't free up Cowork sessions for higher-leverage strategic work.
+- *Direct Claude Agent SDK on a VPS (no framework).* Less ops burden but loses the Hermes feature set (gateways, persistent memory, skill system, subagent delegation). More total work to reproduce.
+- *Nous Hermes open-weight models on a VPS.* Initially considered then dismissed — open-weight models are meaningfully weaker than frontier Claude at agentic reasoning, and the ops cost (GPU VPS or aggressive quantization) doesn't pay off at low volume. Hermes Agent the *framework* is model-agnostic and uses Claude under the hood, which is what we adopt instead.
+- *Defer indefinitely; revisit in three months.* Rejected because Phase 2's velocity benefits significantly from a tier between strategic Cowork sessions and routine execution.
+
+**Reasoning:** Hermes Agent is MIT-licensed, model-agnostic, multi-platform, supports persistent memory and subagent delegation — all matching the operational requirements. The tiered Sonnet/Opus/Cowork split provides the right cost/quality calibration: Sonnet for high-volume routine work, Opus when Hermes self-detects a hard problem, Cowork conversations reserved for strategy/architecture/approvals. The pattern also surfaces clean agentic-architecture vocabulary Isaac will benefit from for his PM track.
+
+**Implications:**
+- `/docs/hermes.md` is the canonical operating contract for Hermes; updated in the same commit as any change to its operation.
+- Pulls forward the staging environment work from Phase 2 — Hermes needs a safe deploy target before anything touches prod. See companion decisions.md entry.
+- `translation_events` and `agent_events` event tables (hermes.md §7) become a near-term schema commitment.
+- Cost ceilings from hermes.md §6.5 govern Hermes spend; raised only via subsequent decisions.md entries.
+- Cowork sessions shift toward strategic/architectural/approval work; routine implementation moves to Hermes once it's online.
+- Roadmap will gain a "Set up Hermes" phase as a follow-up; VPS provisioning and framework install are upcoming work, not yet started.
+
+**Revisit when:**
+- Hermes Agent framework reveals load-bearing issues that exceed workaround cost.
+- A pricing/licensing change shifts the calculus (Hermes Agent becoming non-open, or Claude API pricing changing materially).
+- Six months in, evaluate whether the tiered split delivered the expected leverage; adjust if not.
+- A different agent framework demonstrates a meaningful advantage on the multi-platform + persistent memory + model-agnostic requirements.
+
+---
+
+## 2026-05-18 — Pull staging environment forward from Phase 2 to enable Hermes adoption
+
+**Decision:** The staging environment (separate Supabase project + Vercel Preview env vars + migration workflow) is built and verified now (2026-05-18), pulled forward from its original Phase 2 placement. Supersedes the 2026-05-12 decision to defer staging to Phase 2.
+
+**Context:** The 2026-05-12 decision deferred staging because "through Phase 1 the only user is Isaac and the only data is test data... the cost of a brief prod outage is negligible." That decision's "Revisit when" clause explicitly named anyone other than Isaac using the app as a trigger. Adopting Hermes (per companion entry) introduces an autonomous executor that can run migrations and deploys — functionally equivalent to "someone else is using the app" from a risk perspective. Without staging, Hermes either runs against prod with all the destructive-operation risks hermes.md §11.1 names, or is degraded to no-deploy mode which removes most of its value.
+
+**Alternatives considered:**
+- *Skip staging entirely; rely on supervised mode for Hermes (every PR manually reviewed).* Degrades Hermes to a typing assistant. Acceptable as a Day-0/Day-7 fallback; unsustainable as a permanent posture.
+- *Defer staging until after Hermes is online; let Hermes set up staging as its first task.* Rejected — Hermes setting up its own safety net before being validated on simpler tasks is recursive risk. Set the net first, then test the agent against it.
+- *Full staging with branch protection rules, separate domain, automated migration workflow.* Deferred — over-engineered for current needs; can layer on later.
+- *Minimum-viable staging.* Chosen: Supabase staging project + Vercel Preview env vars + migration workflow + smoke-test runbook. ~45 minutes setup plus backfill work that turned implicit prod state into captured artifacts.
+
+**Reasoning:** The minimum-viable staging is what's actually needed to safely operate Hermes. The backfill migrations (`000_base_schema.sql` capturing pre-migration tables, `004_enable_realtime_publication.sql` capturing the realtime config previously only in Supabase Studio UI) are positive externalities — they turn implicit prod state into captured artifacts in `/migrations/`, which any future fresh deploy benefits from.
+
+**Implications:**
+- `/V1/migrations/` now contains `000` → `004`. Any future fresh Postgres can replay these in order to reach prod state.
+- All future migrations run on staging first, verified, then on prod. Documented in operations.md §3.
+- All future feature work uses the branch → Vercel Preview → verify → merge-to-main flow. Direct pushes to main are now genuinely an error, not just a stylistic preference.
+- Two new tech-debt items in parking-lot.md: vestigial columns on `messages`, and broader Supabase config that lives outside `/migrations/`. The latter calls for an audit pass before Phase 2 RLS work begins.
+- `OPENAI_API_KEY` is shared across prod and staging (same value, both environments). Acceptable at current volume; split if billing visibility becomes valuable.
+- During the doc-update phase that closed this work, an architectural question was surfaced and parked for Phase 3 review: per-context variation in user linguistic profile elements (parking-lot.md → "Translation quality and intelligence"). Routine work surfacing latent architectural questions — and capturing them in the parking lot for focused future review rather than ad-hoc resolution — is the discipline Hermes will follow once online (per hermes.md §4 #11).
+
+**Revisit when:**
+- Staging traffic becomes meaningful enough to need its own OpenAI key (billing/quota concerns).
+- A use case emerges for a fixed staging URL (demoable to prospects) rather than per-branch preview URLs.
+- Phase 2 introduces RLS — staging's RLS posture (mirror prod, or RLS-on-stage to validate policies?) becomes a real decision.
+- A real incident on staging reveals a gap in the smoke-test runbook in verification.md.
+
+---
+
 ## 2026-05-15 — Dialect-language consistency guard in applyInferences
 
 **Decision:** `applyInferences` now checks that an inferred dialect is linguistically consistent with the message's detected source language before writing it to the sender's profile. The function accepts a new `detectedLanguage` parameter (the top-level `detected_language` from the translate response). If the dialect's language prefix doesn't match the detected language prefix (e.g. `es-AR` prefix `es` vs. detected `en`), the dialect block is skipped entirely.

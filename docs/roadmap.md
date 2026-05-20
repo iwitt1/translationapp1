@@ -5,7 +5,7 @@
 > **What lives here:** committed work in priority order.
 > **What does NOT live here:** ideas we haven't decided to build. Those go in `parking-lot.md`.
 
-**Last updated:** 2026-05-17 (Phase 1 near-complete; dialect consistency guard shipped; server-side inference deferred to Phase 2)
+**Last updated:** 2026-05-18 (Phase 2 staging environment items pulled forward and completed to support Hermes adoption)
 
 ---
 
@@ -77,6 +77,50 @@
 
 ---
 
+## Phase 1.5 — Set up Hermes Agent
+
+**Goal:** Stand up the Hermes Agent infrastructure on a VPS with Claude as the underlying model, multi-tier routing (Sonnet default, Opus on escalation), and one gateway. Operate in supervised mode for the first 30 days; graduate to autonomous routine work per `/docs/hermes.md` §12 Day-30 criteria.
+
+**Pre-requisites (done 2026-05-18):**
+- [x] Staging environment built — Supabase staging project + Vercel Preview env vars + migration workflow + smoke-test runbook. See 2026-05-18 decisions.md entries.
+- [x] `/docs/hermes.md` charter drafted through v0.4. **Ratification = commit to main; pending Isaac's push.**
+
+### Infrastructure
+- [ ] Provision VPS (target spec: ~1-2GB RAM CPU droplet; specific provider TBD — Hetzner / DigitalOcean / Linode). Document the choice in operations.md and decisions.md if non-obvious.
+- [ ] Install Hermes Agent (pin to a specific version — currently v0.2.0 per `/docs/hermes.md`).
+- [ ] Configure tiered model routing: Claude Sonnet 4.6 as default; explicit Opus escalation per `/docs/hermes.md` §3 rules.
+- [ ] Wire up one messaging gateway (Telegram recommended per hermes.md §13 — lowest friction).
+- [ ] Set Hermes's access credentials: GitHub PAT scoped to the repo (commits + branches, no admin), Supabase CLI authenticated to both projects (prod read-only by default, write permission gated on §6.2 confirmation), Vercel CLI authenticated (staging autonomous, prod gated).
+
+### Event log schema (per hermes.md §7)
+- [ ] Create `translation_events` table (full schema in `/docs/hermes.md` §7.2). Run on staging first, then prod.
+- [ ] Create `agent_events` table for Hermes-level audit trail. Schema is TBD in `/docs/hermes.md` §7.3 — finalize before creating; capture the final shape in a migration and in architecture.md.
+- [ ] Wire the live application's translate call sites to write `translation_events` on every call. Defer dashboard tooling.
+
+### Promote items pulled from parking lot
+- [ ] Promote "Autonomous test harness for agent-driven builds" from `/docs/parking-lot.md` → this phase. Required before Hermes operates beyond supervised mode.
+- [ ] Audit Supabase config that lives outside `/migrations/` (per `/docs/parking-lot.md` "Other config state lives outside /migrations/"). Capture findings as new migrations before Phase 2 RLS work begins.
+
+### Open questions to resolve (from hermes.md §13)
+- [ ] Hermes Agent v0.2.0 skill-versioning capability — can skills live in version control? Affects §6.8 design.
+- [ ] Tool-call introspection / replay — can Hermes's actions be inspected and replayed for debugging? Affects §7.3 design.
+- [ ] Gateway choice — Telegram vs Slack as first; confirm with hands-on use.
+- [ ] VPS spec confirmation — 1-2GB enough for orchestrator only, or do we need more headroom?
+- [ ] Cost ceilings (§6.5) — initial guesses; calibrate after observing one cycle.
+- [ ] Modal vs VPS deployment comparison — Hermes Agent supports Modal as a backend. Possibly cheaper at low usage if Hermes is idle most of the time.
+
+### Day-0 / Day-7 / Day-30 milestones (per hermes.md §12)
+- [ ] **Day 0:** Charter ratified (committed to main). Roadmap updated (this section). Parking-lot items promoted. Cowork's project instructions updated to acknowledge Hermes as the third agent in the loop.
+- [ ] **Day 7:** Infrastructure up; one end-to-end smoke test (Isaac issues "create a hello-world feature branch on staging", Hermes does so and reports per hermes.md §8.1).
+- [ ] **Day 30:** Five specs delivered end-to-end. At least one §5 pre-implementation checklist triggered and approved. At least one decisions.md entry drafted by Hermes and approved+appended (per hermes.md §2 / v0.4). Cost ceilings calibrated. First monthly skill review (hermes.md §6.8) done. Hermes graduates from supervised mode.
+
+### What "Phase 1.5 done" means
+- Hermes can be assigned a well-scoped Phase 2 spec and execute it end-to-end (branch → test → staging deploy → verification → approval → merge to main → prod deploy) without manual intervention from Isaac except at approval gates.
+- The 30-day onboarding has produced enough operational data to calibrate cost ceilings, identify framework rough edges, and validate the tiered Sonnet/Opus split.
+- All hermes.md §13 open questions have answers; hermes.md is updated (likely v0.5 or v1.0) accordingly.
+
+---
+
 ## Phase 2 — Multi-user safety
 
 **Goal:** The app is shareable with real testers without privacy concerns. Up until this phase, no third party should have the URL.
@@ -97,10 +141,17 @@
 - [ ] Deletion job that anonymizes corrections (strips user_id and PII, keeps translation pairs) rather than hard-deleting
 
 ### Staging environment
-- [ ] Create a second Supabase project as a staging database. Same schema, no real data. Lets us run destructive migrations and feature tests without touching production data.
-- [ ] Vercel environment variables: production points at the prod Supabase project; preview branches point at the staging project. Configure in Vercel dashboard.
-- [ ] Establish migration workflow: all SQL migrations run against staging first, verified, then run against production.
-- **Note:** If an autonomous build agent (e.g. Hermes) is introduced before Phase 2, pull this forward — the agent needs a safe target to deploy to and validate against before anything touches production.
+
+**Pulled forward and completed 2026-05-18** to support Hermes Agent adoption. See `/docs/decisions.md` and the new "Staging environment" subsection in `/docs/operations.md`.
+
+- [x] Create a second Supabase project (`translationapp1-staging`) as a staging database. Same schema, no real data. Lets us run destructive migrations and feature tests without touching production data.
+- [x] Vercel environment variables: production points at the prod Supabase project; preview branches point at the staging project. Configured per-environment under Project scope.
+- [x] Establish migration workflow: all SQL migrations run against staging first, verified, then run against production. Documented in `/docs/operations.md` §3.
+- [x] Backfill `000_base_schema.sql` to capture pre-migrations tables (created via Supabase Studio UI before the folder existed). Migrations folder is now self-sufficient for fresh deploys.
+- [x] Backfill `004_enable_realtime_publication.sql` to capture the realtime-publication setting (also configured originally via UI).
+- [x] Seed two test users (`staging_test_a`, `staging_test_b`) on staging for smoke-testing.
+- [x] Smoke-test verified: a preview-branch deploy talks to staging Supabase, writes to staging tables, prod is unchanged.
+- [x] Staging smoke-test runbook codified in `/docs/verification.md`.
 
 ### Profile inference (migrated from client-side)
 - [ ] Move `applyInferences` logic to a server-side function (Supabase edge function or dedicated API endpoint). Client fires inference payload to the endpoint; server applies guards and writes atomically — eliminates the race condition from concurrent client-side writes.

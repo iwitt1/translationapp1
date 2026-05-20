@@ -2,7 +2,7 @@
 
 > Living technical document. Describes what the system is, the principles it's built on, and what we're migrating toward. Updated in the same commit as any architectural change.
 
-**Last updated:** 2026-05-12
+**Last updated:** 2026-05-18 (§7 schema updated to reflect actual prod state — vestigial columns documented, tenant_id NOT NULL, surrogate id keys captured; closes a known doc/DB drift gap surfaced during staging setup)
 **Repo:** https://github.com/iwitt1/translationapp1
 **Owner:** Isaac (iwitt1)
 
@@ -203,29 +203,44 @@ The `_source` fields in `user_linguistic_profiles` (e.g., `dialect_source: 'expl
 #### `messages`
 | Column | Type | Notes |
 |---|---|---|
-| `id` | uuid | Primary key |
+| `id` | uuid | Primary key, default `gen_random_uuid()` |
+| `created_at` | timestamp with time zone | Default `now()` |
 | `sender_id` | text | Currently the typed username string |
 | `original_text` | text | The message as typed |
-| `source_language` | text | Two-letter language code, detected by AI at send |
-| `created_at` | timestamp | |
+| `source_language` | text | BCP 47 language code, detected by AI at send |
+| `tenant_id` | uuid | NOT NULL, FK to `tenants(id)`. Added by migration `001`. |
+| `room_id` | uuid | **Vestigial** — predates the single-global-room model; unused by current code |
+| `translated_text` | text | **Vestigial** — predates the `message_translations` cache; unused |
+| `target_language` | text | **Vestigial** — same era as above |
+| `tone` | text | **Vestigial** — predecessor to the `context_type` parameter |
+| `context_id` | text | **Vestigial** — same era |
+| `model_version` | text | **Vestigial** — old per-message model tag, default `'V1'` |
+| `latency_ms` | numeric | **Vestigial** — old telemetry hook, currently not written |
+
+The vestigial columns are present in both prod and staging (and captured in `migrations/000_base_schema.sql`) so the two environments match exactly. Cleanup is parked: `/docs/parking-lot.md` → "Vestigial columns on `messages` + architecture.md §7 doc drift."
 
 #### `message_translations`
 | Column | Type | Notes |
 |---|---|---|
-| `message_id` | uuid | FK to `messages.id` |
-| `language` | text | Target language code |
-| `translated_text` | text | The translation |
-| `tenant_id` | uuid | FK to `tenants.id` |
-| `prompt_version` | text | Semver of the prompt that produced this translation (nullable; null = pre-versioning) |
+| `id` | uuid | Primary key, default `gen_random_uuid()` |
+| `message_id` | uuid | FK to `messages(id)`. Nullable in schema; the cache contract assumes a real link. |
+| `language` | text | NOT NULL. Target language code (BCP 47). |
+| `translated_text` | text | NOT NULL. The cached translation. |
+| `created_at` | timestamp without time zone | Default `now()` |
+| `tenant_id` | uuid | NOT NULL, FK to `tenants(id)`. Added by migration `001`. |
+| `prompt_version` | text | Semver of the prompt that produced this translation. Nullable; null = pre-versioning (pre-migration `003`). |
 
 Unique: `(message_id, language)` — one cached translation per message per target.
 
 #### `user_profiles`
 | Column | Type | Notes |
 |---|---|---|
-| `user_id` | text | The username string (will become uuid in Phase 2) |
+| `id` | uuid | Primary key, default `gen_random_uuid()` — surrogate key, separate from `user_id` |
+| `user_id` | text | UNIQUE. The username string (will migrate to `uuid` in Phase 2). |
 | `display_name` | text | |
-| `default_language` | text | |
+| `default_language` | text | Default `'en'` |
+| `created_at` | timestamp without time zone | Default `now()` |
+| `tenant_id` | uuid | NOT NULL, FK to `tenants(id)`. Added by migration `001`. |
 
 ### Tables to add in Phase 0 (cheap structural prep)
 

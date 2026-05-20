@@ -4,7 +4,7 @@
 >
 > Format: each item has a short description, a "why interesting" note, and (if relevant) a "trigger" — the condition under which it should be reconsidered for the roadmap.
 
-**Last updated:** 2026-05-12 (three UX items added post-Phase 1 testing)
+**Last updated:** 2026-05-18 (vestigial-columns + realtime-publication tech-debt items; per-context user profile variation item; testing/QA/CI staged build-out)
 
 ---
 
@@ -73,6 +73,22 @@ The viewer's side of the same feature: when a received translation is flagged am
 
 ## Known technical debt
 
+### Robust testing, QA, and CI process — staged build-out
+Current testing posture is largely manual: smoke-test runbook in `/docs/verification.md`, run by a human after deploys. As the project scales (Hermes online, real users in Phase 2, multiple verticals in Phase 6), the manual approach won't hold. The forward state is a multi-layered testing / QA / CI pipeline with the 2026-05-18 staging smoke-test as its first iteration. Likely build-out order, each layer earning the next:
+
+1. **Automate the staging smoke test as a CI gate.** When Hermes (or anyone) pushes a feature branch, GitHub Actions or Vercel-native checks run the smoke-test runbook automatically against the Preview deploy. First and easiest layer. Catches env-var typos, Realtime-publication gaps, and similar "fresh-deploy state" misses before a human notices.
+2. **Unit tests for core translation logic.** `lib/translatePrompt.js`, the `applyInferences` flow, `normalizeLang`, the dialect-consistency guard. Likely Jest or Vitest (existing stack). Highest leverage on the most-changed files.
+3. **Integration tests against the translate API path.** Bilingual test conversations with expected outputs — the existing "Autonomous test harness for agent-driven builds" item below is the closest current expression. Becomes essential when Hermes is committing autonomously.
+4. **Quality benchmark suite.** The "Internal translation quality benchmark" item (in "Translation quality and intelligence" section) runs translation against a curated hard-cases corpus on prompt changes, reports quality delta. Becomes possible when the corrections corpus is non-trivial; essential when prompt changes happen often.
+5. **Staged rollouts.** Feature flags, percentage rollouts, canary deploys. Phase 6 (API) concern; not Phase 1-3.
+
+The smoke test we built 2026-05-18 is the manual seed of layer 1. Each layer builds on the previous; skipping ahead is a known anti-pattern (e.g., trying to do quality benchmarks before there's anything stable to benchmark against).
+
+- **Why interesting:** Testing infrastructure is among the highest-compounding investments — every test catches a future bug forever. But it's also one of the easiest things to over-engineer before the bugs exist to catch. The order matters.
+- **Surfaced:** 2026-05-18, as a "what's next" thought after the staging smoke test was built.
+- **Trigger:** Hermes online and routinely committing code → start with layer 1 (CI gate on the smoke test). Each subsequent layer triggered when the project's complexity has grown past the previous layer's coverage.
+- **Related items:** "Autonomous test harness for agent-driven builds" (next item below), "Internal translation quality benchmark" (in "Translation quality and intelligence" section).
+
 ### Autonomous test harness for agent-driven builds
 A scripted, repeatable test conversation that an agent (e.g. Hermes) can run end-to-end without human involvement: create two test users, exchange a fixed set of messages across a known language pair, then assert specific outcomes — translation quality within acceptable range, correct profile inference (right dialect for the Spanish speaker, no dialect bleed onto the English speaker), no duplicate messages, event log clean. Currently testing requires a human to manually run the conversation and eyeball the Supabase tables.
 - **Why interesting:** Required infrastructure before an autonomous agent can safely build and deploy. Without it, the agent has no way to verify a change didn't break translation quality or inference logic.
@@ -92,6 +108,34 @@ The right architecture is a server-side function (Supabase edge function or a de
 The guard preventing cross-language dialect contamination (e.g. `es-AR` being written to an English speaker's profile) currently uses `message.source_language` as its reference — the BCP 47 code stored in the DB when the sender originally sent the message. This is correct and reliable for new messages, but has two edge cases: (a) legacy messages with `source_language = 'unknown'` will conservatively block all dialect inference (right behavior, but means some early test messages never build a profile); (b) the original detect call could theoretically have been wrong, making `source_language` the wrong anchor. These are acceptable for Phase 1; ideally the server-side inference move (above) would validate language consistency against the live translate response instead of relying on the stored code.
 
 - **Trigger:** Server-side inference migration. Resolve both issues at once.
+
+### Vestigial columns on `messages` + `architecture.md` §7 doc drift
+The prod `messages` table has columns that predate the `/migrations/` folder and aren't used by the live code: `room_id` (uuid), `translated_text` (text), `target_language` (text), `tone` (text), `context_id` (text), `model_version` (text, default `'V1'`), `latency_ms` (numeric). All nullable; all ignored by `App.jsx` and the translation pipeline. They survived because removing them was unrelated cleanup work that was never the highest priority.
+
+`architecture.md` §7 documents the *intended* `messages` schema (`id`, `sender_id`, `original_text`, `source_language`, `created_at`) and doesn't mention these extras — so the doc and the actual database disagree. Two reasonable resolutions:
+
+1. **Drop the columns** via a migration. Cleanest end state. Requires a careful pre-flight that nothing reads them (grep confirms no, but a deliberate review before dropping anything is warranted).
+2. **Update `architecture.md` §7** to describe the actual schema and explicitly mark these columns as vestigial / unused.
+
+- **Why interesting:** Doc/DB drift is a category of bug that hides until someone (Hermes, a new collaborator, or future you) reads `architecture.md`, trusts it, and is surprised. Either resolution collapses the gap.
+- **Surfaced:** 2026-05-18, during staging setup when migration 001 couldn't be run against an empty DB because the base tables it `ALTER`s weren't represented anywhere in the migrations folder. Resolved short-term by writing `000_base_schema.sql` to mirror prod (vestigial columns included), but that codifies the debt rather than removing it.
+- **Trigger:** Phase 2 schema work, or anytime we're already doing migrations against `messages`. Strong candidate for an early Hermes task once the agent is online — small, well-bounded, requires careful verification.
+
+### Other config state lives outside `/migrations/` and isn't captured
+The `messages`-on-realtime-publication item was originally configured via the Supabase Studio UI. Migration `004_enable_realtime_publication.sql` (2026-05-18) backfilled it. But the broader category of risk remains: other Supabase configuration may exist in prod via UI clicks and not in the migrations folder. Candidate suspects (need an audit pass):
+
+- Realtime publications on other tables (we currently only know `messages` is published)
+- RLS policies (none exist yet, but Phase 2 introduces many — they MUST live in migrations from day one)
+- Database functions / triggers (none currently expected, but worth checking)
+- Storage bucket policies (no Storage usage yet)
+- Auth provider config (will become relevant in Phase 2)
+- Edge functions (none currently)
+- Extensions enabled (e.g. `pg_cron`, `uuid-ossp` — defaults are usually safe but worth confirming)
+
+- **Why interesting:** Doc/DB drift is the same failure mode as the vestigial columns above — anything in prod that isn't in the migrations folder means a fresh deploy (Hermes-driven or otherwise) silently lacks it. The bug usually manifests as "works in prod but not staging," which is a particularly nasty class of bug because staging exists to *prevent* prod surprises.
+- **Surfaced:** 2026-05-18, when the staging smoke test revealed realtime wasn't on.
+- **Mitigation now:** When introducing new Supabase config (RLS, triggers, etc.), default to capturing in a migration even if also configuring via UI. The migration is the source of truth.
+- **Trigger:** Before Phase 2 auth/RLS work begins, do a focused audit of prod Supabase config that isn't in migrations. Easier to catch and codify upfront than chase per-feature.
 
 ---
 
@@ -138,6 +182,22 @@ Once corrections from regionally-identified users accumulate, cluster them to di
 Curated set of hard translation cases drawn from corrections where generic models fail. Used internally to evaluate new model versions, externally as a sales tool when the API opens.
 - **Why interesting:** Quantifies our advantage. Sales tool.
 - **Trigger:** Phase 4 underway, corrections corpus large enough to draw a meaningful sample.
+
+### Per-context variation in user linguistic profile elements
+Some `user_linguistic_profiles` fields plausibly vary by conversation context — a user might be `casual` in dating chats and `formal` at work, or use different gender expression with family vs. acquaintances. Currently the schema has ONE `formality_preference` (and `gender_signal`, etc.) per user per tenant, and `conversation_contexts` holds the conversation's detected register separately. The translate prompt sees both, so the model already blends them implicitly — but the user profile itself has no representation of context-dependence.
+
+**Two interpretations of the same problem:**
+
+1. *Prompt-level fix.* The current schema is fine; the translate prompt + `conversation_contexts` already let the model blend user posture with conversation register. The fix (if needed) is improving how the prompt combines them — e.g., explicitly instructing the model that conversation register overrides user formality when they conflict. Cheap, reversible, no schema change.
+2. *Schema-level fix.* Add per-context profile rows (`user_linguistic_profiles` keyed on `(user_id, tenant_id, context_type)`) or a sparse `user_context_overrides` table layered on top of the base profile. Lets the system *learn* that this user is consistently more casual in dating contexts and adjust the inference pipeline accordingly. More accurate; more complex; data migration if retrofitted later.
+
+Both are valid. The current architecture leans toward #1 implicitly. This item exists to revisit the choice deliberately.
+
+- **Why interesting:** It's a real product nuance — users do vary by context, and surface-level translation that doesn't capture that will feel off in exactly the way users notice. But it's also exactly the kind of thing that's easy to over-engineer before knowing whether it matters.
+- **Architectural design work to do at trigger:** decide between option 1 and option 2 (or a hybrid where one or two specific fields like `formality_preference` get per-context rows while others stay global). Capture the decision in `decisions.md` before implementation. If option 2, design the migration carefully — `user_linguistic_profiles` is already populated with inference data.
+- **Related schema work:** the `_source` tracking convention (`explicit` vs `inferred`) needs to extend cleanly into the per-context model. An explicit per-context override must not be overwritten by inference at the global level.
+- **Surfaced:** 2026-05-18 by Isaac while reviewing the post-staging-setup docs.
+- **Trigger:** Phase 3 (conversation model). At that point: focused design review of how `user_linguistic_profiles` + `conversation_contexts` interact, decide between options 1 and 2, write a spec, then implement. Implementation comes after the design decision, not bundled with it.
 
 ### Additional region inference signals
 Beyond the lexical and spelling signals already designed: timestamp/timezone activity patterns, character input patterns (which accented characters used or avoided), IP geolocation (weakest, VPN-vulnerable, used as one signal among many).
