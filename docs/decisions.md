@@ -18,6 +18,8 @@
 
 ## 2026-05-18 — Adopt Hermes Agent framework + tiered Claude model architecture
 
+**Supersedes:** The 2026-05-12 "Toolchain: Cowork + Cursor only" entry below. That decision was made before Hermes was on the table and explicitly committed to two tools; the current toolchain is three agents (Cowork + Cursor + Hermes Agent), with scope defined per agent in `/docs/operations.md` §3 and `/docs/hermes.md` §3.
+
 **Decision:** Adopt Hermes Agent (NousResearch's open-source, MIT-licensed agent framework) as the operational layer for autonomous engineering and routine work, with Claude as the underlying model and a three-tier split: Sonnet for routine execution, Opus for hard problems via Hermes self-escalation, Cowork conversation for strategy and approvals.
 
 **Context:** As Phase 1 wraps up and Phase 2 work expands, Isaac wants to move code execution and automation off his personal machine, gain multi-platform access (Telegram/Slack/Email/CLI), reduce per-task cost of operational work, and gain practical exposure to agent internals as part of a PM career pivot. Cowork-with-Opus is excellent for strategy but becomes a bottleneck for routine execution that doesn't need Isaac's direct involvement.

@@ -2,7 +2,7 @@
 
 > Living document. Owns cost model, hiring plan, development workflow, and vendor decisions.
 
-**Last updated:** 2026-05-18 (staging environment added; §3 expanded with a new "Staging environment" subsection)
+**Last updated:** 2026-05-18 (staging environment added; §3 expanded with "Staging environment" subsection; §3 toolchain updated to three agents — Cowork + Cursor + Hermes; §4 Supabase region confirmed as us-east-1)
 
 ---
 
@@ -85,17 +85,20 @@ In rough priority order:
 
 ## 3. Development workflow
 
-### The toolchain (committed 2026-05-12)
+### The toolchain (committed 2026-05-12; expanded to three agents 2026-05-18)
 
-**Two tools, period:**
+**Three agents, with clear scope per agent:**
 
-- **Cowork (Claude desktop app, file access mode):** strategy and architecture conversations, doc maintenance, multi-file code changes, code reviews, schema work, anything that benefits from cross-file context or shell access. Persistent memory across sessions.
-- **Cursor:** line-level edits, the dev server loop, the live preview in browser, visual file navigation, the moment-to-moment coding experience.
+- **Cowork (Claude desktop app, file access + shell, Opus):** strategy and architecture conversations, spec writing, approval gates, doc maintenance, multi-file code changes that need judgment, debugging-when-stuck, anything that benefits from cross-file context. Persistent memory across sessions. The deliberate strategic-conversation surface.
+- **Cursor (visual IDE):** line-level edits, the dev server loop, the live preview in browser, visual git operations, the moment-to-moment coding experience. Cursor has its own in-IDE AI for small inline edits; for anything multi-file or architectural, prefer Cowork.
+- **Hermes Agent (NousResearch framework, on a VPS, Claude Sonnet/Opus):** routine implementation from approved specs, scheduled jobs, operational execution against staging, weekly research and digests. The execution surface. See `/docs/hermes.md` for the full operating contract.
 
-**What we explicitly dropped:**
+The split is by *which agent is the right interface for the task*, not by capability — Cowork and Hermes both call Claude under the hood. The difference is conversational pattern (Cowork deliberate, Hermes execution-mode) and tooling (Cowork desktop-and-on-demand, Hermes always-on-and-multi-platform).
 
-- Claude Chat (the regular web chat app) as a routine tool. It's fine for an outside-the-loop second opinion, but it's not part of the regular flow. Cowork covers the same strategy/spec ground with the bonus that decisions flow into doc updates in the same session.
-- Any expectation that we maintain four documents (Claude Chat thread + CLAUDE.md + Cursor rules + Cowork notes) describing the same architecture. We maintain one set of `/docs/` files; Cursor reads `.cursorrules`; both tools read the same docs.
+**What we explicitly dropped (still accurate):**
+
+- Claude Chat (the regular web chat app) as a routine tool. Fine for an outside-the-loop second opinion, not part of the regular flow.
+- Any expectation that we maintain multiple documents (Claude Chat thread + CLAUDE.md + Cursor rules + Cowork notes) describing the same architecture. We maintain one set of `/docs/` files; Cursor reads `.cursorrules`; Cowork and Hermes both read `/docs/`.
 
 ### The build loop
 
@@ -144,10 +147,11 @@ Use these to smoke-test without polluting any real-looking data.
 
 **Smoke-test runbook:** see `/docs/verification.md` "Staging environment" section.
 
-### When to use Cowork vs Cursor
+### When to use which agent
 
-- **Cowork:** Architectural decisions. Multi-file changes. Schema migrations. Doc work. Tracing through unfamiliar code. Anything where you'd want to talk through it.
+- **Cowork:** Architectural decisions. Schema migrations. Doc work. Spec writing. Pre-implementation checklists. Tracing through unfamiliar code. Anything where you'd want to talk through it. Anything that needs Isaac's judgment in the loop.
 - **Cursor:** Knowing exactly what change you want to make on a specific line. Running the dev server. Watching the live browser preview iterate. The 80% of editing that's mechanical.
+- **Hermes:** Implementing a feature against an approved spec. Running scheduled jobs (research scrapes, error log triage, weekly digests). Maintaining `translation_events` on translation-touching changes. Anything Isaac has explicitly delegated. *Always operates against staging first, never directly to prod, with approval gates per hermes.md §6.*
 
 ### What Cursor's AI is for
 
@@ -174,7 +178,7 @@ Cursor has its own AI built in (`Cmd-K` for inline edits, the chat panel for que
 
 - Authentication provider. Supabase Auth is the obvious choice given the existing Supabase project, but worth a brief evaluation versus Clerk or Auth0 at Phase 2 boundary.
 - Mobile framework. React Native is the leading candidate (shares codebase with web React), but Expo vs bare React Native, native modules vs JS-only — all open.
-- Data residency region. Supabase region was chosen by default at project creation. May matter when entering regulated markets; decision deferred until that's a real question.
+- Data residency region. Supabase region is `us-east-1` for both `translationapp1` (prod) and `translationapp1-staging` (staging). Chosen by default at project creation and confirmed 2026-05-18. May matter when entering regulated markets (EU healthcare especially); decision to migrate deferred until that's a real question. Hermes VPS will be provisioned in a matching US East region to keep network latency low.
 - Whether to monetize the consumer app or keep it free as a data-generation vehicle. Strategy doc notes this; decision deferred until we have signal on consumer demand.
 
 ---

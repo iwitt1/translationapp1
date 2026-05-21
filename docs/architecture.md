@@ -465,6 +465,11 @@ True E2EE and AI translation are architecturally in conflict. The defensible pos
 
 ## 11. Environments and config
 
+### Regions
+- Supabase prod (`translationapp1`) and staging (`translationapp1-staging`) both in **`us-east-1`**.
+- Vercel deployments default to multi-region edge; serverless function execution is close to user; database calls hit the configured Supabase region.
+- Hermes VPS (Phase 1.5) will be provisioned in a matching US East region for low-latency calls to Supabase.
+
 ### Frontend env vars (root `.env`, exposed to browser, prefix `VITE_`)
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
@@ -476,6 +481,12 @@ Safe to ship to the browser *once RLS is enabled*. Until then, treat the live UR
 - Production: set in Vercel's environment variables panel as `OPENAI_API_KEY`.
 
 The OpenAI API key never leaves the backend. Frontend never calls OpenAI directly.
+
+### Vercel env var scoping (added 2026-05-18 with staging)
+- Production environment env vars point at prod Supabase.
+- Preview environment env vars point at staging Supabase (`translationapp1-staging`).
+- `OPENAI_API_KEY` is the same value across Production and Preview environments — same OpenAI account; split later if billing visibility becomes valuable.
+- Development environment env vars are empty by design — local dev uses your own `.env` files.
 
 ---
 

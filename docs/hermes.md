@@ -4,7 +4,7 @@
 
 **Last updated:** 2026-05-18
 **Owner:** Isaac (iwitt1)
-**Doc version:** v0.5 (pre-ratification; not yet committed to main — see §13 open questions and §18 changelog)
+**Doc version:** v0.6 (ratified — committed to main 2026-05-18 along with the staging environment work. §13 open questions still pending; resolution begins with Phase 1.5 scoping.)
 
 > **Read first:** `/docs/architecture.md` §3 (architectural principles), `/docs/strategy.md` §2 (two-phase strategy), `/docs/roadmap.md` (current phase), `/docs/decisions.md` (recent calls). Hermes inherits and obeys all of these.
 
@@ -648,6 +648,7 @@ Items where this doc commits to something without full evidence — flagged for 
 - **Daily / nightly cost report rolled into Telegram:** opt-in.
 - **Hermes-driven RFC drafting:** when Isaac asks "how should we approach X?", Hermes drafts an RFC §9.2 rather than diving in.
 - **Risk register automation:** Hermes scans commits + decisions for new risks and proposes adds to `/docs/risks.md`.
+- **Monthly review of Hermes's doc-edit suggestions:** track which docs Hermes proposed edits to over the past month and which were approved vs declined. Useful for spotting whether Hermes is over-suggesting (too much noise; should raise its threshold) or under-suggesting (drift accumulating; should lower its threshold). Likely a metric to surface in the monthly digest once there's a month of data.
 
 ---
 
@@ -730,7 +731,7 @@ Cowork sessions and Hermes operations happen asynchronously. Cowork is Isaac's s
 ### Where the handoff doc lives
 - In the repo at `/docs/cowork-handoff.md` — same `/docs/` folder as every other doc.
 - Hermes (running on its VPS, with GitHub credentials per §10.7) writes to it, commits, and pushes as part of its weekly digest (§8.5).
-- Cowork (running on Isaac's Mac) reads the local copy at session start. Isaac runs `git pull` before opening Cowork to ensure the local copy reflects what Hermes most recently wrote.
+- Cowork (running on Isaac's Mac) auto-pulls and reads the local copy at session start. The Cowork project instructions include a "session start protocol" directive that runs `git pull --ff-only` as the first action of every session, then reads this doc. Failure modes (conflicts, diverged history) surface to Isaac before the session proceeds.
 
 ### Hermes's responsibilities
 - Update `/docs/cowork-handoff.md` on every weekly digest cadence (§8.5), and on-demand when Isaac asks ("update handoff doc").
@@ -762,3 +763,4 @@ This is a starting design. If 30 days of operation reveal cross-context friction
 - **v0.3 — 2026-05-18** — Added §4 #11 "Instructions are not infallible" (never edit unilaterally; flag drift; propose diffs for approval), §8.5 weekly doc-staleness scan with explicit empty-scan reporting, §15 codification of Hermes's never-edit-unilaterally role in `/docs/` maintenance. Closes a real loop in the charter: the doc was designed against drift but didn't say how drift gets detected. Surfaced by Isaac as the natural complement.
 - **v0.4 — 2026-05-18** — Refined §2 to clarify Hermes *can* append approved entries to `/docs/decisions.md` (bundled with the corresponding code commit when applicable), gated on Isaac's explicit per-entry confirmation. Isaac remains the bottleneck for approval and modification; Hermes is the typist. Previous version had Hermes blocked from any decisions.md modification, which made every decision a manual append by Isaac — unnecessarily inefficient.
 - **v0.5 — 2026-05-18** — Added §16 "Doc inventory" enumerating every `/docs/` file with its scope, format conventions, and Hermes interaction frequency — so Hermes preserves formatting on every edit rather than ad-hoc reshaping. Added §17 "Cowork ↔ Hermes context bridge" introducing `/docs/cowork-handoff.md` as the async handoff mechanism between Hermes operations and Cowork sessions. Updated §8.5 weekly digest to write the handoff doc. Renumbered Changelog from §16 to §18; updated §15 reference accordingly. Doc version label at top now reflects v0.5.
+- **v0.6 — 2026-05-18** — Ratified: doc committed to main as part of the consolidated session commit. Doc version label updated accordingly. Refined §17 to reflect Cowork's new "session start protocol" — Cowork now auto-pulls + auto-reads the handoff doc at session start (per the Cowork project instructions Isaac added), rather than Isaac running `git pull` manually. Reduces session-start friction; trade-off is a soft model-instruction guarantee rather than a hard system behavior. Acceptable at this scale.

@@ -8,11 +8,13 @@ The substantive documentation lives in [`/docs/`](docs/). Read these before touc
 
 - [`docs/architecture.md`](docs/architecture.md) — Technical system design
 - [`docs/strategy.md`](docs/strategy.md) — Product vision and two-phase plan
-- [`docs/operations.md`](docs/operations.md) — Cost model, hiring, workflow
+- [`docs/operations.md`](docs/operations.md) — Cost model, hiring, workflow, staging environment
 - [`docs/roadmap.md`](docs/roadmap.md) — Phased roadmap with checklists
 - [`docs/parking-lot.md`](docs/parking-lot.md) — Ideas not currently committed
 - [`docs/decisions.md`](docs/decisions.md) — Decisions log
 - [`docs/verification.md`](docs/verification.md) — Post-feature verification and debugging checklists
+- [`docs/hermes.md`](docs/hermes.md) — Operating charter for the Hermes Agent (operational AI executor)
+- [`docs/specs.md`](docs/specs.md) — Active and recent feature specs in flight
 
 If you're using Cursor, [`.cursorrules`](.cursorrules) at the repo root encodes the project's never-violate rules and points at `/docs/`.
 
@@ -21,9 +23,11 @@ If you're using Cursor, [`.cursorrules`](.cursorrules) at the repo root encodes 
 - **Frontend:** React 18, Vite, Tailwind CSS
 - **Backend (prod):** Vercel serverless functions (`/api/`)
 - **Backend (local dev):** Node + Express (`/server/`)
-- **Database + realtime:** Supabase (Postgres)
-- **AI:** OpenAI (`gpt-4o-mini` currently)
+- **Database + realtime:** Supabase (Postgres), region `us-east-1`
+- **AI (translation):** OpenAI (`gpt-4o-mini` currently)
 - **Deployment:** GitHub → Vercel auto-deploy
+- **Environments:** Production (`main` branch → prod Supabase) and Staging (any non-main branch → `translationapp1-staging` Supabase via Vercel Preview)
+- **Build agents:** Cowork (Claude Opus desktop app — strategy + planning), Hermes Agent (NousResearch framework on VPS — operational execution; Phase 1.5 setup pending). See [`docs/hermes.md`](docs/hermes.md).
 
 ## Local development
 
@@ -77,7 +81,7 @@ Push to `main`. Vercel auto-deploys both the Vite build (frontend) and the `/api
 
 ## Status
 
-MVP. Single global chat room, no auth, contextual translation not yet implemented. See [`docs/roadmap.md`](docs/roadmap.md) for what's next and [`docs/architecture.md`](docs/architecture.md) §2 for what currently works versus what doesn't.
+Phase 1 (contextual translation) near-complete; staging environment built 2026-05-18; Phase 1.5 (Hermes Agent setup) is the next phase. See [`docs/roadmap.md`](docs/roadmap.md) for what's next and [`docs/architecture.md`](docs/architecture.md) §2 for what currently works versus what doesn't.
 
 ## Repo
 

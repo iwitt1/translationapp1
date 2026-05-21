@@ -254,7 +254,7 @@ Internal first (catch our own bugs that cause runaway calls), external second (b
 - **Trigger:** Small-scale; before Phase 6.
 
 ### Data residency
-Where data physically lives matters for some markets (EU, healthcare). Supabase region was chosen by default; may need EU region or self-hosted Postgres at some point.
+Where data physically lives matters for some markets (EU, healthcare). Supabase region is `us-east-1` for both prod and staging (confirmed 2026-05-18 in operations.md §4). Entering an EU market or a regulated US healthcare context likely requires either a regional Supabase project or self-hosted Postgres in-region.
 - **Why interesting:** Compliance requirement for some verticals.
 - **Trigger:** Entering a market with data residency requirements (EU healthcare especially).
 
