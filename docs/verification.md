@@ -10,7 +10,7 @@
 >
 > **When to revise a section:** when a failure mode is observed in the wild and the existing checklist would have missed it. Drift between this doc and reality is the failure mode this doc is designed against, same as the architecture doc.
 
-**Last updated:** 2026-05-18 (Staging environment section added)
+**Last updated:** 2026-06-01 (Hermes infrastructure section added — Spec 1 shipped, including SSH lockout debugging playbook)
 
 ---
 
@@ -139,6 +139,63 @@ Section seeded in advance. Fill in after Phase 1 ships. The shape will be:
 - Verification of `conversation_contexts` updates
 - A test conversation that demonstrates qualitative translation improvement vs Phase 0 output
 - Known failure modes specific to JSON-mode and prompt restructuring
+
+---
+
+## Hermes infrastructure — Spec 1 (2026-06-01)
+
+**What shipped:** DigitalOcean droplet `hermes-prod` at 167.71.161.145 (1 GB / 1 vCPU / Ubuntu 24.04 LTS / 35 GB SSD / NYC3 / weekly backups). Hardened: SSH key-only auth, root SSH disabled, root password set as fallback, UFW with port 22 only. Hermes Agent v0.14.0 (v2026.5.16) installed at `/home/hermes/.hermes/venv/` with auto-activation in hermes user's `~/.bashrc`. Three independent fallback paths if SSH breaks: (1) DO Droplet Console (hypervisor-level, one-click); (2) DO Recovery Console (VNC + root password); (3) hermes SSH.
+
+### Verification (re-run after any infra change)
+
+**SSH and auth**
+- [ ] `ssh hermes@167.71.161.145` succeeds with key passphrase
+- [ ] `whoami` returns `hermes`
+- [ ] `sudo whoami` returns `root` (sudo works for hermes)
+- [ ] `ssh -o BatchMode=yes -o ConnectTimeout=10 root@167.71.161.145 'whoami'` fails with "Permission denied (publickey)"
+- [ ] `sudo sshd -T | grep -i permitrootlogin` returns `permitrootlogin no` (not `prohibit-password` or `without-password`)
+- [ ] `passwd -S root` returns `root P …` (P = password set, fallback for DO Recovery Console)
+
+**Firewall**
+- [ ] `sudo ufw status verbose` shows: active; default deny incoming; only `22/tcp ALLOW IN` (v4 and v6)
+
+**Hermes Agent**
+- [ ] `hermes --version` returns `Hermes Agent v0.14.0 (2026.5.16)`
+- [ ] `which hermes` returns `/home/hermes/.hermes/venv/bin/hermes`
+- [ ] Logging in fresh shows `(venv)` in the prompt — `.bashrc` auto-activation works
+
+**DO dashboard**
+- [ ] Droplets → `hermes-prod`: status Running; backups enabled; IP `167.71.161.145`
+- [ ] Console (one-click) opens to root prompt without credentials
+
+### SSH lockout debugging playbook
+
+If `ssh hermes@…` fails unexpectedly, **before assuming the server is broken:**
+
+1. **Run `ssh -v hermes@…` first.** The verbose output tells you whether the server is accepting your key, rejecting your key, refusing to negotiate, or never answering at all. Most "lockouts" are client-side (wrong key offered, wrong passphrase typed, agent forwarding misconfigured) — `ssh -v` distinguishes them in under a minute. *Session 1 (2026-05-21) misdiagnosed a passphrase-prompt fumble as a server-side auth break and burned a full session re-walking server-side recovery — the verbose flag would have caught it immediately.*
+2. **If `ssh -v` confirms server-side rejection**, fall back to DO Droplet Console (one-click, hypervisor-level, no creds needed).
+3. From inside the console, inspect:
+   - `ls -la /home/hermes/.ssh/` — perms must be 700 on dir, 600 on `authorized_keys`
+   - `sudo grep -E '^(PermitRootLogin|PasswordAuthentication|PubkeyAuthentication|AllowUsers|AllowGroups)' /etc/ssh/sshd_config` and the same in `/etc/ssh/sshd_config.d/*.conf`
+   - `sudo sshd -T | grep -i 'permitrootlogin\|passwordauth\|pubkeyauth'` — authoritative effective config
+   - `sudo journalctl -u ssh -n 30 --no-pager`
+4. If sshd config drift is the cause (e.g., a cloud-init drop-in re-asserting an old value), edit and `sudo systemctl reload ssh`. Keep one authenticated session open while reloading so you can roll back.
+
+### Operational safeguards (learned from Spec 1 execution)
+
+- **Set root password before disabling root SSH.** A locked root account + disabled root SSH leaves no fallback for DO's older Recovery Console. Always `sudo passwd root`, save to password manager, *then* re-disable root SSH. (Spec 1, session 2 misdiagnosed this as a console product issue; root password is the missing piece.)
+- **Verify spec-stated versions/prices/capability claims against vendor docs before any provisioning action.** Spec 1's "Hermes Agent v0.2.0" was a placeholder that never existed; cost estimates were stale. Catch these in pre-execution audit, not mid-provisioning.
+
+### Known failure modes
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `ssh hermes@…` "Permission denied (publickey)" right after creation | Key not attached at droplet creation, or sshd not yet up | Wait 2 min and retry; or add key via DO Droplet Console |
+| Same error after a reboot, where it worked before | File perms on `~/.ssh/` reset by upgrade, or sshd config drop-in added by cloud-init | Use DO Droplet Console; restore `chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys`; check `/etc/ssh/sshd_config.d/` for unexpected files |
+| DO Droplet Console fails "All Configured authentication methods failed" (older Recovery Console product) | Root account locked (no password) AND root SSH disabled | Reset root password via DO dashboard → Access → Reset Root Password; log in with that. The newer "Droplet Console" (hypervisor-level) sidesteps this entirely |
+| `sudo` rejects hermes password | Confused with newly-set root password; password manager has two entries | Double-check which credential the password manager is offering; if hermes password genuinely lost, reset via DO Droplet Console as root: `passwd hermes` |
+| `hermes --version` not found after SSH login | venv not auto-activated; `~/.bashrc` source line missing or shell not bash | `source ~/.hermes/venv/bin/activate` manually; verify `.bashrc` contains the activation line |
+| Hermes Agent shows "1 commit behind" | Intentional pin to v0.14.0 per decisions.md | Ignore unless an explicit bump decision lands |
 
 ---
 

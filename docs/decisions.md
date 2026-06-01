@@ -16,6 +16,60 @@
 
 ---
 
+## 2026-06-01 — DigitalOcean as VPS provider for Hermes Agent
+
+**Decision:** Hermes runs on a DigitalOcean Basic droplet in NYC3 (1 GB RAM / 1 vCPU / Ubuntu 24.04 LTS / 35 GB SSD / weekly backups), totaling $9.60/mo ($8 droplet + $1.60 backups).
+
+**Context:** Per the 2026-05-18 "Adopt Hermes Agent framework" decision, Hermes needs to live somewhere other than Isaac's laptop. Spec 1 (`/docs/specs.md`) operationalized this choice; execution ran 2026-05-21 (session 1, provisioning), 2026-05-26 (session 2, recovery from misdiagnosed lockout), and 2026-06-01 (session 3, install completed and shipped).
+
+**Alternatives considered:**
+- *Hetzner Cloud.* Cheaper (~$4-5/mo for equivalent specs), but their NYC region is newer and we wanted closest-to-Supabase-us-east-1 proximity with a mature footprint. Worth revisiting if costs become material.
+- *Linode (Akamai).* Comparable pricing; less mature dashboard for non-developer operation, which matters for Isaac's PM-track learning curve.
+- *Modal serverless.* Per hermes.md §13 open question 6 — trades fixed VPS cost for per-invocation. Cheaper at low usage but hides the infra layer that has PM-portfolio learning value. Deferred; revisit after 30-day Hermes operation if VPS-on-DO friction shows up.
+- *AWS Lightsail / GCP e2-micro.* Hyperscaler overhead and dashboard complexity not justified for a single VPS.
+
+**Reasoning:** DigitalOcean's combination of simple dashboard, weekly snapshot backups as a one-click product, transparent pricing, mature NYC region (closest match to Supabase's `us-east-1`), and recurring-cost model fits the operational and learning requirements for Phase 1.5. Cost is within `/docs/operations.md` §1 cost-model band for infrastructure.
+
+**Implications:**
+- Recurring $9.60/mo line item in `operations.md` §1 cost model; updated once first invoice confirms exact figure.
+- Backups are *weekly* (DO's product cadence), not daily — Hermes's skill library and any state on the VPS has up to 7 days of replay risk between snapshots. Acceptable; mitigated by keeping the skill library in git per hermes.md §6.8.
+- Root password set + SSH-key-only auth + UFW with port 22 only + DO's hypervisor-level Droplet Console as fallback path. Combined gives three independent recovery vectors; documented in `verification.md` "Hermes infrastructure."
+- Migration path: if Modal serverless or another provider becomes attractive later, Hermes's install is contained in `/home/hermes/.hermes/` and reproducible from spec + decisions.md. No DO-specific code in the application stack.
+
+**Revisit when:**
+- Monthly VPS+backup cost exceeds $25 (3× current) for the same workload — likely signal we should re-evaluate.
+- A future Phase needs an order-of-magnitude RAM/CPU increase that makes per-droplet pricing punitive vs. autoscaling alternatives.
+- DigitalOcean materially raises prices on Basic droplets again, or removes weekly backups from the product.
+- Hermes-on-VPS reveals operational friction (manual SSH for every change, no auto-scaling, console quirks) that would be solved by a managed-agent alternative (e.g., the parking-lot item in `hermes.md` §14).
+
+---
+
+## 2026-06-01 — Pin Hermes Agent to v0.14.0 (v2026.5.16), not latest v0.15.2
+
+**Decision:** Spec 1 installs Hermes Agent v0.14.0 / git tag `v2026.5.16`, despite v0.15.2 being current at install time. Pin stays until a specific reason to bump (capability gap, security fix, or post-30-day evaluation).
+
+**Context:** Original spec was drafted with "v0.2.0" as the version — an unverified placeholder that turned out not to exist on GitHub (latest at that time was v0.14.0 / 2026.5.16 under Hermes Agent's CalVer scheme — "v0.X" SemVer plus "vYYYY.M.D" CalVer git tags). Session 2 (2026-05-26) caught and corrected to v0.14.0. By session 3 (2026-06-01), v0.15.2 had shipped (May 29, 2026) — a hotfix release for a v0.15.0 dashboard-reload bug in loopback mode.
+
+**Alternatives considered:**
+- *Pin to v0.15.2 (current latest).* Includes the dashboard-reload hotfix and a few smaller fixes. Downside: only 3 days old at decision time; not yet field-tested by anyone else on a fresh install at our scale. The bug v0.15.2 fixes affects loopback mode, which we're not using.
+- *Track latest (no pin, `pip install hermes-agent`).* Simpler operationally but creates implicit upgrade surface every time we touch the install — antithetical to spec discipline.
+- *Pin to v0.13.0 or earlier.* Older and lacks browser-tool improvements landed in v0.14.0 that we'll likely use.
+
+**Reasoning:** v0.14.0 is 2+ weeks old, no known issues affecting our use case, and matches what the spec was already updated to. v0.15.2 is current but the surface area of new code is small (one hotfix + minor changes), the bug it fixes doesn't affect us, and the day-0 install posture favors known-stable over freshest. We can bump deliberately once the Hermes deployment is operational and we have signal.
+
+**Implications:**
+- Hermes shows "1 commit behind" on every `hermes --version` — visible, intentional drift from latest; ignore the upgrade nudge unless a specific reason to upgrade lands.
+- Version bumps are themselves decisions: future `pip install --upgrade` runs require a (small) decisions.md entry naming the bump and why. Prevents silent dependency creep per charter §6.7.
+- This decision also captures the broader principle: spec-stated dependency versions get audited against vendor docs before any irreversible install action. Spec 1's "v0.2.0" landed in the doc as a placeholder and was never verified before session 1 — corrected mid-execution at session 2, codified as a feedback memory ("verify speculative claims early") between sessions.
+
+**Revisit when:**
+- A security advisory is published against v0.14.0.
+- v0.15.x or later ships a capability we need (e.g., a new gateway, a needed bug fix in our path).
+- The "Day 30" Hermes evaluation milestone (`hermes.md` §12) — we can bump as part of that review with full operational context.
+- Hermes Agent project switches versioning scheme or drops support for our pin.
+
+---
+
 ## 2026-05-18 — Adopt Hermes Agent framework + tiered Claude model architecture
 
 **Supersedes:** The 2026-05-12 "Toolchain: Cowork + Cursor only" entry below. That decision was made before Hermes was on the table and explicitly committed to two tools; the current toolchain is three agents (Cowork + Cursor + Hermes Agent), with scope defined per agent in `/docs/operations.md` §3 and `/docs/hermes.md` §3.

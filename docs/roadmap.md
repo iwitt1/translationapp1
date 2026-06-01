@@ -5,7 +5,7 @@
 > **What lives here:** committed work in priority order.
 > **What does NOT live here:** ideas we haven't decided to build. Those go in `parking-lot.md`.
 
-**Last updated:** 2026-05-18 (Phase 2 staging environment items pulled forward and completed to support Hermes adoption)
+**Last updated:** 2026-06-01 (Phase 1.5 infrastructure — VPS provisioned and Hermes Agent installed; first two checkboxes done. See specs.md Spec 1 (shipped 2026-06-01) and decisions.md 2026-06-01 entries.)
 
 ---
 
@@ -86,8 +86,8 @@
 - [x] `/docs/hermes.md` charter drafted through v0.4. **Ratification = commit to main; pending Isaac's push.**
 
 ### Infrastructure
-- [ ] Provision VPS (target spec: ~1-2GB RAM CPU droplet; specific provider TBD — Hetzner / DigitalOcean / Linode). Document the choice in operations.md and decisions.md if non-obvious.
-- [ ] Install Hermes Agent (pin to a specific version — currently v0.2.0 per `/docs/hermes.md`).
+- [x] Provision VPS — DigitalOcean droplet `hermes-prod` (1 GB / 1 vCPU / 35 GB SSD / Ubuntu 24.04 LTS / NYC3 / weekly backups / $9.60/mo). Shipped 2026-06-01 per Spec 1. Provider rationale in `/docs/decisions.md` 2026-06-01 entry.
+- [x] Install Hermes Agent — pinned to v0.14.0 (git tag `v2026.5.16`) at `/home/hermes/.hermes/venv/`. Shipped 2026-06-01 per Spec 1. Version-pin rationale in `/docs/decisions.md` 2026-06-01 entry.
 - [ ] Configure tiered model routing: Claude Sonnet 4.6 as default; explicit Opus escalation per `/docs/hermes.md` §3 rules.
 - [ ] Wire up one messaging gateway (Telegram recommended per hermes.md §13 — lowest friction).
 - [ ] Set Hermes's access credentials: GitHub PAT scoped to the repo (commits + branches, no admin), Supabase CLI authenticated to both projects (prod read-only by default, write permission gated on §6.2 confirmation), Vercel CLI authenticated (staging autonomous, prod gated).
@@ -102,7 +102,7 @@
 - [ ] Audit Supabase config that lives outside `/migrations/` (per `/docs/parking-lot.md` "Other config state lives outside /migrations/"). Capture findings as new migrations before Phase 2 RLS work begins.
 
 ### Open questions to resolve (from hermes.md §13)
-- [ ] Hermes Agent v0.2.0 skill-versioning capability — can skills live in version control? Affects §6.8 design.
+- [ ] Hermes Agent v0.14.0 (v2026.5.16) skill-versioning capability — can skills live in version control? Affects §6.8 design.
 - [ ] Tool-call introspection / replay — can Hermes's actions be inspected and replayed for debugging? Affects §7.3 design.
 - [ ] Gateway choice — Telegram vs Slack as first; confirm with hands-on use.
 - [ ] VPS spec confirmation — 1-2GB enough for orchestrator only, or do we need more headroom?

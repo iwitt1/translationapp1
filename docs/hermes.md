@@ -2,9 +2,9 @@
 
 > Living document. Owns the operating contract for the Hermes agent: what it does, what it must never do, how it communicates, when it stops and asks, and the failure modes we're explicitly designing against. Updated in the same commit as any change to that contract.
 
-**Last updated:** 2026-05-18
+**Last updated:** 2026-06-01
 **Owner:** Isaac (iwitt1)
-**Doc version:** v0.6 (ratified — committed to main 2026-05-18 along with the staging environment work. §13 open questions still pending; resolution begins with Phase 1.5 scoping.)
+**Doc version:** v0.7 (Hermes Agent version reference corrected from speculative v0.2.0 to actually-installed v0.14.0 / v2026.5.16 after Spec 1 shipped. §13 open questions still pending; resolution continues as Phase 1.5 progresses.)
 
 > **Read first:** `/docs/architecture.md` §3 (architectural principles), `/docs/strategy.md` §2 (two-phase strategy), `/docs/roadmap.md` (current phase), `/docs/decisions.md` (recent calls). Hermes inherits and obeys all of these.
 
@@ -626,7 +626,7 @@ Until Day 30 graduation, Hermes operates in **supervised mode**: every task repo
 
 Items where this doc commits to something without full evidence — flagged for Isaac to confirm or amend before the doc is treated as final.
 
-1. **Does Hermes Agent v0.2.0 actually support storing the skill library in version control rather than an opaque blob?** §6.8 assumes yes. If not, the audit story needs a different mechanism.
+1. **Does Hermes Agent v0.14.0 (v2026.5.16) actually support storing the skill library in version control rather than an opaque blob?** §6.8 assumes yes. If not, the audit story needs a different mechanism. *(Pin rationale: see `/docs/decisions.md` 2026-06-01 entry "Pin Hermes Agent to v0.14.0".)*
 2. **Does Hermes Agent surface tool calls in a way that can be inspected and replayed?** §7.3 assumes per-task action logs are extractable. If not, build a wrapper.
 3. **Which gateway first?** Recommend Telegram (simple, no enterprise auth) but Slack would be more natural if Isaac already lives there.
 4. **What's the actual VPS spec?** Original assumption was 1–2 GB RAM. Plan for the Hermes orchestrator only; Postgres and other services stay on managed providers.
@@ -765,3 +765,4 @@ This is a starting design. If 30 days of operation reveal cross-context friction
 - **v0.4 — 2026-05-18** — Refined §2 to clarify Hermes *can* append approved entries to `/docs/decisions.md` (bundled with the corresponding code commit when applicable), gated on Isaac's explicit per-entry confirmation. Isaac remains the bottleneck for approval and modification; Hermes is the typist. Previous version had Hermes blocked from any decisions.md modification, which made every decision a manual append by Isaac — unnecessarily inefficient.
 - **v0.5 — 2026-05-18** — Added §16 "Doc inventory" enumerating every `/docs/` file with its scope, format conventions, and Hermes interaction frequency — so Hermes preserves formatting on every edit rather than ad-hoc reshaping. Added §17 "Cowork ↔ Hermes context bridge" introducing `/docs/cowork-handoff.md` as the async handoff mechanism between Hermes operations and Cowork sessions. Updated §8.5 weekly digest to write the handoff doc. Renumbered Changelog from §16 to §18; updated §15 reference accordingly. Doc version label at top now reflects v0.5.
 - **v0.6 — 2026-05-18** — Ratified: doc committed to main as part of the consolidated session commit. Doc version label updated accordingly. Refined §17 to reflect Cowork's new "session start protocol" — Cowork now auto-pulls + auto-reads the handoff doc at session start (per the Cowork project instructions Isaac added), rather than Isaac running `git pull` manually. Reduces session-start friction; trade-off is a soft model-instruction guarantee rather than a hard system behavior. Acceptable at this scale.
+- **v0.7 — 2026-06-01** — §13 open question 1 updated: speculative "Hermes Agent v0.2.0" → actually-installed v0.14.0 / v2026.5.16. Pin rationale + provider choice documented in `/docs/decisions.md` 2026-06-01 entries. Spec 1 (VPS provisioning + install) shipped; verification artifacts live in `/docs/verification.md` "Hermes infrastructure — Spec 1 (2026-06-01)." No semantic changes to charter content — pure fact-correction to reflect reality of what was installed.
