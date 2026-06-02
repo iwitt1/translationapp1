@@ -16,6 +16,36 @@
 
 ---
 
+## 2026-06-02 — Defer structural GitHub branch protection on `main`; behavior-enforcement only
+
+**Decision:** Spec 3 ships without GitHub branch protection enabled on `main`. Protection against direct-to-main pushes relies on the operating-contract layer for now (charter §6.1 + the framework-level git wrapper described in §11.1 #7). Re-evaluate when one of the listed triggers fires.
+
+**Context:** Spec 3 Open Question 1 had us answer "yes" to enabling branch protection on `main` — both because charter §11.1 #7 explicitly names it as the structural mitigation for the "direct-to-main push" failure mode, and because the cost was "5 minutes in a GitHub settings page." At execution time, Isaac discovered that GitHub gates *both* Rulesets *and* the legacy Branch protection rules behind paid plans (Pro/Team) for private repositories. The exact warning: *"Your rulesets won't be enforced on this private repository until you move to GitHub Team organization account."* The legacy Branch protection rules path produced the equivalent restriction. Free-tier private-repo owners can configure the rules but they don't actually fire.
+
+**Alternatives considered:**
+- *Upgrade to GitHub Pro (~$4/mo individual) or Team (~$4/user/mo for orgs).* Unlocks rulesets / branch protection on private repos. ~$48–$96/year recurring. Adds a new line item to operations.md cost model. Justifiable if/when Hermes is doing autonomous work where a direct-to-main slip would actually happen, or if the value of "the platform refuses, not just the agent refuses" feels load-bearing enough.
+- *Make the repo public.* Costs nothing, unlocks branch protection. Trade-off is exposing the project's code (including patterns around translation prompt, schema, and integration plumbing) to anyone, ahead of any deliberate Phase 6 API-positioning decision. Off the table at this stage.
+- *Behavior-enforcement only.* Lean on the two non-platform mitigations from charter §11.1 #7: (a) charter §6.1's "direct pushes to main are treated as an error" rule, and (b) Hermes Agent's git-wrapper behavior that aborts on `main` branch unless explicitly authorized. One of two §11.1 #7 mitigations holds; the platform-level one is deferred.
+- *Block on this and renegotiate Spec 3.* Disproportionate — Spec 3 has five other acceptance bundles independent of branch protection.
+
+**Reasoning:** Adding $4–8/mo of recurring cost ahead of evidence that the structural rail is needed isn't yet justified. Hermes is in supervised mode through Day 30 per `hermes.md` §12; every commit Hermes pushes is still gated by Isaac's review at the PR-merge step. The risk surface that branch protection closes (Hermes silently force-pushes to main) is partially closed already by the framework's own git wrapper. Deferring is reversible at any time — flip the upgrade switch in GitHub settings and add the entry to operations.md. The platform-level rail is a defense-in-depth nice-to-have right now, not a load-bearing piece.
+
+**Implications:**
+- Spec 3 ships with behavior-enforcement only; charter §11.1 #7 is partially satisfied (1 of 2 mitigations active).
+- New parking-lot item under Infrastructure: "GitHub branch protection on `main` — paid-tier upgrade." Tracked there so it's not forgotten.
+- If Hermes ever attempts a direct push to `main` (the failure mode this would have prevented), that event becomes the explicit revisit trigger and gets logged as a near-miss in `verification.md`.
+- Operations.md cost model doesn't grow this month; revisit if upgrade is approved.
+- Day-30 Hermes review (`hermes.md` §12) is a natural checkpoint for re-asking whether the structural rail is worth $4/mo now that we have real operational data.
+
+**Revisit when:**
+- Hermes attempts (or successfully completes) a direct push to `main` — this is the empirical trigger; capture as a near-miss in `verification.md` and use the incident to justify the upgrade.
+- Hermes graduates from supervised mode at Day 30 — if the PR-review gate is loosened, the platform-level rail becomes more load-bearing.
+- A second human (collaborator, hire, contractor) gains write access to the repo — at that point the upgrade is justified by team scale, not just agent risk.
+- Operations.md cost model surfaces capacity for a $4–8/mo addition without trade-off pain.
+- GitHub changes its free-tier policy and unlocks branch protection on private repos at zero cost.
+
+---
+
 ## 2026-06-02 — Anthropic direct as Hermes Agent AI provider
 
 **Decision:** Hermes Agent routes inference through Anthropic's native API directly (`ANTHROPIC_API_KEY` in `~/.hermes/.env`, provider configured via `hermes model` → Anthropic → "Use existing credentials"), not through OpenRouter or any other aggregator.

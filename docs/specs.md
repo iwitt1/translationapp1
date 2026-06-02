@@ -4,7 +4,89 @@
 >
 > Spec lifecycle: **draft** → **approved** → **in-flight** → **shipped** → **archived**. When a spec ships, mark it `shipped` here with the commit reference and move the verification details to `/docs/verification.md`. Archive specs after one cycle of "shipped" review (typically 2-4 weeks) — move them to a future `/docs/specs-archive.md` if/when this file exceeds ~600 lines.
 
-**Last updated:** 2026-06-02 (Spec 2 shipped with narrowed scope; Spec 2.1 drafted for the deferred follow-ups. Section order: draft → shipped.)
+**Last updated:** 2026-06-02 (Spec 3 drafted *and* approved — access credentials for GitHub / Supabase / Vercel, the next prereq before Hermes can touch the codebase. OQs resolved: branch protection *intent yes but deferred in practice* (GitHub gates it behind paid tier for private repos; revisit trigger in decisions.md), Supabase read-isolation via readonly Postgres role, Vercel prod-deploy gated by operating contract, 90d PAT rotation (trigger 2026-08-31). Spec 2 shipped narrowed; Spec 2.1 drafted for the deferred follow-ups. Section order: draft → approved → shipped.)
+
+---
+
+## Spec 3 — Hermes Agent access credentials (GitHub / Supabase / Vercel)
+
+**Linked roadmap item:** Phase 1.5 → Infrastructure (checkbox 5 — Hermes access credentials)
+**Author:** Isaac (drafted with Cowork/Opus, 2026-06-02)
+**Status:** **approved 2026-06-02** (OQ 1–4 resolved with Isaac; see annotations below. Branch protection deferred per platform constraint — captured in decisions.md 2026-06-02 entry. Ready to execute.)
+**Estimated time:** ~75 min (branch protection step removed; readonly Postgres role still in scope per OQ2)
+
+### Goal
+Give Hermes the access it needs to actually touch the Translation App project end-to-end: clone the repo, branch, commit, push, open a PR, run migrations against staging, deploy to staging. End state: Isaac sends Hermes a spec via Discord; Hermes can take it from "read the brief" through "branch + code + test + staging deploy + PR + report per §8.1" without any further infra setup. Prod merges and prod migrations still require Isaac's explicit "yes" each time — same two-confirm pattern that already governs every destructive op, leveraging the framework's native dangerous-command approval (per Hermes Agent security docs §3.2) plus charter §6.2.
+
+### Acceptance criteria
+
+**GitHub access**
+- Fine-grained Personal Access Token created in Isaac's GitHub account, scoped to the single Translation App repository (not "all repositories"), with permissions: *Contents: read+write, Pull requests: read+write, Metadata: read* (auto). No admin, no workflows, no actions, no repository secrets. **Created 2026-06-02; expires 2026-09-01.** Rotation reminder set; rotation event documented in operations.md ritual.
+- Token stored as `GITHUB_TOKEN` in `~/.hermes/.env` (mode 600). Never in tracked files; verified via `git status` clean + `grep -r GITHUB_TOKEN` showing only docs references.
+- `gh` CLI installed on the droplet (`apt install gh` or distro equivalent; `gh --version` returns ≥ 2.x). Authenticated via `gh auth login --with-token` reading the same token; `gh auth status` returns green.
+- Repo cloned to `/home/hermes/work/translation-app/` (HTTPS clone using PAT — no SSH key for the repo). `git config user.name "Hermes Agent"` and `git config user.email <Isaac decides: noreply or aliased>` set for the hermes user.
+- **Smoke test 1 — clone + pull.** `git clone https://x-access-token:$GITHUB_TOKEN@github.com/<owner>/<repo>.git /home/hermes/work/translation-app` succeeds. `cd` in; `git pull` works; `git status` clean.
+- **Smoke test 2 — branch, push, PR.** Hermes creates a `hermes-test-spec3` branch, makes a trivial change (touches `/tmp/throwaway.md` then reverts in working tree — no actual repo content modified), pushes via `git push --set-upstream origin hermes-test-spec3`, opens a draft PR via `gh pr create --draft --title "Spec 3 smoke test" --body "Verifies push + PR auth"`. PR appears in GitHub UI. Hermes closes the PR + deletes the branch (local and remote) at the end.
+- **Branch protection: deferred.** Both Rulesets and legacy Branch protection rules require a paid GitHub tier (Pro/Team) for private repos — confirmed 2026-06-02. Decisions.md 2026-06-02 entry captures the deferral with revisit triggers. Behavior-enforcement only for now: charter §6.1 (no direct pushes to main) + the framework-level git wrapper described in charter §11.1 #7 (agent's git wrapper aborts on main without explicit authorization). One of two §11.1 #7 mitigations holds; the platform-level one waits until cost justification or a near-miss.
+
+**Supabase access**
+- Supabase personal access token created at `https://supabase.com/dashboard/account/tokens`, named "hermes-prod". **Created 2026-06-02; expires 2026-09-01.** Stored as `SUPABASE_ACCESS_TOKEN` in `~/.hermes/.env` (mode 600). Rotation reminder set.
+- Supabase CLI installed on the droplet (`npm install -g supabase` or distro package; `supabase --version` ≥ current stable). `supabase login --token $SUPABASE_ACCESS_TOKEN` succeeds non-interactively. `supabase projects list` returns both `translationapp1` (prod) and `translationapp1-staging`.
+- Both project refs added to `~/.hermes/.env` as `SUPABASE_PROJECT_REF_PROD=...` and `SUPABASE_PROJECT_REF_STAGING=...`.
+- **Smoke test 3 — staging diff.** `supabase db diff --linked --project-ref $SUPABASE_PROJECT_REF_STAGING` runs cleanly (read-only; surfaces drift between `/V1/migrations/` and remote schema). Expected output: no drift, or minor expected drift that Isaac eyeballs.
+- **Smoke test 4 — destructive prompt fires.** Hermes attempts a `DROP TABLE test_xyz` against staging via `supabase db execute`. Framework's dangerous-cmd approval (per security docs §3.2) prompts on Discord. Isaac replies "no" → command blocked. No table actually needs to exist; the prompt firing is what's being verified.
+- *(If Open Question 2 = b or c)* Whichever read-isolation mechanism is chosen is implemented + smoke-tested: under (b), `DATABASE_URL_PROD_READONLY` connection string created with a SELECT-only Postgres role, stored in `~/.hermes/.env`, and `psql $DATABASE_URL_PROD_READONLY -c "SELECT count(*) FROM messages;"` returns a number; `INSERT` against the same role fails as expected. Under (c), Hermes's Supabase account has prod scoped to read-only via invitation, verified by attempting a staging-write (succeeds) and a prod-write (fails with permission error).
+
+**Vercel access**
+- Vercel personal access token created at `https://vercel.com/account/tokens`, named "hermes-prod". **Created 2026-06-02; expires 2026-08-31 (earliest expiry across the three — this is the rotation trigger date).** Stored as `VERCEL_TOKEN` in `~/.hermes/.env` (mode 600). Rotation reminder set.
+- Vercel CLI installed on the droplet (`npm install -g vercel`; `vercel --version` ≥ current stable). `vercel whoami --token $VERCEL_TOKEN` returns Isaac's Vercel handle (or team if project lives under one).
+- From inside `/home/hermes/work/translation-app/`, `vercel link --yes --token $VERCEL_TOKEN` connects to the existing Translation App Vercel project; `.vercel/project.json` written. (This file is per-clone, not committed.)
+- **Smoke test 5 — preview deploy.** Hermes creates `hermes-test-spec3-deploy`, makes a no-op commit, runs `vercel deploy --token $VERCEL_TOKEN` (default = preview). Returns a `*.vercel.app` URL. Isaac visits → confirms it's pointed at staging Supabase (per Phase 2 staging env-var config from 2026-05-18). Branch deleted after.
+- **Smoke test 6 — prod-deploy gating.** Hermes is asked to do a prod deploy. Per charter §6.2, Hermes posts a confirmation plan to Discord *before* running `vercel deploy --prod`. Isaac replies "no" → no deploy. Then test the positive path on a real (or trivially-no-op) prod-worthy change: Isaac replies "yes" → deploy happens → confirm via Vercel dashboard.
+
+**Working directory + gateway**
+- `MESSAGING_CWD=/home/hermes/work/translation-app` added to `~/.hermes/.env`. Gateway picks it up after `sudo systemctl restart hermes-gateway`. Verified by DM'ing Hermes "what is your current working directory?" → returns `/home/hermes/work/translation-app`.
+- Reboot persistence from Spec 2 still passes: `sudo reboot`, SSH back in, `systemctl status hermes-gateway` shows active running, working directory still correct.
+
+**Approval-mode posture preserved**
+- `~/.hermes/config.yaml` `approvals` block remains: `mode: manual`, `cron_mode: deny`, `mcp_reload_confirm: true`, `destructive_slash_confirm: true`. No YOLO mode introduced anywhere. No new entries to `command_allowlist` unless a specific smoke test legitimately requires one (none anticipated).
+
+**Docs hygiene**
+- `decisions.md` entries drafted by Cowork for: (a) GitHub fine-grained-PAT scope choice; (b) Supabase auth model chosen per Open Question 2; (c) Vercel prod-deploy gating mechanism per Open Question 3. Per-entry approval per charter §2.
+- `verification.md` gets a new "Hermes access credentials — Spec 3 (YYYY-MM-DD)" section: the six smoke tests above as a re-runnable checklist, a `~/.hermes/.env` variable-name inventory (names only, never values), a post-rotation checklist (re-run all six smokes after any PAT rotation), and a known-failure-modes table.
+- `hermes.md` §10.7 updated to reflect actual mechanisms (currently aspirational; this spec operationalizes them).
+- `roadmap.md` Phase 1.5 checkbox 5 marked done with commit reference; line updated.
+
+### Out of scope (later specs)
+- `translation_events` and `agent_events` schema → **Spec 4**
+- First Hermes-touches-codebase real task → **Spec 5+**
+- Supabase backups beyond DO's weekly snapshots → defer; staging restore drill is its own spec once Hermes is doing real work
+- Secrets-management upgrade (Doppler / 1Password Connect / Vault) → defer; `~/.hermes/.env` is sufficient for single-VPS, single-operator
+- GitHub Actions / CI integration → defer; no CI today
+- Token rotation automation → manual rotation on 90-day calendar; automate later if it becomes painful
+
+### Open questions (resolved 2026-06-02)
+
+1. **Enable GitHub branch protection on `main`?** *Resolved: **yes intent → deferred in practice.*** Both Rulesets and legacy Branch protection rules require GitHub Pro/Team for private repos (Isaac verified 2026-06-02). Deferred to a future trigger (cost-justifiable upgrade or first agent-initiated near-miss). Behavior-enforcement only for now via charter §6.1 + framework git wrapper. Full reasoning + revisit triggers in decisions.md 2026-06-02 entry. Captured as a parking-lot item under Infrastructure.
+
+2. **Supabase prod write-access model.** *Resolved: **(b)** — single PAT + separate read-only Postgres role + `DATABASE_URL_PROD_READONLY` for prod inspection.* Read/write separation at the connection-string layer; writes still go through PAT and §6.2 gating. Captures most of option (c)'s blast-radius story without the second-account overhead.
+
+3. **Vercel prod-deploy gating mechanism.** *Resolved: **(a)** — operating-contract only.* Charter §2 + §6.2 require Hermes to post a confirmation plan to Discord before running `vercel deploy --prod`. Same enforcement layer as every other §6.2-gated op. Wrapper-script option (c) captured as a parking-lot item to add if (a) ever fails in practice.
+
+4. **PAT expiry / rotation cadence.** *Resolved: **90 days** across all three (GitHub, Supabase, Vercel).* Actual creation dates 2026-06-02; expiry dates 2026-08-31 (Vercel) and 2026-09-01 (GitHub, Supabase). **Rotation trigger date: 2026-08-31** (earliest expiry; rotate all three in the same sitting to keep one calendar slot). Ritual added to `operations.md` and monthly digest. **PAT** = Personal Access Token; the GitHub-issued credential (and the equivalent in Supabase / Vercel) that acts like a scoped, revocable password for CLI + API access. Fine-grained PATs are scoped to specific repos with specific permission slices (Contents read+write, Pull requests read+write, etc.) — narrower blast radius than the classic per-account PAT.
+
+### Technical sketch (fill out fully at execution; key sequencing only here)
+
+1. **Open questions resolved with Isaac** (~10 min). Walk OQ 1–4, lock answers, mark spec **approved**, capture the resolution in the spec body.
+2. **GitHub** (~20 min). PAT already created (token in Isaac's password manager); install `gh` on the droplet → `gh auth login --with-token` → store `GITHUB_TOKEN` in `~/.hermes/.env` → clone repo → set git config → smoke tests 1 + 2.
+3. ~~Branch protection~~ — deferred per OQ1 resolution; no work this session.
+4. **Supabase** (~25 min — OQ2 = b path). PAT already created; install supabase CLI → `supabase login --token` → store `SUPABASE_ACCESS_TOKEN` + both project refs in `~/.hermes/.env` → smoke tests 3 + 4. Then: create read-only Postgres role on prod via SQL editor (CREATE ROLE hermes_readonly with SELECT-only grants on app schemas), capture connection string, store as `DATABASE_URL_PROD_READONLY` in `~/.hermes/.env`, verify read works + write fails.
+5. **Vercel** (~15 min). Token already created; install CLI → store `VERCEL_TOKEN` in `~/.hermes/.env` → `vercel link` → smoke test 5 → smoke test 6 (gating walkthrough negative path; positive path deferred until first real prod-worthy deploy is queued).
+6. **Working directory + gateway restart** (~5 min). Set `MESSAGING_CWD` → restart `hermes-gateway` → verify cwd via DM.
+7. **Docs cleanup** (~15–20 min). Decisions entries drafted + per-entry approval per charter §2 (entries a/b/c per Docs Hygiene below — note: branch-protection deferral entry already landed in this session's pre-execution commit, so not re-drafted at execution time); verification.md section created; hermes.md §10.7 updated; roadmap checkbox 5 done; spec status → shipped; one commit covers it.
+
+### Verification plan
+Full record lives in `/docs/verification.md` "Hermes access credentials — Spec 3 (YYYY-MM-DD)" after ship. Includes: the six smoke tests above as a re-runnable checklist, `~/.hermes/.env` inventory (names only), post-rotation checklist, known-failure-modes table seeded with the obvious candidates (token expired; PAT scoped wrong; supabase project ref typo; vercel project not linked; etc.).
 
 ---
 

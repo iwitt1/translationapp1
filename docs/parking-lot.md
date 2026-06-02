@@ -4,7 +4,7 @@
 >
 > Format: each item has a short description, a "why interesting" note, and (if relevant) a "trigger" — the condition under which it should be reconsidered for the roadmap.
 
-**Last updated:** 2026-05-18 (vestigial-columns + realtime-publication tech-debt items; per-context user profile variation item; testing/QA/CI staged build-out)
+**Last updated:** 2026-06-02 (added "GitHub branch protection — paid-tier upgrade" under Infrastructure; surfaced during Spec 3 execution when GitHub blocked free-tier private-repo branch protection.)
 
 ---
 
@@ -257,6 +257,12 @@ Internal first (catch our own bugs that cause runaway calls), external second (b
 Where data physically lives matters for some markets (EU, healthcare). Supabase region is `us-east-1` for both prod and staging (confirmed 2026-05-18 in operations.md §4). Entering an EU market or a regulated US healthcare context likely requires either a regional Supabase project or self-hosted Postgres in-region.
 - **Why interesting:** Compliance requirement for some verticals.
 - **Trigger:** Entering a market with data residency requirements (EU healthcare especially).
+
+### GitHub branch protection on `main` — paid-tier upgrade
+Enable platform-level branch protection on the `main` branch — the structural mitigation charter §11.1 #7 calls out for the "direct-to-main push" failure mode. Both Rulesets and legacy Branch protection rules require GitHub Pro (individual, ~$4/mo) or Team (org, ~$4/user/mo) on private repositories — confirmed 2026-06-02 during Spec 3 execution. Deferred to behavior-enforcement only for now; see `decisions.md` 2026-06-02 entry "Defer structural GitHub branch protection on `main`".
+- **Why interesting:** Adds the second of two §11.1 #7 mitigations as a defense-in-depth layer. "The platform refuses" is more robust than "the agent refuses" if Hermes's operating contract is ever misinterpreted or bypassed.
+- **Trigger:** Hermes attempts a direct push to `main` (near-miss), OR Hermes graduates supervised mode at Day 30, OR a second human gains write access to the repo, OR operations.md cost capacity makes $4–8/mo affordable without trade-off.
+- **Surfaced:** 2026-06-02 during Spec 3 execution.
 
 ---
 

@@ -5,7 +5,7 @@
 > **What lives here:** committed work in priority order.
 > **What does NOT live here:** ideas we haven't decided to build. Those go in `parking-lot.md`.
 
-**Last updated:** 2026-06-02 (Phase 1.5 infrastructure — Discord gateway live; Sonnet routing live; per-agent Opus tier override carved into Spec 2.1. Checkbox 4 done; checkbox 3 partial. See specs.md Spec 2 (shipped 2026-06-02 narrowed) + Spec 2.1 (draft) and decisions.md 2026-06-02 entries.)
+**Last updated:** 2026-06-02 (Phase 1.5 infrastructure — Discord gateway live; Sonnet routing live; per-agent Opus tier override carved into Spec 2.1. Checkbox 4 done; checkbox 3 partial. Spec 3 — access credentials — approved and ready to execute. Added "Cowork ↔ Hermes interface follow-ups" subsection capturing the Cowork-sandbox git-pull auth gap surfaced during Spec 3 drafting. See specs.md Spec 2 (shipped 2026-06-02 narrowed) + Spec 2.1 (draft) + Spec 3 (approved) and decisions.md 2026-06-02 entries.)
 
 ---
 
@@ -90,7 +90,12 @@
 - [x] Install Hermes Agent — pinned to v0.14.0 (git tag `v2026.5.16`) at `/home/hermes/.hermes/venv/`. Shipped 2026-06-01 per Spec 1. Version-pin rationale in `/docs/decisions.md` 2026-06-01 entry.
 - [~] Configure tiered model routing: Claude Sonnet 4.6 as default *(done 2026-06-02 per Spec 2; provider Anthropic direct, model `claude-sonnet-4-6`)*; explicit Opus escalation per `/docs/hermes.md` §3 rules *(deferred to **Spec 2.1**)*.
 - [x] Wire up one messaging gateway — **Discord** (not Telegram; updated per Spec 2 scoping decision). Live as systemd service `hermes-gateway` since 2026-06-02; allowlist enforced; smoke + reboot tests passed. See `verification.md` "Hermes model routing + Discord gateway (2026-06-02)".
-- [ ] Set Hermes's access credentials: GitHub PAT scoped to the repo (commits + branches, no admin), Supabase CLI authenticated to both projects (prod read-only by default, write permission gated on §6.2 confirmation), Vercel CLI authenticated (staging autonomous, prod gated).
+- [ ] Set Hermes's access credentials: GitHub PAT scoped to the repo (commits + branches, no admin), Supabase CLI authenticated to both projects (prod read-only via separate Postgres role + readonly DATABASE_URL, write permission gated on §6.2 confirmation), Vercel CLI authenticated (staging autonomous, prod gated). **Spec 3 (approved 2026-06-02).**
+
+### Cowork ↔ Hermes interface follow-ups
+*Trigger: after Hermes Specs 1, 2, 2.1, 3, and 4 all ship — i.e., after Hermes is operationally complete on its end.*
+
+- [ ] Fix the Cowork sandbox so the session-start `git pull --ff-only` actually authenticates and runs. Currently fails with `fatal: could not read Username for 'https://github.com'` because the sandbox has no GitHub credentials. Without this, the session-start protocol in the Cowork project instructions can't pull Hermes's pushes since the last session, which means cowork-handoff.md may be stale + Cowork can branch from out-of-date state. Mechanism TBD — options: scoped read-only GitHub PAT mounted into the sandbox via Cowork's settings, SSH key in the sandbox, credential helper, or a custom session-start script that handles auth. Investigate and pick before opening for execution. *Surfaced 2026-06-02 during Spec 3 drafting when the session-start `git pull` failed with no auth.*
 
 ### Event log schema (per hermes.md §7)
 - [ ] Create `translation_events` table (full schema in `/docs/hermes.md` §7.2). Run on staging first, then prod.
