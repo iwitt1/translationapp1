@@ -4,7 +4,52 @@
 >
 > Spec lifecycle: **draft** → **approved** → **in-flight** → **shipped** → **archived**. When a spec ships, mark it `shipped` here with the commit reference and move the verification details to `/docs/verification.md`. Archive specs after one cycle of "shipped" review (typically 2-4 weeks) — move them to a future `/docs/specs-archive.md` if/when this file exceeds ~600 lines.
 
-**Last updated:** 2026-06-01 (Spec 2 drafted and approved; Spec 1 shipped earlier same day. Section order: approved → shipped.)
+**Last updated:** 2026-06-02 (Spec 2 shipped with narrowed scope; Spec 2.1 drafted for the deferred follow-ups. Section order: draft → shipped.)
+
+---
+
+## Spec 2.1 — Hermes Agent — Opus tier override, Hermes-internal cost caps, browser tools activation
+
+**Linked roadmap item:** Phase 1.5 → Infrastructure (checkbox 3 follow-up — finish the *tiered* part of tiered model routing)
+**Author:** Isaac (drafted with Cowork, 2026-06-02; carved out of Spec 2 on ship day)
+**Status:** **draft** (not yet sequenced; will be scheduled after at least 24-72h of Hermes-on-Discord observation gives us actual usage signal)
+**Estimated time:** ~45-60 min
+
+### Goal
+Close the residual items from Spec 2's narrowed scope: implement the per-agent tier override that routes specific Hermes-side tasks to Opus per `/docs/hermes.md` §3 escalation rules; layer Hermes-internal cost caps under the Anthropic console-side caps as defense-in-depth; activate the optional browser tools that warned at startup (`websockets` module + Playwright); minor operator-experience improvements like adding `hermes` to the `systemd-journal` group so debugging doesn't require `sudo`.
+
+### Acceptance criteria
+- Hermes's `~/.hermes/config.yaml` defines per-agent tier overrides that map the §3 escalation triggers (touches >3 files; touches translate prompt/API/schema; second-attempt failure; ambiguous task; pre-implementation checklist hit) to Opus 4.6 (`claude-opus-4-6` or current equivalent). Exact YAML structure resolved against the Hermes Agent docs at ship time.
+- A deterministic smoke test exists: a known prompt or test agent triggers Opus on first turn, Sonnet on a follow-up turn. Verified via Anthropic console showing both models used in the smoke-test window.
+- Hermes-internal `limits:` block (or equivalent — schema confirmed against docs) layered under the Anthropic vendor-side cap. Daily soft = $1, daily hard = $3 (returns to spec wording now that we can express this at the Hermes layer). Anthropic monthly cap stays at $64 as the outer safety net.
+- Browser tools cleanly registered: `pip install websockets` in the venv eliminates the `browser_dialog_tool` import warning at startup. Playwright Python package installed in the venv and `playwright install chromium` run; system Chromium libs from Spec 1 Phase C are reused. `hermes acp --setup-browser` (or successor) runs cleanly. Smoke test: ask Hermes to fetch a known URL and summarize.
+- `sudo usermod -aG systemd-journal hermes` so hermes user can `journalctl -u hermes-gateway` without sudo. Verified by a fresh shell.
+- No regressions: Spec 2's verification record (`/docs/verification.md` "Hermes model routing + Discord gateway") still passes end-to-end after these changes.
+- `decisions.md` entries drafted by Cowork for the non-trivial choices that surface (e.g. exact tier YAML structure if unusual; any Playwright/browser config that requires explanation). Per-entry approval per charter §2.
+
+### Out of scope (later specs)
+- Access credentials (GitHub PAT, Supabase CLI, Vercel CLI) → **Spec 3**
+- `translation_events` / `agent_events` schema → **Spec 4**
+- First Hermes-touches-codebase task → **Spec 5+**
+- Multi-gateway expansion (Telegram/Slack/email alongside Discord) → deferred per Spec 2
+
+### Open questions (resolve at execution)
+1. Exact YAML structure for per-agent tier overrides in Hermes Agent v0.14.0 — read docs first, draft against schema.
+2. Whether browser tools want the `pip install hermes-agent[browser]` extra or a manual `pip install websockets playwright` — confirm against docs.
+3. Cost-cap config: env-var keys (`LIMITS_DAILY_SOFT_USD=...`) vs config.yaml `limits:` block — pick whichever matches v0.14.0's actual schema.
+
+### Technical sketch (skeletal — fill out at execution)
+1. Read Hermes Agent docs for tier overrides + limits + browser tools (~10 min).
+2. Edit `~/.hermes/config.yaml` for tier overrides + Hermes-internal limits (~10 min).
+3. `pip install websockets` and Playwright per docs (~10 min).
+4. `hermes acp --setup-browser` (or equivalent) and verify browser tool registration (~5 min).
+5. `sudo systemctl restart hermes-gateway` and verify clean startup with no warnings (~3 min).
+6. Smoke tests: Opus escalation triggered + browser fetch + non-allowed user ignored (~10 min).
+7. `sudo usermod -aG systemd-journal hermes` + verify (~2 min).
+8. Docs cleanup: update spec status → shipped, append decisions entries, refresh verification.md "Hermes model routing + Discord gateway" with the new items, mark Phase 1.5 checkbox 3 fully done (~15 min).
+
+### Verification plan
+Will be merged into the existing `/docs/verification.md` "Hermes model routing + Discord gateway" section as a `2026-XX-XX update` paragraph rather than a fresh section — same shipped surface, just hardened.
 
 ---
 
@@ -12,8 +57,8 @@
 
 **Linked roadmap item:** Phase 1.5 → Infrastructure (checkboxes 3 and 4 — configure tiered model routing; wire up one messaging gateway)
 **Author:** Isaac (drafted with Cowork, 2026-06-01)
-**Status:** **approved 2026-06-01** (open-question answers locked; ready to enter `in-flight` when execution session starts)
-**Estimated time:** 1.5–2 hours including smoke tests and a 24-hour cost-cap observation window before status → shipped
+**Status:** **shipped 2026-06-02 (narrowed).** What shipped: Sonnet default routing, Discord gateway as a systemd service, allowlist enforcement, reboot persistence, vendor-side cost caps. What got carved out into **Spec 2.1**: per-agent Opus tier override; Hermes-internal cost-cap layer; full browser tools activation; `systemd-journal` group add for hermes. Verification record: `/docs/verification.md` "Hermes model routing + Discord gateway (2026-06-02)". Decisions: 2026-06-02 entries in `/docs/decisions.md` (Anthropic direct provider; vendor-side cost caps via Anthropic console).
+**Estimated time:** 1.5–2 hours. Actual: ~2 hours for the execution session (browser prep + droplet config + reboot test); docs cleanup added ~25 min.
 
 ### Goal
 Get Hermes responsive on Discord with Sonnet as the default model and Opus available via per-task escalation, gated by the rules in `/docs/hermes.md` §3. End state: Isaac sends a Discord DM (or channel message) to the Hermes bot from his phone; Hermes receives it, routes to Sonnet by default, responds with a §8.1-style task report; Anthropic billing reflects the call. No actual project work executed yet — that's Spec 3 (access credentials) and beyond.
@@ -43,53 +88,47 @@ Get Hermes responsive on Discord with Sonnet as the default model and Opus avail
 - Voice mode → not in scope; if interesting later, separate spec
 - Skill installation / customization beyond what `hermes gateway setup` registers by default → deferred to a Hermes-operations spec post-Day 7
 
-### Open questions (resolved 2026-06-01)
-1. **AI provider** — *Resolved:* **Anthropic direct**. Switching to OpenRouter remains a config-only change later if we want to A/B-test providers.
-2. **Cost caps for first 72 hours** — *Resolved:* **Conservative** ($1/day soft, $3/day hard). Raise to charter §6.5 defaults via follow-up decisions.md entry once signal is in.
-3. **Where the API key lives** — *Resolved:* **Option B**, `~/.hermes/.env` (mode 600), referenced from config.yaml as `${ANTHROPIC_API_KEY}`.
-4. **Private Discord server or DM-only** — *Resolved:* **Private server with a dedicated channel** (e.g. `#hermes-prod`).
-5. **Exact model strings** — *Defer to execution.* Confirm what `hermes model` accepts at run time; document the chosen strings in the spec before status → shipped.
-6. **Single-user identity verification config** — *Defer to execution.* Confirm the exact config key during `hermes gateway setup`; document.
-7. **Smoke-test trigger for Opus escalation** — *Defer to execution.* Pick a deterministic trigger (likely a tier-override on a test-agent config) once the per-agent tier mechanism is in front of us.
+### Open questions (resolved 2026-06-01 / 2026-06-02)
+1. **AI provider** — *Resolved (06-01):* **Anthropic direct**. Switching to OpenRouter remains a config-only change later if we want to A/B-test providers. See decisions.md 2026-06-02 entry.
+2. **Cost caps** — *Resolved (06-02):* **Anthropic vendor-side caps**, not Hermes-internal. $1/day target + $64/month max with email warnings at $15 and $40 of monthly spend. Spec's original "$1 soft / $3 hard daily" wording doesn't translate well to monthly billing — captured in decisions.md 2026-06-02 entry. Hermes-internal layer of caps deferred to Spec 2.1.
+3. **Where the API key lives** — *Resolved (06-01):* **Option B**, `~/.hermes/.env` (mode 600). Confirmed by Hermes Agent docs as the canonical location for `ANTHROPIC_API_KEY` (and `DISCORD_BOT_TOKEN`, `DISCORD_ALLOWED_USERS`).
+4. **Private Discord server or DM-only** — *Resolved (06-01):* **Private server with a dedicated channel** (`#hermes-prod`). Bot configured with home channel ID for cron output / proactive messages.
+5. **Exact model strings** — *Resolved (06-02):* Active model is `claude-sonnet-4-6` (hyphen-separated, no provider prefix in `hermes model` flow). Set via `hermes model` → Anthropic → "Use existing credentials" → model picker.
+6. **Single-user identity verification config** — *Resolved (06-02):* `DISCORD_ALLOWED_USERS` in `~/.hermes/.env` (comma-separated user IDs). Gateway denies all users without this set. Verified enforcement: the wizard explicitly required setting this before completing.
+7. **Smoke-test trigger for Opus escalation** — *Deferred to Spec 2.1.* The per-agent tier override mechanism needs more docs deep-dive than this session warranted; carving into a focused follow-up rather than improvising config schema.
 
-### Technical sketch (single Cowork+Isaac session, supervised execution)
-1. **Anthropic API key obtained** (~5 min, Isaac side). If no Anthropic console account yet: sign up at console.anthropic.com, add payment, generate API key tagged "hermes-prod". Save key + console login to password manager.
-2. **Discord bot created** (~10 min). discord.com/developers/applications → New Application → name "Hermes-prod" (or Isaac's choice). Bot tab → enable Bot → disable "Public Bot" → enable "Message Content Intent" → Reset Token → copy to password manager.
-3. **Private Discord server created** (~5 min, Isaac side). Discord client → "Add a Server" → "Create My Own" → name "Hermes" → create one channel `#hermes-prod`. OAuth2 → URL Generator with `bot` + `applications.commands` scopes plus the permissions Hermes docs specify; visit URL; authorize bot into the server.
-4. **Env vars on droplet** (~5 min). SSH as hermes → `nano ~/.hermes/.env` with `ANTHROPIC_API_KEY=...` and `DISCORD_BOT_TOKEN=...` → `chmod 600 ~/.hermes/.env`. Wire env into Hermes Agent per the framework's convention (likely a `dotenv` reference in config.yaml; confirm at hermes-agent.nousresearch.com/docs).
-5. **Run `hermes model`** (~5 min). Select Anthropic provider; pick `claude-sonnet-4-6` (or the exact string Hermes Agent v0.14.0 expects — see open question 5). Confirm with `hermes config show` or equivalent.
-6. **Run `hermes gateway setup` for Discord** (~10 min). Walk the interactive prompts. Provide bot token. Set the allowed user IDs to Isaac's Discord ID only (per open question 6 resolution).
-7. **Configure cost caps** (~5 min). Set per-day soft/hard caps in Hermes's config (whatever the v0.14.0 mechanism is — likely a `limits:` block in config.yaml). $1/$3 for first 72 hours.
-8. **Persistent service via systemd** (~10 min). Write `/etc/systemd/system/hermes-agent.service` (Type=simple, Restart=on-failure, User=hermes, EnvironmentFile=`~/.hermes/.env`, ExecStart=`/home/hermes/.hermes/venv/bin/hermes gateway start` or equivalent per docs). `systemctl daemon-reload && systemctl enable --now hermes-agent`. Verify `systemctl status hermes-agent` shows active.
-9. **Smoke test 1: version check** (~5 min). DM bot "what's your version?". Verify response, billing post, clean logs.
-10. **Configure Opus escalation tier** (~10 min). Edit config.yaml per Hermes Agent's per-agent tier docs. Map the §3 escalation triggers to a tier override that routes to Opus (`claude-opus-4-6` or current equivalent).
-11. **Smoke test 2: escalation** (~5 min). Trigger a known-escalation task. Verify Opus turn → Sonnet turn in billing.
-12. **24-hour cost observation window** (passive). Note observed daily total; if under $1, raise to charter defaults with a follow-up decisions.md entry; if at the cap and apparently due to a runaway loop, debug before status → shipped.
-13. **Document and decide** (~20 min). Draft decisions.md entries (provider, cost-cap conservative posture, private-server posture), draft verification.md "Hermes model routing + Discord gateway (date)" section, mark roadmap.md Phase 1.5 checkboxes 3 and 4, move spec status → shipped with commit ref.
+### Technical sketch — as executed 2026-06-02 (status of each step)
+1. **Anthropic API key obtained.** *Done.* Existing console account; new key tagged "hermes-prod" generated; saved to password manager. Billing already enabled.
+2. **Discord bot created.** *Done.* Developer Portal → New Application → "Hermes-prod" → Bot tab → Public Bot OFF + Message Content Intent ON + Reset Token → token saved to password manager. **Note:** Installation tab also required Install Link → "None" to allow Public Bot OFF (newer Discord UI mechanic; documented in failure-mode table).
+3. **Private Discord server created.** *Done.* "Hermes" server with `#hermes-prod` channel. OAuth2 URL Generator → `bot` + `applications.commands` scopes + read/send/history/slash perms → bot invited and member-listed (offline until gateway started).
+4. **Env vars on droplet.** *Done.* `~/.hermes/.env` populated with `ANTHROPIC_API_KEY`, `DISCORD_BOT_TOKEN`, `DISCORD_ALLOWED_USERS`. Mode 600, owner hermes. Auto-loaded by Hermes Agent (no extra config.yaml wiring needed — framework reads `~/.hermes/.env` natively).
+5. **`hermes model`** *Done.* Anthropic provider detected from env (showed `Anthropic credentials: sk-ant-api03... ✓` and `(-)` against Anthropic in the picker). "Use existing credentials" → model picker → Sonnet 4.6 selected. Resolved model string: `claude-sonnet-4-6`.
+6. **`hermes gateway setup` for Discord.** *Done.* Interactive wizard saved Discord token, allowlist (Isaac's user ID), and home channel ID (`#hermes-prod` channel) into `.env` and config.
+7. **Cost caps.** *Done at Anthropic console layer (not Hermes-internal).* See decisions.md 2026-06-02 entry. Hermes-internal layer deferred to Spec 2.1.
+8. **Persistent service via systemd.** *Done.* Service: `hermes-gateway.service` at `/etc/systemd/system/`. Installed via `sudo /home/hermes/.hermes/venv/bin/hermes gateway install --system --run-as-user hermes` (sudo strips PATH, hence the full path — captured in verification.md known failures). `systemctl status` shows active running with hermes as the service user. Enabled (auto-start on boot).
+9. **Smoke test 1: version check.** *Done.* DM "@Hermes-prod what version are you running?" → Hermes responded by actually running `pip show hermes-agent` on the droplet and reporting "Hermes Agent v0.14.0 by Nous Research." End-to-end Discord → Sonnet → tool use → response chain validated.
+10. **Configure Opus escalation tier.** *Carved out to Spec 2.1.*
+11. **Smoke test 2: escalation.** *Carved out to Spec 2.1.*
+12. **Reboot persistence test.** *Done (replaces the original "24-hour cost observation" item — observation continues passively post-ship).* `sudo reboot`, SSH back in, `systemctl status hermes-gateway` showed `active (running)` with newer `ActiveEnterTimestamp` (PID 3395 → 772). Bot Online in Discord without intervention. systemd `enabled` is doing its job.
+13. **Document and decide.** *In flight as part of the ship commit.*
 
-### Verification plan (becomes a section of `/docs/verification.md` after acceptance)
-- [ ] Discord bot shows "Online" in your private server and responds to a DM within 10 seconds
-- [ ] `journalctl -u hermes-agent -n 50` shows clean startup; no token or auth errors
-- [ ] `hermes config show` (or equivalent) reports the pinned Sonnet model as default
-- [ ] Anthropic dashboard: at least one call posted; smoke-test cost <$0.10 per turn
-- [ ] A message from a non-Isaac Discord user ID is logged but not acted on
-- [ ] systemd service: `systemctl status hermes-agent` shows `active (running)`; service restarts on boot (verify with `sudo reboot && sleep 60 && ssh && systemctl status`)
-- [ ] First 24 hours of Discord traffic totals under tightened cost caps ($1/day)
-- [ ] No secrets in tracked files: `git status` clean, `grep -r ANTHROPIC_API_KEY .` shows only documentation refs, same for `DISCORD_BOT_TOKEN`
-- [ ] `~/.hermes/.env` has mode 600 (owner read/write only)
-- [ ] Sample Opus-escalation prompt resolves through Opus on first turn, Sonnet on follow-up
+### Verification plan
+Full verification record (run-after-any-change checklist, operational notes, known failure modes) lives in `/docs/verification.md` "Hermes model routing + Discord gateway (2026-06-02)". Re-run after any infra or config change.
 
-### Failure-mode preview (added to verification.md after shipping)
+### Failure-mode preview (rolled into the verification.md section above)
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Bot shows online but never responds to DMs | Message Content Intent not enabled in Developer Portal | Bot page → Privileged Gateway Intents → toggle on, Save Changes, restart `hermes-agent` |
-| `hermes gateway setup` fails with "invalid token" | Token copied with trailing whitespace, or token was reset after copy | Reset Token in Developer Portal, recopy carefully, re-run setup |
-| 401 from Anthropic on first call | API key not in env vars where Hermes can read; key has no billing enabled | Verify `~/.hermes/.env` permissions and contents; check Anthropic console billing |
-| Hermes responds but billing posts Opus when expected Sonnet | Tier override config wrong; model name typo'd | Re-check config.yaml; `hermes config show` to confirm default; clear cached state |
-| Daily cost spike beyond cap | Retry loop / stuck escalation / runaway prompt | Hard cap should auto-pause; manual fallback: `systemctl stop hermes-agent` and investigate logs |
-| Slash commands missing in Discord | Gateway never registered them; another follower gateway took registration | `hermes gateway setup` again with slash registration enabled; ensure no second Hermes gateway pointing at same bot |
-| Hermes drops offline after droplet reboot | systemd unit not enabled, or `EnvironmentFile` path wrong | `systemctl enable hermes-agent`; verify `~/.hermes/.env` referenced correctly; check `journalctl -u hermes-agent -b` |
-| `hermes model` rejects the model string | Hermes Agent v0.14.0 expects a different format (dot vs hyphen, prefixed vs bare) | Try `claude-sonnet-4-6`, `claude-sonnet-4.6`, `anthropic/claude-sonnet-4.6` in that order; document the working format in this spec before status → shipped |
+| Bot shows online but never responds to DMs | Message Content Intent not enabled in Developer Portal | Bot page → Privileged Gateway Intents → toggle on, Save Changes, restart `hermes-gateway` |
+| Developer Portal blocks toggling Public Bot OFF | Install Link set to public-discoverable mode | Installation tab → Install Link → **None** → save → return to Bot tab → toggle Public Bot OFF |
+| `sudo hermes ...` returns "command not found" | sudo strips PATH; venv binary not in default sudo path | Use full path: `sudo /home/hermes/.hermes/venv/bin/hermes ...` |
+| `journalctl -u hermes-gateway` shows no Discord connection logs (just one warning) | hermes user isn't in `systemd-journal` group; can only see process's own log lines | Use `sudo journalctl ...` for now; Spec 2.1 adds hermes to `systemd-journal` group |
+| `hermes gateway setup` fails with "invalid token" | Token copied with trailing whitespace, or token was reset after copy | Reset Token in Developer Portal, recopy carefully, re-run `hermes gateway setup` and choose Reconfigure |
+| 401 from Anthropic on first call | API key not in `~/.hermes/.env`; key has no billing enabled | Verify file contents + perms; check Anthropic console billing |
+| Daily cost spike | Retry loop or runaway prompt | Anthropic console enforces cap (calls 4xx after limit); manual fallback: `sudo systemctl stop hermes-gateway` and investigate `journalctl -u hermes-gateway` |
+| Slash commands missing in Discord | Gateway never registered them; another follower gateway took registration | Re-run `hermes gateway setup`; if running multiple gateways against the same bot, set `gateway.platforms.discord.extra.slash_commands: false` on the follower |
+| Hermes drops offline after droplet reboot | systemd unit not enabled, or `EnvironmentFile` path wrong | `systemctl is-enabled hermes-gateway` should return `enabled`; verify `~/.hermes/.env` exists; check `journalctl -u hermes-gateway -b` for the failed startup |
+| Startup warnings: "Opus codec not found" and "websockets module" | Optional voice + browser tool subsystems not provisioned | Both benign for current scope. Voice intentionally OOS forever (no plan to use). Browser tools activated in Spec 2.1 (`pip install websockets`, Playwright + `hermes acp --setup-browser`) |
+| Wizard can't install systemd unit ("requires sudo") | Interactive TUI can't escalate cleanly | Wizard prints the exact `sudo …` commands to run; copy-paste them with the full venv path |
 
 ---
 

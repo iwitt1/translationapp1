@@ -5,7 +5,7 @@
 > **What lives here:** committed work in priority order.
 > **What does NOT live here:** ideas we haven't decided to build. Those go in `parking-lot.md`.
 
-**Last updated:** 2026-06-01 (Phase 1.5 infrastructure — VPS provisioned and Hermes Agent installed; first two checkboxes done. See specs.md Spec 1 (shipped 2026-06-01) and decisions.md 2026-06-01 entries.)
+**Last updated:** 2026-06-02 (Phase 1.5 infrastructure — Discord gateway live; Sonnet routing live; per-agent Opus tier override carved into Spec 2.1. Checkbox 4 done; checkbox 3 partial. See specs.md Spec 2 (shipped 2026-06-02 narrowed) + Spec 2.1 (draft) and decisions.md 2026-06-02 entries.)
 
 ---
 
@@ -88,8 +88,8 @@
 ### Infrastructure
 - [x] Provision VPS — DigitalOcean droplet `hermes-prod` (1 GB / 1 vCPU / 35 GB SSD / Ubuntu 24.04 LTS / NYC3 / weekly backups / $9.60/mo). Shipped 2026-06-01 per Spec 1. Provider rationale in `/docs/decisions.md` 2026-06-01 entry.
 - [x] Install Hermes Agent — pinned to v0.14.0 (git tag `v2026.5.16`) at `/home/hermes/.hermes/venv/`. Shipped 2026-06-01 per Spec 1. Version-pin rationale in `/docs/decisions.md` 2026-06-01 entry.
-- [ ] Configure tiered model routing: Claude Sonnet 4.6 as default; explicit Opus escalation per `/docs/hermes.md` §3 rules.
-- [ ] Wire up one messaging gateway (Telegram recommended per hermes.md §13 — lowest friction).
+- [~] Configure tiered model routing: Claude Sonnet 4.6 as default *(done 2026-06-02 per Spec 2; provider Anthropic direct, model `claude-sonnet-4-6`)*; explicit Opus escalation per `/docs/hermes.md` §3 rules *(deferred to **Spec 2.1**)*.
+- [x] Wire up one messaging gateway — **Discord** (not Telegram; updated per Spec 2 scoping decision). Live as systemd service `hermes-gateway` since 2026-06-02; allowlist enforced; smoke + reboot tests passed. See `verification.md` "Hermes model routing + Discord gateway (2026-06-02)".
 - [ ] Set Hermes's access credentials: GitHub PAT scoped to the repo (commits + branches, no admin), Supabase CLI authenticated to both projects (prod read-only by default, write permission gated on §6.2 confirmation), Vercel CLI authenticated (staging autonomous, prod gated).
 
 ### Event log schema (per hermes.md §7)

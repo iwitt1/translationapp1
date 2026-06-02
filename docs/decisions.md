@@ -16,6 +16,64 @@
 
 ---
 
+## 2026-06-02 — Anthropic direct as Hermes Agent AI provider
+
+**Decision:** Hermes Agent routes inference through Anthropic's native API directly (`ANTHROPIC_API_KEY` in `~/.hermes/.env`, provider configured via `hermes model` → Anthropic → "Use existing credentials"), not through OpenRouter or any other aggregator.
+
+**Context:** Spec 2 needed an AI provider configured before the Discord gateway could route messages. Hermes Agent v0.14.0 supports ~30 providers (`/docs/integrations/providers`); the realistic shortlist was Anthropic direct vs. OpenRouter (aggregator that fronts many providers including Anthropic).
+
+**Alternatives considered:**
+- *OpenRouter as aggregator.* One auth for many providers; easier to A/B test other models from Hermes's chat without re-configuring auth. ~5% margin over Anthropic-direct pricing. Adds a vendor in the critical path between Hermes and the model.
+- *Claude Max OAuth (Anthropic OAuth flow).* Cheaper if we already had a Max plan + extra credits. We don't; Isaac is on API pay-per-token. Not applicable.
+- *Self-hosted (Ollama / vLLM).* Off the table at this scale — Claude is the model decision per 2026-05-18 entry; running a frontier-comparable model ourselves is out of scope.
+
+**Reasoning:** Anthropic direct is the simplest correct configuration at this stage. The architecture's "abstract external service boundaries" principle (`architecture.md` §3.10) means the provider is swappable later: changing to OpenRouter is a config.yaml edit + new env var + restart, roughly 15-20 min of work plus a small follow-up decisions entry. No code anywhere in the project couples to "Anthropic specifically." Picking Anthropic direct today doesn't lock anything in.
+
+**Implications:**
+- Anthropic API key tagged "hermes-prod" in console, stored in `~/.hermes/.env` (mode 600), never in tracked files. Verified with `git status` + grep at ship time.
+- Sonnet 4.6 (`claude-sonnet-4-6`) is the active default model — set via `hermes model` → Anthropic → "Use existing credentials" → model picker. Switching models within Anthropic is a `/model` command in Discord (one-shot) or `hermes model` (persistent).
+- Opus 4.6 access verified by being on the same API key (no separate auth needed); the per-agent tier override that routes specific Hermes-side tasks to Opus per `hermes.md` §3 is deferred to **Spec 2.1**.
+- Anthropic console-side spend caps (per the companion decisions entry on cost caps) provide the safety rail rather than a Hermes-internal mechanism — vendor-side enforcement is more robust against a misbehaving Hermes config.
+
+**Revisit when:**
+- A model in Hermes's hands underperforms in a way that a different model (DeepSeek, Gemini, GPT-5, etc.) would meaningfully improve, and we want to A/B test from Hermes itself.
+- Anthropic's pricing or API stability changes materially.
+- A future spec needs multi-provider redundancy (e.g., automatic fallback when Anthropic has a 503).
+- We sign onto Claude Max + extra credits and want to migrate Hermes's billing surface to that.
+
+---
+
+## 2026-06-02 — Conservative cost caps on Hermes via Anthropic console, not Hermes-internal
+
+**Decision:** Hermes's per-day and per-month spend ceilings are enforced at the Anthropic console layer, not via Hermes Agent's internal cost-cap mechanism. Initial values: **$1/day** target and **$64/month** absolute cap, with email warnings at $15 and $40 of monthly spend. These supersede the spec's literal "$1 soft / $3 hard daily" wording.
+
+**Context:** Spec 2 called for "conservative cost caps for first 72 hours" in line with `hermes.md` §6.5 (charter default $5 soft / $15 hard daily, Claude API spend). The spec's literal wording of $1 soft / $3 hard daily came from drafting before we knew exactly which layer would enforce the cap. At ship time we had two options: Hermes Agent's internal limits (config.yaml `limits:` block, schema would require docs deep-dive) or Anthropic's console-side workspace/key spend limits.
+
+**Alternatives considered:**
+- *Hermes-internal config.yaml limits.* Auto-pauses Hermes-the-agent at the cap. More integrated; can trigger Hermes-side notifications. Less robust if Hermes itself misbehaves or the config gets edited.
+- *Anthropic console-side caps.* Vendor-enforced — Anthropic refuses requests once cap is hit, regardless of what Hermes thinks. More robust against Hermes-side bugs. Lower granularity on what Hermes does after hitting the cap (just sees API errors).
+- *Both layers.* Belt-and-suspenders. Worth doing once we tighten internal caps in Spec 2.1.
+- *No cap.* Rejected — the "$3,000 weekend bill" failure mode (`hermes.md` §11.1 #5) is exactly why this exists.
+
+**Reasoning:** Vendor-side enforcement is the more robust layer for "make sure we never get a surprise bill" — it doesn't depend on Hermes's own config being correct or Hermes's process being healthy. The $1/day target reflects expected very-low traffic in supervised mode (only Isaac DM-ing the bot for tests). The $64/month absolute cap is intentionally generous as a safety net (≈2× a per-day soft cap × 30 days, with headroom for occasional bursts); it's the "never charge me more than this" promise, not the operational budget. Email warnings at $15 and $40 give early-warning escalation before the hard cap.
+
+The literal "$1 soft / $3 hard daily" the spec called for would have been brittle in monthly-billing terms — would trigger a hard cap on legitimate use during a long debugging day, defeating the goal. The current ($1/day target + $64/month-max + $15/$40 warning) is the right shape for monthly-billed APIs.
+
+**Implications:**
+- Anthropic dashboard is the source of truth for current cost-cap state; changes there don't require a code/config push.
+- Hermes-internal cost caps are NOT set in `~/.hermes/config.yaml`; if Hermes were to misbehave with a retry loop, it would discover the cap by getting 429s/quota errors from Anthropic. That's the intended behavior at this stage.
+- Spec 2.1 will tighten by adding Hermes-internal `limits:` config as a defense-in-depth layer once we have the schema docs in front of us and have observed actual daily spend for a week.
+- These caps are tied to the `hermes-prod` API key / workspace. Rotating the key requires re-setting the caps; document in the rotation runbook (future verification.md entry).
+
+**Revisit when:**
+- Observed daily spend trends above $1 consistently in normal operation — raise the day target (not the month max).
+- Hermes is given autonomous workloads (Spec 5+) where occasional bursts above $1/day are expected — recalibrate based on observed task cost.
+- Day-30 milestone (`hermes.md` §12) — first deliberate review of charter §6.5 defaults vs. actuals.
+- Anthropic changes its console UX in a way that breaks this configuration approach.
+- A real budget event (we trip a cap during legitimate work) — capture in verification.md as a teaching example like we did with the SSH lockout.
+
+---
+
 ## 2026-06-01 — DigitalOcean as VPS provider for Hermes Agent
 
 **Decision:** Hermes runs on a DigitalOcean Basic droplet in NYC3 (1 GB RAM / 1 vCPU / Ubuntu 24.04 LTS / 35 GB SSD / weekly backups), totaling $9.60/mo ($8 droplet + $1.60 backups).

@@ -10,7 +10,7 @@
 >
 > **When to revise a section:** when a failure mode is observed in the wild and the existing checklist would have missed it. Drift between this doc and reality is the failure mode this doc is designed against, same as the architecture doc.
 
-**Last updated:** 2026-06-01 (Hermes infrastructure section added — Spec 1 shipped, including SSH lockout debugging playbook)
+**Last updated:** 2026-06-02 (Hermes model routing + Discord gateway section added — Spec 2 shipped narrow; Spec 2.1 drafted for the residual tier-override + cost-cap + browser-tools follow-ups)
 
 ---
 
@@ -196,6 +196,80 @@ If `ssh hermes@…` fails unexpectedly, **before assuming the server is broken:*
 | `sudo` rejects hermes password | Confused with newly-set root password; password manager has two entries | Double-check which credential the password manager is offering; if hermes password genuinely lost, reset via DO Droplet Console as root: `passwd hermes` |
 | `hermes --version` not found after SSH login | venv not auto-activated; `~/.bashrc` source line missing or shell not bash | `source ~/.hermes/venv/bin/activate` manually; verify `.bashrc` contains the activation line |
 | Hermes Agent shows "1 commit behind" | Intentional pin to v0.14.0 per decisions.md | Ignore unless an explicit bump decision lands |
+
+---
+
+## Hermes model routing + Discord gateway (2026-06-02)
+
+**What shipped:** Anthropic direct as inference provider (`ANTHROPIC_API_KEY` in `~/.hermes/.env`); Sonnet 4.6 (`claude-sonnet-4-6`) as default model; Discord gateway running as a systemd service (`hermes-gateway.service`) installed as root via `sudo /home/hermes/.hermes/venv/bin/hermes gateway install --system --run-as-user hermes` (sudo strips PATH, hence the full venv path). Bot lives in Isaac's private "Hermes" Discord server with `#hermes-prod` set as home channel for proactive messages. Allowlist enforced via `DISCORD_ALLOWED_USERS` (Isaac's user ID only); messages from other Discord user IDs are dropped server-side by Hermes Agent before reaching the model. Cost ceilings enforced at the Anthropic console layer ($1/day target, $64/month cap, warnings at $15 / $40 of monthly spend); see `decisions.md` 2026-06-02 entry. Service is `enabled` (auto-starts on boot); reboot persistence verified.
+
+**What got carved out to Spec 2.1** (and is NOT validated here): per-agent Opus tier override for `hermes.md` §3 escalation triggers; Hermes-internal `limits:` config as defense-in-depth under the Anthropic console caps; full browser tools activation (`pip install websockets`, Playwright + `hermes acp --setup-browser`); hermes user joins `systemd-journal` group so `journalctl -u hermes-gateway` works without sudo.
+
+### Verification (re-run after any change to model config, gateway config, or systemd unit)
+
+**Service state**
+- [ ] `systemctl status hermes-gateway --no-pager` shows `active (running)` and `Loaded: ... enabled`
+- [ ] `systemctl show hermes-gateway --property=ActiveEnterTimestamp` reflects the current boot (or current change); compare to expected restart time
+- [ ] Service runs as `hermes` (visible in `status` output under `Main PID`)
+- [ ] Service auto-starts after reboot: `sudo reboot`, wait ~60s, SSH back in, confirm `active (running)` with a fresh `ActiveEnterTimestamp` and new PID without manual `systemctl start`
+
+**Discord side**
+- [ ] Bot shows **Online** in your private Hermes server's member list (green dot)
+- [ ] DM to bot triggers a response within ~15s (cold start includes one LLM round-trip)
+- [ ] `@Hermes-prod` mention in `#hermes-prod` triggers a response (server channels require `@mention` by default)
+- [ ] Slash commands appear in Discord's `/` menu (e.g. `/help`, `/model`, `/whoami`)
+- [ ] A message from a different (non-allowlisted) Discord user ID is dropped without response (TODO: live-test this once a second test account exists — currently relies on `DISCORD_ALLOWED_USERS` config check)
+
+**Model + cost**
+- [ ] `hermes model` (in a separate shell, then `Ctrl+C` after seeing top line) reports `Current model: claude-sonnet-4-6` and `Active provider: Anthropic`
+- [ ] Anthropic dashboard shows API calls posting under the `hermes-prod` key after smoke tests; per-turn cost typically <$0.05 in supervised testing
+- [ ] Anthropic console: workspace/key spend caps active at $1/day and $64/month; email warnings at $15 and $40
+- [ ] Observed daily spend stays under $1/day during the 72-hour conservative-cap window
+
+**Secrets posture**
+- [ ] `~/.hermes/.env` has mode `-rw-------` and owner `hermes:hermes` (`ls -la ~/.hermes/.env`)
+- [ ] `git status` in the project repo is clean — no `.env` or token-bearing file tracked
+- [ ] `grep -r ANTHROPIC_API_KEY .` and `grep -r DISCORD_BOT_TOKEN .` in the repo return documentation references only
+
+**Logs**
+- [ ] `sudo journalctl -u hermes-gateway -n 60 --no-pager` shows clean startup; no auth errors. Two benign warnings expected and OK to ignore until Spec 2.1: `Opus codec not found — voice channel playback disabled` (voice subsystem; we never use voice) and `Could not import tool module tools.browser_dialog_tool: No module named 'websockets'` (browser tool subsystem; activated in Spec 2.1)
+
+### Smoke test (end-to-end, run after any change to model, gateway, or auth)
+
+1. From Discord client, DM the bot OR `@mention` it in `#hermes-prod`: *"what version are you running?"*
+2. Expected: bot responds within ~15 seconds with the actual version string. Hermes typically verifies by running `pip show hermes-agent` on the droplet rather than answering from priors — both response shapes are healthy.
+3. Verify in Anthropic console that exactly one API call posted in the smoke-test window.
+4. Verify in `sudo journalctl -u hermes-gateway -n 30` that the message was received and routed cleanly (no auth/intent/quota errors).
+
+### Operational safeguards (codified from Spec 2 execution)
+
+- **sudo + venv binaries: always use the full path.** `sudo hermes ...` fails because sudo strips PATH for security. Use `sudo /home/hermes/.hermes/venv/bin/hermes ...` for any operation that needs root + the venv-installed CLI. Same pattern for any future `pip`-installed binaries that need sudo.
+- **Discord Developer Portal: Install Link gates Public Bot.** Newer Discord developer-portal UI ties "Public Bot" availability to the Installation tab's "Install Link" setting. To run a private single-user bot, set Install Link → **None** before toggling Public Bot → OFF.
+- **Wizard can't install systemd unit directly.** `hermes gateway setup` prints the `sudo …` commands to run manually; don't try to make the wizard escalate.
+- **Vendor-side cost caps over Hermes-internal at this stage.** See decisions.md 2026-06-02 entry. Defense-in-depth (Hermes-internal layer under Anthropic console layer) lands in Spec 2.1.
+
+### Known failure modes
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Bot online but never responds to DMs | Message Content Intent not enabled in Developer Portal | Bot page → Privileged Gateway Intents → toggle on, Save Changes, `sudo systemctl restart hermes-gateway` |
+| Developer Portal blocks toggling Public Bot OFF | Install Link set to public-discoverable mode | Installation tab → Install Link → **None** → save → return to Bot tab → toggle Public Bot OFF |
+| `sudo hermes ...` returns `command not found` | sudo strips PATH; venv binary not in default sudo path | Use full path: `sudo /home/hermes/.hermes/venv/bin/hermes ...` |
+| `journalctl -u hermes-gateway` shows only one warning line | hermes user not in `systemd-journal` group; can only see process's own lines | Use `sudo journalctl ...` for now; Spec 2.1 adds hermes to `systemd-journal` |
+| `hermes gateway setup` rejects token | Token reset after copy, or trailing whitespace | Developer Portal → Bot → Reset Token → recopy carefully → re-run setup (choose Reconfigure) |
+| 401 from Anthropic on first call | API key missing/invalid in `~/.hermes/.env`; billing not enabled on key | Verify file contents + perms; check Anthropic console billing |
+| Daily cost spike | Retry loop or runaway prompt | Anthropic enforces cap server-side (4xx after limit). Manual fallback: `sudo systemctl stop hermes-gateway` and investigate `journalctl -u hermes-gateway -b` |
+| Slash commands missing in Discord | Gateway never registered them, or another follower gateway took registration | Re-run `hermes gateway setup`; if multiple gateways against the same bot, set `gateway.platforms.discord.extra.slash_commands: false` on the follower |
+| Hermes offline after droplet reboot | systemd unit not enabled; or `EnvironmentFile` path wrong | `systemctl is-enabled hermes-gateway` → should return `enabled`; verify `~/.hermes/.env` exists and is readable by hermes; check `journalctl -u hermes-gateway -b` for failed startup |
+| Startup logs: `Opus codec not found` (voice) | Voice subsystem optional; not installed | Benign; intentionally OOS — we never use Discord voice |
+| Startup logs: `tools.browser_dialog_tool: No module named 'websockets'` | Browser tool subsystem optional; `websockets` not in venv | Activated in Spec 2.1: `pip install websockets` + Playwright + `hermes acp --setup-browser` |
+| Wizard says "system service install requires sudo, can't from this user session" | Interactive TUI can't escalate cleanly | Wizard prints the exact `sudo …` commands; copy-paste with full venv path |
+
+### Rotation runbook (for when secrets change)
+
+- **Anthropic API key rotation:** Generate new key in Anthropic console tagged `hermes-prod-rotated-YYYY-MM-DD`. Edit `~/.hermes/.env` (replace `ANTHROPIC_API_KEY=` line). `sudo systemctl restart hermes-gateway`. Verify smoke test passes. Revoke the old key in console. Re-set workspace spend caps if they were key-scoped (they were — set them again on the new key).
+- **Discord bot token rotation:** Developer Portal → Bot → Reset Token. Edit `~/.hermes/.env` (replace `DISCORD_BOT_TOKEN=` line). `sudo systemctl restart hermes-gateway`. Verify bot comes back Online + smoke test passes.
+- **Both rotations:** chmod 600 the .env afterwards as a paranoia check (`chmod 600 ~/.hermes/.env`). Confirm with `ls -la`.
 
 ---
 
