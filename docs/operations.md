@@ -183,6 +183,31 @@ Cursor has its own AI built in (`Cmd-K` for inline edits, the chat panel for que
 
 ---
 
+## 6. Operational rituals
+
+### 90-day PAT rotation
+
+**Next trigger date: 2026-08-31** (Vercel token expires; GitHub and Supabase expire 2026-09-01 — rotate all three in the same sitting to keep one calendar slot).
+
+Three credentials to rotate: `GITHUB_TOKEN` (GitHub fine-grained PAT, expires 2026-09-01), `SUPABASE_ACCESS_TOKEN` (Supabase personal access token, expires 2026-09-01), `VERCEL_TOKEN` (Vercel personal access token, expires 2026-08-31).
+
+Full rotation procedure lives in `/docs/verification.md` "Hermes access credentials — Spec 3" post-rotation checklist. Summary:
+1. Generate new tokens in each dashboard (tag `hermes-prod-rotated-YYYY-MM-DD`; save to password manager).
+2. Update `~/.hermes/.env` on the droplet.
+3. Re-authenticate CLIs (`gh auth login --with-token`, `supabase login --token`, `vercel whoami --token`).
+4. Restart `hermes-gateway` service.
+5. Run all six Spec 3 smoke tests. Do not mark rotation complete until all pass.
+6. Revoke old tokens in their dashboards.
+7. Update this date to the new trigger (90 days from new expiry dates).
+
+**Rotation log:**
+
+| Date | Outcome | Notes |
+|---|---|---|
+| 2026-06-03 | Initial setup — Spec 3 | Tokens created; no rotation needed |
+
+---
+
 ## 5. Time budget
 
 - Isaac targets 10–15 hours per week on the project.

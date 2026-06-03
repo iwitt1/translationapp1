@@ -4,7 +4,7 @@
 >
 > Spec lifecycle: **draft** → **approved** → **in-flight** → **shipped** → **archived**. When a spec ships, mark it `shipped` here with the commit reference and move the verification details to `/docs/verification.md`. Archive specs after one cycle of "shipped" review (typically 2-4 weeks) — move them to a future `/docs/specs-archive.md` if/when this file exceeds ~600 lines.
 
-**Last updated:** 2026-06-02 (Spec 3 drafted *and* approved — access credentials for GitHub / Supabase / Vercel, the next prereq before Hermes can touch the codebase. OQs resolved: branch protection *intent yes but deferred in practice* (GitHub gates it behind paid tier for private repos; revisit trigger in decisions.md), Supabase read-isolation via readonly Postgres role, Vercel prod-deploy gated by operating contract, 90d PAT rotation (trigger 2026-08-31). Spec 2 shipped narrowed; Spec 2.1 drafted for the deferred follow-ups. Section order: draft → approved → shipped.)
+**Last updated:** 2026-06-03 (Spec 3 shipped — access credentials for GitHub / Supabase / Vercel. Six smoke tests run; all passed or partial-passed with known caveats. Side-effects: Docker Engine + Node.js v20 installed on VPS; DATABASE_URL_STAGING added; terminal.cwd set in config.yaml. Spec 2 shipped narrowed; Spec 2.1 drafted for the deferred follow-ups. Section order: draft → approved → shipped.)
 
 ---
 
@@ -12,7 +12,7 @@
 
 **Linked roadmap item:** Phase 1.5 → Infrastructure (checkbox 5 — Hermes access credentials)
 **Author:** Isaac (drafted with Cowork/Opus, 2026-06-02)
-**Status:** **approved 2026-06-02** (OQ 1–4 resolved with Isaac; see annotations below. Branch protection deferred per platform constraint — captured in decisions.md 2026-06-02 entry. Ready to execute.)
+**Status:** **shipped 2026-06-03** (commit ref TBD — update after ship commit). All six smoke tests passed or partial-passed with known caveats. Verification record: `/docs/verification.md` "Hermes access credentials — Spec 3 (2026-06-03)". Decisions: 2026-06-03 entries in `/docs/decisions.md` (GitHub PAT scope; Supabase readonly role; Vercel prod-deploy gating). Side-effects noted: Docker Engine installed on VPS (required by `supabase db diff`); Node.js v20 + npm-global config installed (required by Vercel CLI); `DATABASE_URL_STAGING` added to `.env` (gap discovered during ST4); `terminal.cwd` set in `config.yaml` (`MESSAGING_CWD` env var is not a real Hermes variable).
 **Estimated time:** ~75 min (branch protection step removed; readonly Postgres role still in scope per OQ2)
 
 ### Goal

@@ -16,6 +16,54 @@
 
 ---
 
+## 2026-06-03 — GitHub fine-grained PAT scoped to single repo with minimum permissions
+
+**Decision:** Hermes's GitHub credential is a fine-grained Personal Access Token scoped to `translationapp1` only, with permissions: Contents read+write, Pull requests read+write, Metadata read (auto). No admin, workflows, actions, or secrets access.
+
+**Context:** Spec 3 required GitHub access for Hermes to clone, branch, commit, push, and open PRs. Choice was between a classic PAT (account-wide) and a fine-grained PAT (single-repo, specific permissions).
+
+**Alternatives considered:** Classic PAT — simpler to create, but grants access to all repos in the account and has coarser permission granularity. Fine-grained PAT — slightly more setup, but limits blast radius to one repo and one permission slice.
+
+**Reasoning:** Hermes only needs to touch one repo. Granting account-wide access to an agent that runs autonomously on a VPS is unnecessary risk. Fine-grained PATs are revocable independently and expire on a known date (2026-09-01). The 5 extra minutes of setup is worth the narrower blast radius.
+
+**Implications:** Token stored as `GITHUB_TOKEN` in `~/.hermes/.env` (mode 600). Expires 2026-09-01; rotation trigger 2026-08-31 (aligned with Vercel expiry — rotate all three in one sitting). `gh` CLI authenticated via env var; stale OAuth credential removed. Git config: `user.name "Hermes Agent"`, `user.email "24737689+iwitt1@users.noreply.github.com"` (GitHub no-reply address — associates commits with Isaac's account without exposing personal email).
+
+**Revisit when:** A second repo needs Hermes access (create a second fine-grained PAT rather than widening this one); token rotation cadence becomes painful (automate); GitHub changes fine-grained PAT feature behavior.
+
+---
+
+## 2026-06-03 — Supabase prod read-isolation via dedicated Postgres role + DATABASE_URL_PROD_READONLY
+
+**Decision:** Hermes inspects the production database through a dedicated `hermes_readonly` Postgres role (SELECT-only on public schema) with its own login user (`hermes_readonly_user`) and connection string stored as `DATABASE_URL_PROD_READONLY`. Write operations to prod still go through the Supabase PAT and require §6.2 two-confirm gating.
+
+**Context:** Spec 3 OQ2 asked how to limit Hermes's prod database blast radius. Three options: (a) no separation — full read/write PAT only; (b) single PAT + separate read-only Postgres role for inspection; (c) separate Supabase account with prod scoped read-only via invitation.
+
+**Alternatives considered:** Option (a) — no separation. Simplest, but any Hermes bug or prompt injection with DB access could write or delete prod data. Option (c) — second Supabase account. Captures most of option (b)'s blast-radius story but adds account management overhead and a second login credential to rotate.
+
+**Reasoning:** Option (b) captures the key safety property (prod inspection can't accidentally write) without the overhead of a second account. The `hermes_readonly_user` connection string has no INSERT/UPDATE/DELETE on any table — verified during Spec 3 smoke testing (`permission denied` on INSERT with a valid UUID). Write path to prod still exists but is gated behind §6.2's two-confirm flow, which also confirmed working during Spec 3.
+
+**Implications:** `DATABASE_URL_PROD_READONLY` in `~/.hermes/.env`. Uses Supabase connection pooler (Session mode) to avoid IPv6 routing issues on the VPS — username format `hermes_readonly_user.rnunfmfspggcotgjavch` required for pooler tenant routing. `DATABASE_URL_STAGING` also added (full read/write, for migration work). `hermes_readonly` role needs `GRANT SELECT ON ALL TABLES` re-run if new tables are added to public schema. Docker Engine installed on VPS as a side-effect of Spec 3 execution (required by `supabase db diff --linked`).
+
+**Revisit when:** New schemas added beyond `public` that Hermes needs to inspect; `hermes_readonly` role missing SELECT on new tables after a migration; secrets management upgraded (Doppler/1Password) making per-credential rotation less manual.
+
+---
+
+## 2026-06-03 — Vercel prod-deploy gated via operating contract (charter §6.2), not a wrapper script
+
+**Decision:** Hermes's constraint against running `vercel deploy --prod` without explicit authorization is enforced by the operating contract (charter §2 + §6.2 two-confirm flow), not by a wrapper script or CLI shim that intercepts the command.
+
+**Context:** Spec 3 OQ3 asked how to gate prod deploys. Three options: (a) operating-contract only — charter §6.2 requires Hermes to post a plan and wait for Isaac's "yes" before any prod deploy; (b) Vercel project-level protection (preview-only token) — token scoped to preview deploys only, prod deploy requires a separate token Isaac controls; (c) wrapper script — a shell shim replaces `vercel` and intercepts `--prod` flag, requiring out-of-band confirmation before passing through.
+
+**Alternatives considered:** Option (b) — preview-only token. Strong platform-level enforcement, but Vercel's token permission model doesn't cleanly separate preview vs. prod deploy scope on personal accounts. Option (c) — wrapper script. Structural enforcement like branch protection, but adds a maintenance surface: the script must be kept in sync with CLI updates, and a motivated agent could bypass it by calling the CLI binary directly.
+
+**Reasoning:** Same enforcement layer as every other §6.2-gated operation (DROP TABLE, schema migrations, force-push). Hermes confirmed working during ST6 negative path — posted concerns and stood down on "no" without deploying. Option (c) captured as a parking-lot item to add if option (a) ever fails in practice.
+
+**Implications:** No wrapper script to maintain. Charter §6.2 is the single enforcement layer for all destructive/high-impact ops. ST6 positive path (Hermes deploys on "yes") deferred until first real prod-worthy change is queued.
+
+**Revisit when:** Hermes deploys to prod without a §6.2 confirmation (near-miss → add wrapper script immediately); Vercel adds token-level preview/prod scope separation on personal accounts; a second operator gains access and operating-contract enforcement becomes insufficient.
+
+---
+
 ## 2026-06-02 — Defer structural GitHub branch protection on `main`; behavior-enforcement only
 
 **Decision:** Spec 3 ships without GitHub branch protection enabled on `main`. Protection against direct-to-main pushes relies on the operating-contract layer for now (charter §6.1 + the framework-level git wrapper described in §11.1 #7). Re-evaluate when one of the listed triggers fires.

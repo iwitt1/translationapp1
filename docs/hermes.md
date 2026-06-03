@@ -471,12 +471,19 @@ This section is the audit trail. Isaac's original requirements (from the 2026-05
 | Phase awareness | §4.1 |
 | Don't expand scope unilaterally | §4.2, §8.1.3 |
 
-### 10.7 Access (Supabase CLI, Vercel CLI)
+### 10.7 Access (GitHub, Supabase CLI, Vercel CLI)
 
-| Requirement | Refinement | Rationale |
+*Operationalized in Spec 3 (2026-06-03). See `decisions.md` 2026-06-03 entries for rationale on each mechanism.*
+
+| Credential | Mechanism | Scope / Constraints |
 |---|---|---|
-| Hermes has Supabase CLI access | **Kept**, with scope: staging project full access, production read-only by default. Write to production requires §6.2 confirmation flow. | Limits blast radius without limiting capability. |
-| Hermes has Vercel CLI access | **Kept**, with scope: staging deploys autonomous, production deploys gated on Isaac's approval. | Same principle. |
+| **GitHub** | Fine-grained PAT (`GITHUB_TOKEN` in `~/.hermes/.env`). `gh` CLI authenticated via env var. Repo cloned to `/home/hermes/work/translation-app/` via HTTPS+token. | Scoped to `translationapp1` only. Permissions: Contents r/w, Pull requests r/w, Metadata read. No admin/workflows/secrets. Expires 2026-09-01; rotate 2026-08-31. |
+| **Supabase** | Personal access token (`SUPABASE_ACCESS_TOKEN`) for CLI operations. Direct DB access via two connection strings. | CLI: full access to both projects via `supabase` binary (v2.104.0). Prod inspection: `DATABASE_URL_PROD_READONLY` — `hermes_readonly_user` role, SELECT-only on public schema, enforced at Postgres layer. Staging: `DATABASE_URL_STAGING` — full read/write. Prod writes require §6.2 two-confirm flow. |
+| **Vercel** | Personal access token (`VERCEL_TOKEN` in `~/.hermes/.env`). `vercel` CLI v54+. Project linked via `vercel link` (`.vercel/repo.json`). | Single account token. Staging/preview deploys: autonomous. Prod deploys (`vercel deploy --prod`): gated by §6.2 operating contract — Hermes must post a plan and receive Isaac's explicit "yes". |
+
+**Working directory:** `terminal.cwd: /home/hermes/work/translation-app` in `~/.hermes/config.yaml`. Hermes's shell starts here; verify via `run pwd in your terminal` (not "what is your cwd?" which returns Python process context).
+
+**Rotation trigger date: 2026-08-31** (Vercel token expires; rotate all three PATs in one sitting). Full rotation checklist in `verification.md` "Hermes access credentials — Spec 3".
 
 ---
 

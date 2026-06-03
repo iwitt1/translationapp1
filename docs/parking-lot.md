@@ -258,6 +258,19 @@ Where data physically lives matters for some markets (EU, healthcare). Supabase 
 - **Why interesting:** Compliance requirement for some verticals.
 - **Trigger:** Entering a market with data residency requirements (EU healthcare especially).
 
+### Vercel prod-deploy wrapper script as defense-in-depth
+A shell shim that replaces the `vercel` binary and intercepts `--prod` flag calls, requiring out-of-band confirmation before passing through to the real CLI. Adds a structural enforcement layer under the operating-contract layer (§6.2) for prod deploys.
+- **Why interesting:** "The platform refuses" is more robust than "the agent refuses" if §6.2 is ever misinterpreted. Same argument as branch protection on GitHub.
+- **Why parked:** Option (a) from Spec 3 OQ3 — §6.2 operating-contract only — confirmed working during ST6 negative path. Wrapper adds maintenance surface (must track CLI updates) without clear benefit while Hermes is in supervised mode.
+- **Trigger:** Hermes deploys to prod without a §6.2 confirmation (near-miss). That event is the empirical trigger; add immediately on first occurrence.
+- **Surfaced:** 2026-06-03, Spec 3 OQ3 resolution.
+
+### Dedicated hermes@ email alias for git commits
+Currently Hermes commits with `user.email = 24737689+iwitt1@users.noreply.github.com` (Isaac's GitHub no-reply address). Functional and associates commits with Isaac's account, but blurs attribution between Isaac and Hermes in the git log.
+- **Why interesting:** A dedicated `hermes@<domain>` alias would make it immediately obvious which commits were agent-authored vs. human-authored, which matters for auditability as Hermes becomes more active.
+- **Trigger:** When you have a custom domain set up, or when agent-authored commits become frequent enough that the attribution blur causes confusion.
+- **Surfaced:** 2026-06-03, Spec 3 git config step.
+
 ### GitHub branch protection on `main` — paid-tier upgrade
 Enable platform-level branch protection on the `main` branch — the structural mitigation charter §11.1 #7 calls out for the "direct-to-main push" failure mode. Both Rulesets and legacy Branch protection rules require GitHub Pro (individual, ~$4/mo) or Team (org, ~$4/user/mo) on private repositories — confirmed 2026-06-02 during Spec 3 execution. Deferred to behavior-enforcement only for now; see `decisions.md` 2026-06-02 entry "Defer structural GitHub branch protection on `main`".
 - **Why interesting:** Adds the second of two §11.1 #7 mitigations as a defense-in-depth layer. "The platform refuses" is more robust than "the agent refuses" if Hermes's operating contract is ever misinterpreted or bypassed.
