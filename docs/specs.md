@@ -12,7 +12,7 @@
 
 **Linked roadmap item:** Phase 1.5 → Infrastructure (checkbox 5 — Hermes access credentials)
 **Author:** Isaac (drafted with Cowork/Opus, 2026-06-02)
-**Status:** **shipped 2026-06-03** (commit ref TBD — update after ship commit). All six smoke tests passed or partial-passed with known caveats. Verification record: `/docs/verification.md` "Hermes access credentials — Spec 3 (2026-06-03)". Decisions: 2026-06-03 entries in `/docs/decisions.md` (GitHub PAT scope; Supabase readonly role; Vercel prod-deploy gating). Side-effects noted: Docker Engine installed on VPS (required by `supabase db diff`); Node.js v20 + npm-global config installed (required by Vercel CLI); `DATABASE_URL_STAGING` added to `.env` (gap discovered during ST4); `terminal.cwd` set in `config.yaml` (`MESSAGING_CWD` env var is not a real Hermes variable).
+**Status:** **shipped 2026-06-03** (73835e5). All six smoke tests passed or partial-passed with known caveats. Verification record: `/docs/verification.md` "Hermes access credentials — Spec 3 (2026-06-03)". Decisions: 2026-06-03 entries in `/docs/decisions.md` (GitHub PAT scope; Supabase readonly role; Vercel prod-deploy gating). Side-effects noted: Docker Engine installed on VPS (required by `supabase db diff`); Node.js v20 + npm-global config installed (required by Vercel CLI); `DATABASE_URL_STAGING` added to `.env` (gap discovered during ST4); `terminal.cwd` set in `config.yaml` (`MESSAGING_CWD` env var is not a real Hermes variable).
 **Estimated time:** ~75 min (branch protection step removed; readonly Postgres role still in scope per OQ2)
 
 ### Goal

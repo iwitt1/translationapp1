@@ -90,7 +90,7 @@
 - [x] Install Hermes Agent — pinned to v0.14.0 (git tag `v2026.5.16`) at `/home/hermes/.hermes/venv/`. Shipped 2026-06-01 per Spec 1. Version-pin rationale in `/docs/decisions.md` 2026-06-01 entry.
 - [~] Configure tiered model routing: Claude Sonnet 4.6 as default *(done 2026-06-02 per Spec 2; provider Anthropic direct, model `claude-sonnet-4-6`)*; explicit Opus escalation per `/docs/hermes.md` §3 rules *(deferred to **Spec 2.1**)*.
 - [x] Wire up one messaging gateway — **Discord** (not Telegram; updated per Spec 2 scoping decision). Live as systemd service `hermes-gateway` since 2026-06-02; allowlist enforced; smoke + reboot tests passed. See `verification.md` "Hermes model routing + Discord gateway (2026-06-02)".
-- [x] Set Hermes's access credentials: GitHub PAT scoped to the repo (commits + branches, no admin), Supabase CLI authenticated to both projects (prod read-only via separate Postgres role + readonly DATABASE_URL, write permission gated on §6.2 confirmation), Vercel CLI authenticated (staging autonomous, prod gated). **Spec 3 shipped 2026-06-03** (commit ref TBD — update after ship commit).
+- [x] Set Hermes's access credentials: GitHub PAT scoped to the repo (commits + branches, no admin), Supabase CLI authenticated to both projects (prod read-only via separate Postgres role + readonly DATABASE_URL, write permission gated on §6.2 confirmation), Vercel CLI authenticated (staging autonomous, prod gated). **Spec 3 shipped 2026-06-03** (73835e5).
 
 ### Cowork ↔ Hermes interface follow-ups
 *Trigger: after Hermes Specs 1, 2, 2.1, 3, and 4 all ship — i.e., after Hermes is operationally complete on its end.*
