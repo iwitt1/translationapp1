@@ -1,4 +1,5 @@
-import { buildMessages } from '../../lib/translatePrompt.js';
+import { buildMessages, PROMPT_VERSION } from '../../lib/translatePrompt.js';
+import { logTranslationEvent } from '../../server/lib/events.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -45,6 +46,8 @@ export default async function handler(req, res) {
       requestBody.response_format = { type: 'json_object' };
     }
 
+    const startTime = Date.now();
+
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -55,6 +58,7 @@ export default async function handler(req, res) {
     });
 
     const data = await response.json();
+    const latency_ms = Date.now() - startTime;
 
     if (!response.ok) {
       console.error('OpenAI error:', data);
@@ -70,6 +74,28 @@ export default async function handler(req, res) {
       console.error('Bad JSON from AI:', raw);
       return res.status(500).json({ error: 'Bad AI response' });
     }
+
+    // ── Event log (non-blocking) ───────────────────────────────────────────
+    // was_cached: hardcoded false — no cache check exists in this path yet.
+    // Known gap: update when message_translations cache is wired (Spec 4b report §known-gaps).
+    // tenant_id: chat-app tenant UUID (hardcoded until multi-tenant routing exists).
+    // user_id: not available in request body — null until auth is threaded through.
+    logTranslationEvent({
+      tenant_id: '00000000-0000-0000-0000-000000000001',
+      task_id: null,
+      user_id: null,
+      target_language: targetLanguage ?? 'detect',
+      was_cached: false,
+      model_used: 'gpt-4o-mini',
+      prompt_version: PROMPT_VERSION,
+      latency_ms,
+      character_count: text.length,
+      input_tokens: data?.usage?.prompt_tokens ?? null,
+      output_tokens: data?.usage?.completion_tokens ?? null,
+      event_source: 'chat_app',
+    });
+    // Note: we intentionally do NOT await this — it's fire-and-forget.
+    // The response is already built; we must not block the caller on a DB write.
 
     return res.status(200).json(parsed);
   } catch (err) {
