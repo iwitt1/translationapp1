@@ -19,6 +19,14 @@
 - **Spec 4b in-flight (by Hermes, 2026-06-03)** — `commit d237e16`, branch `hermes/event-log-wiring`, [Draft PR #2](https://github.com/iwitt1/translationapp1/pull/2)
   Event log wiring complete. `translation_events` write wired into both `api/v1/translate.js` (Vercel/prod path) and `server/index.js` (local Express path). New `server/lib/events.js` module with `logTranslationEvent()` and `logAgentEvent()` helpers — non-blocking, lazy pool, errors logged and swallowed. `agent_events` write wired via a Python hook at `~/.hermes/hooks/agent-event-logger/` using the Hermes gateway `agent:start` / `agent:end` lifecycle events. Both verified on staging via direct INSERT smoke tests. Awaiting Isaac's testing + prod merge approval.
 
+### Known gaps surfaced during testing
+
+- **`hermes_writer` role not provisioned on staging.** Spec 4a provisioned the restricted INSERT-only `hermes_writer_user` role on prod only. Staging has no equivalent — only the full `postgres` admin connection string exists there. This means the Vercel Preview environment can't use a least-privilege write credential pointing at staging the way prod does. During Spec 4b testing, the Preview deploy was configured with the staging admin URL as a workaround, but that's not the right posture. Fix: provision a `hermes_writer` role on staging (same SQL as migration 005's prod step) and store the connection string as `DATABASE_URL_STAGING_WRITER` in `~/.hermes/.env` and in the Vercel Preview env vars. Low urgency — staging is not user-facing — but should be done before the next spec that touches event log wiring. **`recommend`**
+
+- **Vercel serverless requires port 6543 (transaction pooler), not 5432 (session pooler).** `DATABASE_URL_PROD_WRITER` in `~/.hermes/.env` uses port 5432, which works from the persistent VPS but silently fails in Vercel serverless functions. The Production Vercel env var will need to be set to port 6543 when the branch merges to main. Flagged here so it's not forgotten at merge time. **`flag`**
+
+- **Stray test row in prod `translation_events`.** During Spec 4b testing, a `hermes_test` row was accidentally written to prod (`id = 0f1ff660-33df-4bbc-a44f-bbde739bec11`, timestamp 2026-06-03 04:12:42 UTC). The `hermes_writer_user` role is INSERT-only so Hermes can't delete it. Isaac to remove via Supabase prod SQL editor: `DELETE FROM translation_events WHERE id = '0f1ff660-33df-4bbc-a44f-bbde739bec11';` **`flag`**
+
 ### Open escalations
 
 - **Spec 4b — awaiting Isaac's test + merge approval.**
