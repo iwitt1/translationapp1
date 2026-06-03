@@ -63,7 +63,7 @@ Wire `translation_events` writes into the translation call site so every transla
 
 **Linked roadmap item:** Phase 1.5 → Infrastructure (checkbox 6 — `translation_events` and `agent_events` tables created and wired)
 **Author:** Isaac (drafted with Cowork, 2026-06-02)
-**Status:** **shipped 2026-06-02** (commit TBD — update after push). Migrations 005 and 006 run on staging and prod. `hermes_writer` role provisioned. hermes.md §7.2 and §7.3 finalized. Verification record: `/docs/verification.md` "Event log schema — Spec 4a". Decisions: 2026-06-02 entry in `/docs/decisions.md` (hermes_writer role scope).
+**Status:** **shipped 2026-06-02** (0f909a7). Migrations 005 and 006 run on staging and prod. `hermes_writer` role provisioned. hermes.md §7.2 and §7.3 finalized. Verification record: `/docs/verification.md` "Event log schema — Spec 4a". Decisions: 2026-06-02 entry in `/docs/decisions.md` (hermes_writer role scope).
 **Estimated time:** ~45 min
 **Executor:** Cowork (this session)
 
