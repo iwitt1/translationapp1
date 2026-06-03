@@ -273,6 +273,61 @@ If `ssh hermes@…` fails unexpectedly, **before assuming the server is broken:*
 
 ---
 
+## Event log schema — Spec 4a (2026-06-02)
+
+**What shipped:** Migrations 005 and 006 run on staging and prod. `agent_events` and `translation_events` tables created. `task_id` added to `user_profile_events`. `hermes_writer` Postgres role provisioned on prod with INSERT-only on `agent_events` and `translation_events`. `DATABASE_URL_PROD_WRITER` added to `~/.hermes/.env`.
+
+### Migration run order
+
+Run in this order against a fresh empty Postgres to reproduce current prod schema:
+`000` → `001` → `002` → `003` → `004` → `005` → `006`
+
+### Verification queries (re-run anytime to confirm tables are intact)
+
+```sql
+-- agent_events columns (expect 29):
+select column_name, data_type, is_nullable
+  from information_schema.columns
+  where table_schema = 'public' and table_name = 'agent_events'
+  order by ordinal_position;
+
+-- translation_events columns (expect 21):
+select column_name, data_type, is_nullable
+  from information_schema.columns
+  where table_schema = 'public' and table_name = 'translation_events'
+  order by ordinal_position;
+
+-- Indexes (expect 8 rows — 5 on agent_events incl. constraint indexes, 3 on translation_events):
+select indexname, tablename from pg_indexes
+  where tablename in ('agent_events', 'translation_events')
+  order by tablename, indexname;
+
+-- user_profile_events task_id column (expect 1 row):
+select column_name, data_type, is_nullable
+  from information_schema.columns
+  where table_schema = 'public'
+    and table_name = 'user_profile_events'
+    and column_name = 'task_id';
+```
+
+### hermes_writer smoke test checklist (re-run after any credential rotation)
+
+- [ ] **ST1 — INSERT succeeds:** `psql $DATABASE_URL_PROD_WRITER -f /tmp/smoke_insert.sql` returns `INSERT 0 1`. (File contains INSERT into `agent_events` with chat-app tenant UUID.)
+- [ ] **ST2 — SELECT denied:** `psql $DATABASE_URL_PROD_WRITER -c "SELECT count(*) FROM public.agent_events;"` returns `ERROR: permission denied for table agent_events`.
+- [ ] **ST3 — INSERT on non-event table denied:** `psql $DATABASE_URL_PROD_WRITER -c "INSERT INTO public.messages (sender_id, original_text) VALUES ('test','test');"` returns `ERROR: permission denied for table messages`.
+- [ ] **Cleanup:** After ST1, delete the smoke row from prod SQL editor: `DELETE FROM public.agent_events WHERE task_summary = 'hermes_writer smoke test';`
+
+### Known failure modes
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `password authentication failed for user "hermes_writer_user"` | Password in `.env` has special characters (`@`, `#`, `/`, `?`, `%`) that break the URL | Reset password in prod SQL editor to alphanumeric only; update `.env`; re-source |
+| `psql` multiline INSERT fails with paste artifact | Terminal paste corruption | Write SQL to a file (`cat > /tmp/x.sql << 'EOF' ... EOF`) and use `psql -f /tmp/x.sql` |
+| `INSERT 0 1` succeeds but row not visible in Supabase Studio | `hermes_writer` has no SELECT — this is correct. Verify via a superuser connection in the SQL editor. | Expected behavior |
+| `ERROR: role "hermes_writer" does not exist` on staging | Role only provisioned on prod, not staging | Run the same CREATE ROLE / GRANT SQL on the staging project |
+
+---
+
 ## Hermes access credentials — Spec 3 (2026-06-03)
 
 **What shipped:** GitHub fine-grained PAT + `gh` CLI + repo clone at `/home/hermes/work/translation-app/`; Supabase CLI (v2.104.0) + `hermes_readonly` Postgres role on prod + `DATABASE_URL_PROD_READONLY` + `DATABASE_URL_STAGING`; Vercel CLI (v54.7.1) + project linked; `terminal.cwd` set to `/home/hermes/work/translation-app` in `config.yaml`; gateway restarted. Docker Engine installed as a side-effect (required by `supabase db diff --linked`). Node.js v20 installed for Vercel CLI. Six smoke tests run; all passed or partial-passed with known caveats (see below).

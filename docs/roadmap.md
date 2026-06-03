@@ -98,9 +98,8 @@
 - [ ] Fix the Cowork sandbox so the session-start `git pull --ff-only` actually authenticates and runs. Currently fails with `fatal: could not read Username for 'https://github.com'` because the sandbox has no GitHub credentials. Without this, the session-start protocol in the Cowork project instructions can't pull Hermes's pushes since the last session, which means cowork-handoff.md may be stale + Cowork can branch from out-of-date state. Mechanism TBD — options: scoped read-only GitHub PAT mounted into the sandbox via Cowork's settings, SSH key in the sandbox, credential helper, or a custom session-start script that handles auth. Investigate and pick before opening for execution. *Surfaced 2026-06-02 during Spec 3 drafting when the session-start `git pull` failed with no auth.*
 
 ### Event log schema (per hermes.md §7)
-- [ ] Create `translation_events` table (full schema in `/docs/hermes.md` §7.2). Run on staging first, then prod.
-- [ ] Create `agent_events` table for Hermes-level audit trail. Schema is TBD in `/docs/hermes.md` §7.3 — finalize before creating; capture the final shape in a migration and in architecture.md.
-- [ ] Wire the live application's translate call sites to write `translation_events` on every call. Defer dashboard tooling.
+- [x] Create `translation_events` and `agent_events` tables. *Spec 4a shipped 2026-06-02 — migrations 005 and 006 run on staging and prod; `hermes_writer` role provisioned; schemas finalized in hermes.md §7.2 and §7.3.*
+- [ ] Wire the live application's translate call sites to write `translation_events` on every call, and Hermes task lifecycle to write `agent_events`. *Spec 4b — Hermes-executed; approved; blocked until Spec 4a migrations confirmed on prod (done).*
 
 ### Promote items pulled from parking lot
 - [ ] Promote "Autonomous test harness for agent-driven builds" from `/docs/parking-lot.md` → this phase. Required before Hermes operates beyond supervised mode.

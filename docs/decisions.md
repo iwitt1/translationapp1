@@ -16,6 +16,22 @@
 
 ---
 
+## 2026-06-02 — hermes_writer Postgres role scoped to INSERT-only on event tables
+
+**Decision:** Hermes writes `agent_events` and `translation_events` rows via a dedicated `hermes_writer` Postgres role with INSERT-only access on those two tables. No SELECT, no UPDATE, no DELETE, no other tables.
+
+**Context:** Spec 4a required a write mechanism for Hermes to log to prod. Hermes already has `DATABASE_URL_PROD_READONLY` (SELECT-only) from Spec 3; a separate write credential was needed for the event tables.
+
+**Alternatives considered:** (A) Supabase service role key via REST API — easier to set up, but service role bypasses Row Level Security and grants full read/write on all tables. (B) Staging-only for now — defers the credential work but leaves a gap in the prod audit trail. (C) `hermes_writer` role with INSERT-only on event tables — same pattern as `hermes_readonly` from Spec 3, minimum privilege.
+
+**Reasoning:** Option C follows the existing precedent and gives Hermes exactly what it needs — the ability to append audit rows — without any read access or write access to application tables. Blast radius if the credential is compromised is limited to inserting junk rows into two append-only logging tables.
+
+**Implications:** `DATABASE_URL_PROD_WRITER` added to `~/.hermes/.env`. Uses the same Session-mode pooler pattern as `DATABASE_URL_PROD_READONLY` (aws-1-us-east-1.pooler.supabase.com:5432, username includes project ref). Rotate alongside the other credentials on 2026-08-31.
+
+**Revisit when:** A second table needs write access from Hermes (e.g. a future corrections pipeline), or if we move to a service-account model with row-level security enforcing per-tenant access.
+
+---
+
 ## 2026-06-03 — GitHub fine-grained PAT scoped to single repo with minimum permissions
 
 **Decision:** Hermes's GitHub credential is a fine-grained Personal Access Token scoped to `translationapp1` only, with permissions: Contents read+write, Pull requests read+write, Metadata read (auto). No admin, workflows, actions, or secrets access.

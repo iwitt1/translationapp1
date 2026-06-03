@@ -210,11 +210,12 @@ Every call to the translation pipeline writes a row. Fields:
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | uuid | Primary key |
+| `id` | uuid | Primary key, DB-generated |
+| `schema_version` | integer | Default 1. Increment when column semantics change so old rows are identifiable. |
 | `tenant_id` | uuid | FK to tenants. Required per `architecture.md` §3.4 |
-| `task_id` | uuid | nullable; populated when call is Hermes-driven |
+| `task_id` | uuid | nullable; loose reference to `agent_events.task_id` (no FK constraint) — populated when call is Hermes-driven |
 | `user_id` | text | nullable; sender's id when known |
-| `timestamp` | timestamp | UTC always |
+| `timestamp` | timestamptz | UTC always |
 | `source_language` | text | BCP 47; nullable if detect-only |
 | `target_language` | text | BCP 47 |
 | `was_cached` | boolean | Whether the response came from `message_translations` cache |
@@ -223,11 +224,12 @@ Every call to the translation pipeline writes a row. Fields:
 | `latency_ms` | integer | End-to-end time |
 | `character_count` | integer | Length of source text |
 | `input_tokens` | integer | nullable; provider-reported |
-| `output_tokens` | integer | nullable; provider-reported |
+| `output_tokens` | integer | nullable; computed from tokens × rate |
 | `cost_cents` | integer | nullable; computed from tokens × rate |
 | `retry_count` | integer | default 0 |
 | `error_type` | text | nullable; e.g. `'rate_limit'`, `'parse_failure'`, `'timeout'` |
-| `event_source` | enum | `'chat_app' \| 'hermes_test' \| 'api_external'` (for Phase 2) |
+| `event_source` | text | `'chat_app' \| 'hermes_test' \| 'api_external'` (for Phase 2) |
+| `created_at` | timestamptz | Default now() |
 
 This is broader than Isaac's original spec (which was timestamp/source/target/cached/model/latency/character_count). Additions explained inline in §10. None are optional; "build the schema now, dial frequency later" doesn't apply to the schema — it applies to which dashboards we build on top.
 
@@ -237,13 +239,45 @@ Inherits row-level security from Phase 2.
 
 ### 7.3 `agent_events` table (Hermes-level audit log)
 
-Parallel table tracking Hermes's actions at a different layer of abstraction. Schema TBD when Hermes is actually deployed; expected fields:
+Parallel table tracking Hermes's actions at a different layer of abstraction. Written once at task completion — Hermes holds `task_id` in memory, threads it through all tool calls and sub-events, then inserts one row when the task finishes. Crashed tasks leave no row; gaps in the log are the signal.
 
-- `task_id`, `started_at`, `completed_at`, `status` (`completed | failed | escalated | aborted`)
-- `task_summary`, `task_source` (which channel / who triggered)
-- `model_tier`, `model_used`, `tokens_in`, `tokens_out`, `cost_cents`
-- `files_changed[]`, `commits[]`, `deploys[]`
-- `decisions_drafted`, `skills_created`, `errors[]`
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid | Primary key, DB-generated |
+| `task_id` | uuid | NOT NULL UNIQUE. Hermes-generated at task start, before any DB write. Cross-table join key — `translation_events.task_id` references this. |
+| `parent_task_id` | uuid | nullable; loose self-reference for subagent tasks (no FK constraint) |
+| `schema_version` | integer | Default 1 |
+| `idempotency_key` | text | UNIQUE, nullable. Hermes sets this to prevent double-execution on retry. |
+| `tenant_id` | uuid | FK to tenants. Required per `architecture.md` §3.4 |
+| `started_at` | timestamptz | NOT NULL |
+| `completed_at` | timestamptz | nullable; null if task crashed |
+| `status` | text | CHECK: `'completed' \| 'failed' \| 'escalated' \| 'aborted'` |
+| `task_summary` | text | NOT NULL; plain-English one-liner |
+| `gateway` | text | CHECK: `'discord' \| 'cli' \| 'scheduled'` |
+| `channel_id` | text | nullable; Discord channel snowflake ID. Stable if channel renamed. |
+| `channel_name` | text | nullable; snapshot at task time, human-readable |
+| `thread_id` | text | nullable; Discord thread ID if task originated in a reply thread |
+| `initiating_message_id` | text | nullable; Discord message that triggered the task |
+| `triggered_by` | text | nullable; display name of requester |
+| `conversation_turns` | integer | nullable; back-and-forth message count in triggering conversation |
+| `model_tier` | text | CHECK: `'sonnet' \| 'opus'` |
+| `model_used` | text | e.g. `'claude-sonnet-4-6'` |
+| `tokens_in` | integer | nullable |
+| `tokens_out` | integer | nullable |
+| `cost_cents` | integer | nullable |
+| `files_changed` | text[] | File paths touched |
+| `commits` | text[] | Commit SHAs |
+| `deploys` | text[] | Vercel deploy URLs |
+| `decisions_drafted` | integer | Default 0 |
+| `skills_created` | integer | Default 0 |
+| `errors` | jsonb | nullable; `[{type, message, timestamp}, ...]` |
+| `approval_log` | jsonb | nullable; `[{asked_at, question, response, responded_at}, ...]` — every human-in-the-loop checkpoint |
+| `raw_report` | text | nullable; full §8.1 end-of-task report for forensics |
+| `created_at` | timestamptz | Default now() |
+
+Indexes: `(tenant_id, channel_id, started_at DESC)` for per-project history queries; `(task_id)` for cross-table joins from `translation_events`.
+
+This table is append-only. Never `UPDATE`. Never `DELETE`.
 
 This is what gives you a "what did Hermes do this week" report and a forensic trail when something goes wrong.
 

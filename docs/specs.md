@@ -4,7 +4,145 @@
 >
 > Spec lifecycle: **draft** → **approved** → **in-flight** → **shipped** → **archived**. When a spec ships, mark it `shipped` here with the commit reference and move the verification details to `/docs/verification.md`. Archive specs after one cycle of "shipped" review (typically 2-4 weeks) — move them to a future `/docs/specs-archive.md` if/when this file exceeds ~600 lines.
 
-**Last updated:** 2026-06-03 (Spec 3 shipped — access credentials for GitHub / Supabase / Vercel. Six smoke tests run; all passed or partial-passed with known caveats. Side-effects: Docker Engine + Node.js v20 installed on VPS; DATABASE_URL_STAGING added; terminal.cwd set in config.yaml. Spec 2 shipped narrowed; Spec 2.1 drafted for the deferred follow-ups. Section order: draft → approved → shipped.)
+**Last updated:** 2026-06-02 (Spec 4a shipped — migrations 005 + 006 run on staging and prod; hermes_writer role provisioned. Spec 4b approved, awaiting Hermes execution. hermes.md §7.2 and §7.3 finalized. Section order: draft → approved → shipped.)
+
+---
+
+## Spec 4b — Event log wiring (Hermes-executed)
+
+**Linked roadmap item:** Phase 1.5 → Infrastructure (checkbox 6 — `translation_events` and `agent_events` tables created and wired)
+**Author:** Isaac (drafted with Cowork, 2026-06-02)
+**Status:** **draft** (blocked by Spec 4a migrations being run against staging and prod)
+**Estimated time:** ~60-75 min
+**Executor:** Hermes
+
+### Goal
+
+Wire `translation_events` writes into the translation call site so every translation call produces a row, and wire `agent_events` writes into Hermes's task lifecycle so every task produces an audit row. End state: after any translation, `SELECT * FROM translation_events ORDER BY created_at DESC LIMIT 1` shows a populated row; after any Hermes task, `SELECT * FROM agent_events ORDER BY created_at DESC LIMIT 1` shows a populated row.
+
+### Prerequisites
+
+- Spec 4a fully shipped (migrations 005 and 006 run against staging **and** prod; `hermes_writer` role provisioned; `DATABASE_URL_PROD_WRITER` in `~/.hermes/.env`)
+- Hermes's working directory is `/home/hermes/work/translation-app` (confirmed in Spec 3)
+
+### Acceptance criteria
+
+**`translation_events` wiring**
+- Every call to the translation pipeline in `api/v1/translate.js` (server-side) appends one row to `translation_events` using `DATABASE_URL_STAGING` on staging and `DATABASE_URL_PROD_WRITER` on prod. Client-side wiring is explicitly out of scope — write happens server-side where all required fields are known.
+- Row captures all non-nullable fields: `schema_version=1`, `tenant_id` (from request context), `timestamp`, `target_language`, `was_cached`, `model_used`, `prompt_version`, `latency_ms`, `character_count`. Nullable fields (`task_id`, `user_id`, `input_tokens`, `output_tokens`, `cost_cents`, `retry_count`, `error_type`) populated where already available in the translate function; null otherwise.
+- Write failure is non-blocking: if the `translation_events` INSERT fails, the translation response is still returned to the user. Log the error; do not surface it.
+- No client-side changes. This is a server-side instrumentation concern only.
+
+**`agent_events` wiring**
+- Hermes generates a `task_id` UUID at the start of every task and threads it through all tool calls and sub-events for that task.
+- At task completion (status: `completed`, `failed`, `escalated`, or `aborted`), Hermes inserts one row into `agent_events` using `DATABASE_URL_PROD_WRITER`. The row captures: `task_id`, `tenant_id` (hardcoded to the chat-app tenant UUID for now), `started_at`, `completed_at`, `status`, `task_summary`, `gateway`, `channel_id`, `channel_name`, `thread_id` (if applicable), `triggered_by`, `model_tier`, `model_used`, `tokens_in`, `tokens_out`, `cost_cents`, `files_changed`, `commits`, `deploys`, `decisions_drafted`, `skills_created`, `errors`, `approval_log`, `raw_report`. `schema_version=1`.
+- If the INSERT fails, Hermes logs the failure in its end-of-task report under "What I noticed but didn't fix." Task is still marked complete; the failure does not trigger a retry.
+- Idempotency: if `idempotency_key` is set and a row with that key already exists, the INSERT is silently skipped (ON CONFLICT DO NOTHING).
+
+**Verification**
+- Run a translation via the staging UI → `SELECT * FROM translation_events ORDER BY created_at DESC LIMIT 1;` returns a row with all non-nullable fields populated.
+- Ask Hermes to do a trivial task (e.g. "confirm your working directory") → `SELECT * FROM agent_events ORDER BY created_at DESC LIMIT 1;` returns a populated row.
+- Force a translation-events write failure (temporarily point to a bad connection string) → translation still succeeds; error appears in server logs.
+
+### Out of scope
+- Dashboard or query tooling on top of the event tables → §7.4, deferred
+- `translation_events` wiring for any path other than `api/v1/translate.js` (e.g. future batch endpoints) → separate spec when those endpoints exist
+- GDPR anonymisation pipeline on event tables → deferred per architecture.md §10
+
+### Technical sketch (for Hermes)
+1. Read `api/v1/translate.js` and locate the translate call site. Identify where `latency_ms`, `model_used`, `prompt_version`, `was_cached`, and `character_count` are already available or computable.
+2. Add a `logTranslationEvent(fields)` helper (in a new `server/lib/events.js` module) that does the `translation_events` INSERT via the Postgres client. Non-blocking: wrapped in try/catch, logs errors, never throws.
+3. Call `logTranslationEvent(...)` immediately after the translate response is obtained, before returning to the caller.
+4. For `agent_events`: implement `startTask()` → returns `task_id`; `finishTask(task_id, fields)` → does the INSERT. Wire these into Hermes's task lifecycle hooks (consult Hermes Agent docs for the correct hook points — likely `on_task_start` and `on_task_complete` callbacks or equivalent).
+5. Feature branch `hermes/event-log-wiring`, commit with descriptive message + why paragraph, open draft PR per §8.1.
+6. Run both verification queries against staging. Report per §8.1.
+
+---
+
+## Spec 4a — Event log schema (Cowork-executed)
+
+**Linked roadmap item:** Phase 1.5 → Infrastructure (checkbox 6 — `translation_events` and `agent_events` tables created and wired)
+**Author:** Isaac (drafted with Cowork, 2026-06-02)
+**Status:** **shipped 2026-06-02** (commit TBD — update after push). Migrations 005 and 006 run on staging and prod. `hermes_writer` role provisioned. hermes.md §7.2 and §7.3 finalized. Verification record: `/docs/verification.md` "Event log schema — Spec 4a". Decisions: 2026-06-02 entry in `/docs/decisions.md` (hermes_writer role scope).
+**Estimated time:** ~45 min
+**Executor:** Cowork (this session)
+
+### Goal
+
+Create the `translation_events` and `agent_events` tables via migrations, add `task_id` to `user_profile_events`, provision the `hermes_writer` Postgres role with INSERT-only access on the two new event tables, and update hermes.md §7 to reflect the finalized schemas. End state: migrations are run on staging and prod; Hermes has a write credential in `~/.hermes/.env`; hermes.md is the authoritative schema reference.
+
+### Schema drift note
+
+`supabase db diff` during Spec 3 showed prod tables as "to create" on staging — a known benign delta from the pre-migrations era. This is treated as a known delta, not a blocking issue. It is documented in `/docs/parking-lot.md` and is not addressed in this spec.
+
+### Acceptance criteria
+
+**Migration 005 — new event tables**
+- `agent_events` created first (so `translation_events.task_id` can reference it logically, even though no FK is enforced).
+- `translation_events` created second, per the finalized schema in `hermes.md` §7.2.
+- `agent_events` per the finalized schema in `hermes.md` §7.3.
+- Both tables created with correct indexes: `agent_events(tenant_id, channel_id, started_at DESC)` and `agent_events(task_id)`; `translation_events(tenant_id, timestamp DESC)` and `translation_events(task_id)`.
+- Migration run against staging first, verified, then run against prod.
+- Migration file: `005_event_log_tables.sql` with embedded verification queries at the bottom.
+
+**Migration 006 — `task_id` on `user_profile_events`**
+- `ALTER TABLE user_profile_events ADD COLUMN task_id uuid;` (nullable, no FK constraint — loose reference).
+- Migration run against staging first, verified, then run against prod.
+- Migration file: `006_user_profile_events_task_id.sql`.
+
+**`hermes_writer` Postgres role**
+- Role `hermes_writer` created on prod with INSERT-only on `translation_events` and `agent_events`. No SELECT, no UPDATE, no DELETE, no other tables.
+- User `hermes_writer_user` created and granted the role.
+- Connection string stored as `DATABASE_URL_PROD_WRITER` in `~/.hermes/.env` on the droplet (same pooler pattern as `DATABASE_URL_PROD_READONLY` from Spec 3, Session mode, port 5432).
+- Smoke test: `psql $DATABASE_URL_PROD_WRITER -c "INSERT INTO agent_events ..."` succeeds; `SELECT` on the same table fails with permission denied; INSERT into any other table fails.
+
+**hermes.md §7 updated**
+- §7.2 and §7.3 reflect the finalized schemas (done — completed before this spec was written).
+- No further §7 changes needed in this spec.
+
+**Docs hygiene**
+- `decisions.md` entry drafted for `hermes_writer` role scope choice (follows same pattern as `hermes_readonly` entry from Spec 3).
+- `roadmap.md` Phase 1.5 checkbox 6 marked done with commit reference after migrations run on prod.
+- `verification.md` gets a new "Event log schema — Spec 4a" section with: migration run order, verification queries for each migration, `hermes_writer` smoke test checklist.
+- Spec status updated to shipped with commit reference.
+
+### Out of scope
+- Wiring `translation_events` or `agent_events` writes into the application → **Spec 4b** (Hermes-executed)
+- Dashboard tooling on top of the event tables → §7.4, deferred
+- Schema drift cleanup (vestigial columns on `messages`) → parking-lot item, separate spec
+
+### Technical sketch
+1. Write `migrations/005_event_log_tables.sql` — `agent_events` then `translation_events`, indexes, verification queries.
+2. Write `migrations/006_user_profile_events_task_id.sql` — ALTER TABLE, verification query.
+3. Run 005 against staging SQL editor → verify → run against prod → verify.
+4. Run 006 against staging → verify → run against prod → verify.
+5. Create `hermes_writer` role on prod via SQL editor; store connection string in `~/.hermes/.env` on droplet; run smoke test.
+6. Docs cleanup: decisions.md entry, verification.md section, roadmap checkbox, spec status → shipped.
+
+### Verification queries (embedded in migration files; re-run anytime)
+
+```sql
+-- After 005:
+SELECT column_name, data_type FROM information_schema.columns
+  WHERE table_name = 'agent_events' ORDER BY ordinal_position;
+SELECT column_name, data_type FROM information_schema.columns
+  WHERE table_name = 'translation_events' ORDER BY ordinal_position;
+SELECT indexname FROM pg_indexes WHERE tablename IN ('agent_events','translation_events');
+
+-- After 006:
+SELECT column_name FROM information_schema.columns
+  WHERE table_name = 'user_profile_events' AND column_name = 'task_id';
+
+-- hermes_writer smoke test:
+-- (run as hermes_writer_user via DATABASE_URL_PROD_WRITER)
+INSERT INTO agent_events (task_id, tenant_id, started_at, status, task_summary, gateway, model_tier, model_used, schema_version)
+  VALUES (gen_random_uuid(), '<chat_app_tenant_id>', now(), 'completed', 'smoke test', 'cli', 'sonnet', 'claude-sonnet-4-6', 1);
+-- expect: INSERT 0 1
+SELECT count(*) FROM agent_events;
+-- expect: permission denied for table agent_events
+INSERT INTO messages (sender_id, original_text) VALUES ('test', 'test');
+-- expect: permission denied for table messages
+```
 
 ---
 
