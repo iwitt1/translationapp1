@@ -80,7 +80,12 @@ export default async function handler(req, res) {
     // Known gap: update when message_translations cache is wired (Spec 4b report §known-gaps).
     // tenant_id: chat-app tenant UUID (hardcoded until multi-tenant routing exists).
     // user_id: not available in request body — null until auth is threaded through.
-    logTranslationEvent({
+    // ── Event log (awaited on Vercel serverless) ───────────────────────────
+    // Vercel freezes the process the moment res.json() is called, so a
+    // fire-and-forget write never completes. We await here to ensure the row
+    // lands before the response is sent. logTranslationEvent() swallows its
+    // own errors, so this cannot throw or slow down a failure path.
+    await logTranslationEvent({
       tenant_id: '00000000-0000-0000-0000-000000000001',
       task_id: null,
       user_id: null,
@@ -94,8 +99,6 @@ export default async function handler(req, res) {
       output_tokens: data?.usage?.completion_tokens ?? null,
       event_source: 'chat_app',
     });
-    // Note: we intentionally do NOT await this — it's fire-and-forget.
-    // The response is already built; we must not block the caller on a DB write.
 
     return res.status(200).json(parsed);
   } catch (err) {
