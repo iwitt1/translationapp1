@@ -105,7 +105,7 @@
 
 ### Promote items pulled from parking lot
 - [x] Promote "Autonomous test harness for agent-driven builds" from `/docs/parking-lot.md` → this phase. Required before Hermes operates beyond supervised mode. *Promoted 2026-06-09 → Spec 5 (approved, pending Hermes execution).*
-- [ ] Audit Supabase config that lives outside `/migrations/` (per `/docs/parking-lot.md` "Other config state lives outside /migrations/"). Capture findings as new migrations before Phase 2 RLS work begins.
+- [~] Audit Supabase config that lives outside `/migrations/` (per `/docs/parking-lot.md` "Other config state lives outside /migrations/"). Audit queries written in `verification.md` Phase 2 Step 0 — Isaac to run and confirm findings before Step 1.
 
 ### Open questions to resolve (from hermes.md §13)
 - [ ] Hermes Agent v0.14.0 (v2026.5.16) skill-versioning capability — can skills live in version control? Affects §6.8 design.

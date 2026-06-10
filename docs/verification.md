@@ -10,7 +10,7 @@
 >
 > **When to revise a section:** when a failure mode is observed in the wild and the existing checklist would have missed it. Drift between this doc and reality is the failure mode this doc is designed against, same as the architecture doc.
 
-**Last updated:** 2026-06-02 (Hermes model routing + Discord gateway section added — Spec 2 shipped narrow; Spec 2.1 drafted for the residual tier-override + cost-cap + browser-tools follow-ups)
+**Last updated:** 2026-06-10 (Phase 2 Step 1 schema checks 1–6 + 8 and the trigger smoke test confirmed on staging; check A#7 — RLS policies exist — still to run. Prior update 2026-06-09: Phase 2 Step 1 + Step 0 sections added)
 
 ---
 
@@ -421,6 +421,332 @@ Rotate all three PATs in one sitting (Vercel expires 2026-08-31 — earliest; Gi
 | `[events] INSERT failed: password authentication failed` | Special chars in password not URL-encoded in connection string | URL-encode password with `urllib.parse.quote(password, safe='')` |
 | `[events] INSERT failed: permission denied` via JS but psql works | Supabase role trust quirk — restricted role may need direct `GRANT` to user, not just via role membership | `GRANT INSERT ON table TO user_name` directly; or use superuser for staging |
 | No `[events]` log line at all | `DATABASE_URL_PROD_WRITER` not set in Vercel env | Add env var + redeploy |
+
+---
+
+---
+
+## Phase 2 — Step 1: Identity Foundation (2026-06-09)
+
+**What this step does:** Migration 007 adds `profiles`, `account_identifiers`, `account_settings`,
+the `auth.users` trigger, RLS on all three new tables, and the `dm_initiation_policy` column on
+`tenants`. The `auth.users` INSERT trigger atomically creates a pending profile + username + email
+identifier + settings row on every new signup.
+
+**Gate (must pass before Step 2 starts):**
+- [x] Migration 007 replays clean on empty staging *(confirmed 2026-06-10)*
+- [~] All 8 schema checks below pass — 1–6 + 8 green; **A#7 (RLS policies exist) still to run**
+- [x] Trigger smoke test: a test user created via Auth dashboard produces correct rows *(confirmed 2026-06-10 — pending profile `user_eb4c08ec`, both identifiers active, settings row tenant-scoped)*
+
+> **Numbering note:** the schema checks in section A are numbered 1–8. Migration 007's *embedded*
+> verification comments use a different order (007's #7 is the trigger smoke test, #8 is the
+> column-write guard). When in doubt, **this doc's numbering is authoritative.** The one check
+> not embedded in 007 at all is **A#7 — RLS policies exist** (the `pg_policies` query); run it
+> explicitly. RLS being *enabled* (check 6) is not the same as the *policies existing* (check 7):
+> with RLS on and no policies, deny-by-default locks everything — passes silently here, breaks in
+> Step 2/3.
+
+---
+
+### A. Schema verification (run in staging SQL editor after 007)
+
+```sql
+-- 1. New tables present
+SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;
+-- Expect: profiles, account_identifiers, account_settings now in list
+
+-- 2. dm_initiation_policy column on tenants
+SELECT id, name, dm_initiation_policy FROM public.tenants;
+-- Expect: 1 row, dm_initiation_policy = {}
+
+-- 3. auth_tenant_id() function exists
+SELECT routine_name FROM information_schema.routines
+WHERE routine_schema = 'public' AND routine_name = 'auth_tenant_id';
+-- Expect: 1 row
+
+-- 4. Trigger exists on auth.users
+SELECT trigger_name FROM information_schema.triggers
+WHERE event_object_schema = 'auth'
+  AND event_object_table  = 'users'
+  AND trigger_name        = 'on_auth_user_created';
+-- Expect: 1 row
+
+-- 5. Reserved words seeded
+SELECT count(*) FROM public.account_identifiers WHERE status = 'reserved';
+-- Expect: 27
+
+-- 6. RLS enabled on new tables
+SELECT relname, relrowsecurity FROM pg_class
+WHERE relnamespace = 'public'::regnamespace
+  AND relname IN ('profiles', 'account_identifiers', 'account_settings')
+  AND relkind = 'r'
+ORDER BY relname;
+-- Expect: relrowsecurity = true for all three
+
+-- 7. RLS policies exist
+SELECT tablename, policyname, cmd FROM pg_policies
+WHERE schemaname = 'public'
+  AND tablename IN ('profiles', 'account_identifiers', 'account_settings')
+ORDER BY tablename, policyname;
+-- Expect:
+--   account_identifiers | account_identifiers_select_own  | SELECT
+--   account_settings    | account_settings_select_own     | SELECT
+--   account_settings    | account_settings_update_own     | UPDATE
+--   profiles            | profiles_select_same_tenant     | SELECT
+--   profiles            | profiles_update_own             | UPDATE
+
+-- 8. [Opus-Fix #2] Column-write restriction on profiles (privilege escalation guard)
+SELECT grantee, privilege_type, column_name
+FROM information_schema.column_privileges
+WHERE table_schema = 'public'
+  AND table_name   = 'profiles'
+  AND grantee      = 'authenticated'
+  AND privilege_type = 'UPDATE';
+-- Expect: exactly ONE row → column_name = 'display_name'
+-- If you see rows for status, username, is_verified, etc., the REVOKE/GRANT block
+-- did not run correctly — re-run section 3 of migration 007.
+```
+
+---
+
+### B. Trigger smoke test
+
+1. In the **staging** Supabase dashboard → Authentication → Users → **Add user**
+   - Enter any email (e.g. `test@example.com`) and any password
+   - Click "Create user"
+
+2. Verify in SQL editor:
+
+```sql
+-- Profile row created with pending status
+SELECT id, tenant_id, status, username, username_source, display_name
+FROM public.profiles;
+-- Expect: 1 row
+--   status = 'pending'
+--   username starts with 'user_' followed by 8 hex chars
+--   username_source = 'system_generated'
+--   display_name = '' (empty, set at onboarding)
+
+-- Store the profile id for next queries
+-- (replace <profile_id> below with the id from the row above)
+
+-- Two account_identifiers rows created
+SELECT type, value, status
+FROM public.account_identifiers
+WHERE account_id = '<profile_id>';
+-- Expect: 2 rows
+--   ('email',    'test@example.com', 'active')
+--   ('username', 'user_xxxxxxxx',    'active')
+
+-- account_settings row created with defaults
+SELECT discoverable_by_email, discoverable_by_username, allow_dms_from
+FROM public.account_settings
+WHERE account_id = '<profile_id>';
+-- Expect: (true, true, 'contacts')
+```
+
+---
+
+### C. Failure modes
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `ERROR: function gen_random_bytes(integer) does not exist` | pgcrypto not installed | `CREATE EXTENSION IF NOT EXISTS pgcrypto;` then re-run migration |
+| `ERROR: relation "auth.users" does not exist` | Running against a non-Supabase Postgres | Supabase only — the auth schema is managed by Supabase |
+| `ERROR: permission denied for table auth.users` | Not running as postgres/superuser | Use the Supabase SQL editor (runs as postgres) |
+| No trigger row in query 4 | `CREATE OR REPLACE TRIGGER` failed silently | Check for errors in the migration output; re-run the trigger block |
+| Profile not created after Add User | Trigger exists but function has a bug | Check Supabase logs (Auth logs + DB logs) for the exception message |
+| `unique_violation` on profiles_unique_username | Username collision (astronomically unlikely) | Trigger retries 10x; if this persists, inspect the reserved-word table |
+| `accounts_identifiers_unique_value` violation | Email already registered | Expected: Supabase Auth also enforces unique email; trigger error means the auth.users INSERT also rolls back |
+
+---
+
+## Phase 2 — Step 3: RLS Adversarial Gate (placeholder — fill in at build)
+
+**What this step does:** With identity + auth in place, verifies that RLS actually holds under
+adversarial conditions. Hard stop — do not build discovery/social on an unverified base.
+
+**Gate:** Both test categories below must pass. Step 4 cannot start until they do.
+
+### Test category A — Cross-user READ isolation
+Standard cross-user test: user A authenticates and attempts to read user B's data via direct
+Supabase client calls using their own JWT. All attempts must be denied or return 0 rows.
+
+Queries to run as user A (use Supabase JS client with user A's session token):
+- `SELECT * FROM profiles` → expect: only user A's own row (one row)
+- `SELECT * FROM account_identifiers` → expect: only user A's own rows (email + username)
+- `SELECT * FROM account_settings` → expect: only user A's own row
+- `SELECT * FROM messages` → (once RLS is on messages in Step 3) expect: scoped to tenant
+
+### Test category B — Self-write COLUMN escalation (added from Opus review of migration 007)
+User A authenticates and attempts to PATCH columns on their OWN profile that should be
+write-restricted. All attempts must be rejected by the column-level grant.
+
+Attempts to make as user A via PostgREST/Supabase client:
+```js
+// All of these should fail with "permission denied" or similar
+await supabase.from('profiles').update({ is_verified: true }).eq('id', userA.id)
+await supabase.from('profiles').update({ status: 'active' }).eq('id', userA.id)
+await supabase.from('profiles').update({ username: 'admin' }).eq('id', userA.id)
+await supabase.from('profiles').update({ username_source: 'user_set' }).eq('id', userA.id)
+```
+
+Only `display_name` updates should succeed:
+```js
+// This should succeed
+await supabase.from('profiles').update({ display_name: 'Test Name' }).eq('id', userA.id)
+```
+
+**Why this test exists:** RLS policies scope rows, not columns. Migration 007 added a
+`REVOKE UPDATE / GRANT UPDATE (display_name)` block specifically because without it, a user
+could POST-gREST-patch `is_verified=true` to self-verify. This test confirms those grants are
+in place and survive any future migration that touches the profiles table.
+
+*(Full verification queries to be written when Step 3 is built.)*
+
+---
+
+## Phase 2 — Step 0: Pre-flight (2026-06-09)
+
+**What this step does:** Audits Supabase config that lives outside `/migrations/`, scaffolds
+`lib/policies.js`, and wipes staging clean for a fresh Phase 2 build.
+
+**Gate (must pass before Step 1 starts):**
+- [ ] Audit findings captured — no un-migrated extensions, triggers, or RLS policies found (or noted)
+- [ ] `lib/policies.js` created and in sync with `policies.md`
+- [ ] Staging confirmed empty (all Phase 1 tables dropped)
+
+---
+
+### A. Supabase config audit
+
+Run these queries in the **staging** SQL editor (and prod separately if you want to compare).
+The goal is to find anything set via Studio UI that isn't captured in a migration file.
+
+```sql
+-- 1. Extensions — check what's enabled. We need pgcrypto for Phase 2 email hashing.
+SELECT name, installed_version, default_version
+FROM pg_available_extensions
+WHERE installed_version IS NOT NULL
+ORDER BY name;
+-- Expect: pg_graphql, pg_stat_statements, pgcrypto, pgjwt, uuid-ossp (Supabase defaults)
+-- If pgcrypto is absent: note it — we'll need to enable it in migration 007.
+
+-- 2. Triggers on auth.users (we'll add one in Step 1; need to know if anything exists)
+SELECT trigger_name, event_object_schema, event_object_table,
+       action_timing, event_manipulation, action_statement
+FROM information_schema.triggers
+WHERE event_object_schema = 'auth' AND event_object_table = 'users'
+ORDER BY trigger_name;
+-- Expect: 0 rows (no custom triggers yet).
+
+-- 3. Triggers in public schema
+SELECT trigger_name, event_object_table, action_timing, event_manipulation
+FROM information_schema.triggers
+WHERE trigger_schema = 'public'
+ORDER BY event_object_table, trigger_name;
+-- Expect: 0 rows.
+
+-- 4. RLS status on all public tables (should all be off today)
+SELECT relname AS table_name,
+       relrowsecurity AS rls_enabled,
+       relforcerowsecurity AS rls_forced
+FROM pg_class
+WHERE relnamespace = 'public'::regnamespace
+  AND relkind = 'r'
+ORDER BY relname;
+-- Expect: rls_enabled = false on every row.
+
+-- 5. Existing RLS policies (should be none)
+SELECT schemaname, tablename, policyname, cmd, roles, qual
+FROM pg_policies
+WHERE schemaname = 'public'
+ORDER BY tablename, policyname;
+-- Expect: 0 rows.
+
+-- 6. Realtime publication tables (004 captures messages; anything else?)
+SELECT schemaname, tablename
+FROM pg_publication_tables
+WHERE pubname = 'supabase_realtime'
+ORDER BY tablename;
+-- Expect: exactly ('public', 'messages'). If other tables appear, note them.
+
+-- 7. Custom functions in public schema
+SELECT routine_name, routine_type
+FROM information_schema.routines
+WHERE routine_schema = 'public'
+ORDER BY routine_name;
+-- Expect: 0 rows (no custom functions yet).
+```
+
+**Known extra-migration config (not in migrations, documented here):**
+- `hermes_writer_user` Postgres role on prod (INSERT-only on event tables) — provisioned
+  manually per Spec 4a. Staging equivalent not provisioned (staging uses postgres superuser).
+- `hermes_readonly_user` Postgres role on prod (SELECT-only) — provisioned manually per Spec 3.
+- These roles don't need migration files; they're operational config, not schema.
+
+---
+
+### B. Staging wipe
+
+Run in the **staging** Supabase SQL editor. Drops all public tables and replays migrations 000–006
+from scratch. **Do not run on prod.**
+
+```sql
+-- Step 1 of 2: Drop all tables in public schema (CASCADE handles FK order)
+DO $$
+DECLARE
+    r RECORD;
+BEGIN
+    FOR r IN (
+        SELECT tablename
+        FROM pg_tables
+        WHERE schemaname = 'public'
+        ORDER BY tablename
+    ) LOOP
+        EXECUTE 'DROP TABLE IF EXISTS public.' || quote_ident(r.tablename) || ' CASCADE';
+    END LOOP;
+END $$;
+
+-- Verify clean:
+SELECT tablename FROM pg_tables WHERE schemaname = 'public';
+-- Expect: 0 rows.
+```
+
+Then replay migrations in order:
+1. `000_base_schema.sql`
+2. `001_tenants_and_tenant_id.sql`
+3. `002_phase1_schema.sql`
+4. `003_prompt_version_and_gender_nonbinary.sql`
+5. `004_enable_realtime_publication.sql`
+6. `005_event_log_tables.sql`
+7. `006_user_profile_events_task_id.sql`
+
+After replaying, verify:
+```sql
+-- Confirm expected tables exist
+SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;
+-- Expect: agent_events, conversation_contexts, message_translations, messages,
+--         tenants, translation_events, user_linguistic_profiles, user_profile_events, user_profiles
+
+-- Confirm tenant seed row (from 001)
+SELECT id, name FROM public.tenants;
+-- Expect: 1 row with the chat-app tenant
+```
+
+**Note on test users:** The staging test users (`staging_test_a`, `staging_test_b`) seeded
+previously are gone after the wipe. They'll be re-seeded via the real magic-link flow in Step 2.
+
+---
+
+### C. Failure modes
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| DROP TABLE fails with `cannot drop ... because other objects depend on it` | FK constraint not caught by CASCADE | Add `CASCADE` if missing; CASCADE should handle this |
+| Migration replay fails on `001` | `tenants` table not created by `000` first | Confirm 000 ran clean before 001 |
+| `005` fails on `agent_events` | Tenant seed row from `001` missing — `tenant_id NOT NULL` | Re-run `001` first |
+| pgcrypto missing from audit | Extension not enabled by default on this Supabase plan | Enable in migration 007 with `CREATE EXTENSION IF NOT EXISTS pgcrypto` |
 
 ---
 

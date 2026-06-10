@@ -16,6 +16,22 @@
 
 ---
 
+## 2026-06-09 — Scaffold lib/policies.js as machine mirror of policies.md
+
+**Decision:** Create `lib/policies.js` at Phase 2 Step 0 as the single machine-readable source of truth for global policy defaults. All enforcement code reads from this module. Per-tenant overrides remain in `tenants.dm_initiation_policy` (jsonb).
+
+**Context:** Phase 2 adds username enforcement, DM-initiation gating, discovery rules, and account lifecycle logic. Without a single module, policy values would be scattered across enforcement code, creating drift risk between the human doc (policies.md) and what the code actually does.
+
+**Alternatives considered:** (A) Inline constants in each enforcement function — values drift immediately. (B) Store all defaults in the DB alongside tenant overrides — over-engineered; global defaults don't need DB writes. (C) Single `lib/policies.js` mirroring policies.md. **Chosen.**
+
+**Reasoning:** Matches the existing `lib/translatePrompt.js` pattern. ES module imports work in both Vercel serverless and Express. One place to update when policy values change; grep-able for every call site.
+
+**Implications:** `lib/policies.js` must be updated in the same commit as any material change to `policies.md`. The `resolve()` and `isPermitted()` helpers on `DM_INITIATION` are the canonical enforcement path — don't duplicate logic elsewhere.
+
+**Revisit when:** Policy complexity grows to the point where a dedicated policy engine (e.g., OPA) is warranted, or per-tenant overrides need richer evaluation than a simple jsonb merge.
+
+---
+
 ## 2026-06-09 — New doc: phase2-implementation.md (build-order spec + Sonnet prompt)
 
 **Decision:** Add `docs/phase2-implementation.md` holding the Phase 2 plan of attack (dependency-ordered build steps with a test gate between each) and a paste-ready prompt for the Sonnet session that implements it.

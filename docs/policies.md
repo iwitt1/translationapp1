@@ -115,6 +115,11 @@ email" as strong trust.
 - **P4 — first message sent:** engagement milestone, **not** an account status (kept out of the
   `status` column to avoid conflating usage analytics with account state).
 
+### Account status values
+The `profiles.status` column has three values: `pending` (P1–P2), `active` (P3+), and
+`deactivated` (soft-delete used by the data-deletion job in Step 7 — the account exists in
+the DB but is non-functional). Hard deletion goes through `data_deletion_requests` (Step 7).
+
 ### Base requirements for a pending account
 uuid (mandatory) · email identifier (mandatory) · `tenant_id` (mandatory) · random
 `system_generated` username (yes — every profile has one) · `status='pending'`. Display name +
