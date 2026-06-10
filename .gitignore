@@ -7,3 +7,5 @@ echo
 which
 .vercel
 .env*
+# ...but keep the committed, non-secret example for the RLS gate
+!.env.rls-test.example

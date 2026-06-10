@@ -16,13 +16,25 @@
 
 ---
 
+## Progress (updated 2026-06-10)
+
+- **Step 0 — Pre-flight:** done. `lib/policies.js` scaffolded; config audit captured; branch→Preview→staging wiring confirmed.
+- **Step 1 — Identity foundation:** done. Migration `007` shipped (profiles, account_identifiers, account_settings, `auth_tenant_id()`, `handle_new_user()` trigger, RLS). Gate passed on staging.
+- **Step 2 — Auth + onboarding:** done. Migration `008` shipped (text→uuid identity cutover, `complete_onboarding()` RPC, RLS on messages/message_translations/ulp/upe). Magic-link auth + onboarding app layer in `App.jsx`. **Gate PASSED on staging 2026-06-10** (full signup→onboard→active flow for two users).
+- **Separable workstream — server-side profile inference:** done. `POST /api/v1/infer-profile` + `server/lib/inferProfile.js`. **Gate PASSED on staging 2026-06-10.** See decisions.md / verification.md.
+- **→ NEXT: Step 3 — RLS adversarial gate.** Hard-stop security gate. Note OPUS-FIX #2 in migration 007: the gate must also include a **self-write escalation** test (PATCH own `is_verified`/`status`/`username` → expect denied), not just cross-user reads.
+
+**Migrations shipped so far: 007, 008, 009 (009 restores the `nonbinary` gender signal that 008 accidentally dropped). Next migration prefix is `010_`.**
+
+---
+
 ## Governing principles
 
 1. **Dependency order, deny-by-default, a test gate between every component.** Nothing advances
    to the next piece — and nothing touches prod — until the current piece passes on staging.
-2. **Migration workflow (operations.md §3):** numbered forward-only migration (next prefix is
-   `007_`) → run on staging → verify with embedded queries → app changes → staging smoke +
-   adversarial test → *only then* replay on prod.
+2. **Migration workflow (operations.md §3):** numbered forward-only migration (007–009 shipped;
+   next prefix is `010_`) → run on staging → verify with embedded queries → app changes → staging
+   smoke + adversarial test → *only then* replay on prod.
 3. **Every table ships with its RLS policies in the same migration**, deny-by-default. RLS is
    greenfield (none exists today); get it right at table creation rather than bolting it on.
 4. **Keep `lib/policies.js` (machine defaults) in sync with `policies.md` (human source).**
@@ -131,7 +143,7 @@ so don't rely on it.) Before writing any code, read these in order:
 
 == GROUND RULES ==
 - Migration workflow (operations.md §3): write a numbered forward-only migration
-  (next prefix is 007_), run on STAGING first, verify with embedded queries, make
+  (007–009 shipped; next prefix is 010_), run on STAGING first, verify with embedded queries, make
   app changes, smoke-test on staging, then — only after the gate passes — replay
   on PROD. Never touch prod before staging is green.
 - Every table ships with its RLS policies IN THE SAME migration, deny-by-default.

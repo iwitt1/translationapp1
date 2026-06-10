@@ -2,7 +2,7 @@
 
 > Living technical document. Describes what the system is, the principles it's built on, and what we're migrating toward. Updated in the same commit as any architectural change.
 
-**Last updated:** 2026-05-18 (§7 schema updated to reflect actual prod state — vestigial columns documented, tenant_id NOT NULL, surrogate id keys captured; closes a known doc/DB drift gap surfaced during staging setup)
+**Last updated:** 2026-06-10 (§2, §7, §10, §13 reconciled to the Phase 2 build: migrations 007 (identity foundation) + 008 (identity cutover) are LIVE ON STAGING — `profiles`/`account_identifiers`/`account_settings` exist, `user_profiles` dropped, `messages.sender_id` + `user_linguistic_profiles`/`user_profile_events` cut over to uuid, RLS enabled on the Phase 2 tables, and `auth_tenant_id()`/`handle_new_user()`/`complete_onboarding()` added. Server-side profile inference shipped + verified on staging. **Prod is untouched** — it still runs the pre-auth no-RLS app; the cutover is a coordinated wipe-staging-then-prod event (see §10). Prior 2026-05-18: §7 vestigial-column reconciliation.)
 **Repo:** https://github.com/iwitt1/translationapp1
 **Owner:** Isaac (iwitt1)
 
@@ -34,9 +34,9 @@ A real-time multilingual chat application backed by an LLM-powered translation A
 ## What does NOT work today (in priority order to fix)
 
 1. **Contextual translation is not implemented.** The translate prompt sees only the current message; no prior history is ever included. This is the biggest gap relative to the project's stated value proposition.
-2. **No structured inference return.** The translate prompt returns plain translated text and discards all the implicit dialect/register/gender inference the model performs. Highest-leverage fix; included in Phase 1.
-3. **No row-level security (RLS).** Frontend uses Supabase anon key; without RLS, anyone with the public URL can read every message, profile, and translation in the database.
-4. **No real authentication.** `user_id` is literally the typed username string. Same username on two browsers = same identity.
+2. ~~**No structured inference return.**~~ **Built + verified on staging 2026-06-10** (server-side, `server/lib/inferProfile.js` + `/api/v1/infer-profile`; writes inferences to `user_linguistic_profiles` with `_source` tracking). Prod enablement deferred (prod safely no-ops until the least-privilege writer role + env var are set). Still true in **prod**.
+3. ~~**No row-level security (RLS).**~~ **Built on staging** via migrations 007/008 — RLS enabled on `profiles`, `account_identifiers`, `account_settings`, `messages`, `message_translations`, `user_linguistic_profiles`, `user_profile_events`. Verified by the Step 3 adversarial gate (`scripts/rls-adversarial-test.mjs`). Still true in **prod** until the cutover.
+4. ~~**No real authentication.**~~ **Built on staging** — Supabase Auth (magic-link / email OTP); identity is now the `auth.users` uuid via the `profiles` table. Still true in **prod** until the cutover.
 5. **No conversation / room model.** Every message lives in one global `messages` table.
 6. ~~**No `tenant_id` on tables.** Will be retrofitted in Phase 0 — easy now, painful later.~~ Migration written 2026-05-12 (`migrations/001_tenants_and_tenant_id.sql`). Awaiting execution in Supabase.
 7. ~~**No versioned API routes.** Current endpoint is `/api/translate`; needs to become `/api/v1/translate` in Phase 0.~~ Done 2026-05-12.
@@ -44,7 +44,7 @@ A real-time multilingual chat application backed by an LLM-powered translation A
 9. ~~**Prompt drift between prod and local.** Local `server/index.js` has an extra prompt line that production `api/translate.js` lacks. Reconciled in Phase 0.~~ Done 2026-05-12.
 10. **Wasteful detect-on-every-send.** Every message triggers an OpenAI detect call even when the sender's language is known.
 11. **No error UX.** Translation failures silently fall back to the original text.
-12. **No way for users to set preferred language in the UI.** Hardcoded to `en` at user creation.
+12. ~~**No way for users to set preferred language in the UI.**~~ **Built on staging** — `complete_onboarding(display_name, preferred_language)` RPC sets it explicitly at onboarding (written `_source='explicit'` to `user_linguistic_profiles`). Still true in **prod**.
 13. ~~**Stray files at repo root** (`Bash`, `echo`, `which`). Gitignored but ugly; delete in Phase 0.~~ Done 2026-05-12.
 
 ---
@@ -198,6 +198,27 @@ The `_source` fields in `user_linguistic_profiles` (e.g., `dialect_source: 'expl
 
 ## 7. Database schema
 
+> **Migration status (2026-06-10).** The "Phase N — to add" framing below is partly historical: a
+> chunk of it has now shipped to **staging** (not prod). Quick map:
+>
+> | Table / object | Migration | State |
+> |---|---|---|
+> | `tenants`, `tenant_id` columns | 001 | live (prod + staging) |
+> | `messages`, `message_translations` | 000/001 | live; **`messages.sender_id` text→uuid (FK `auth.users`, ON DELETE SET NULL)** on **staging** via 008 |
+> | `user_profiles` | 000 | **dropped on staging** by 008 (replaced by `profiles`) |
+> | `user_linguistic_profiles` | 002 → recreated 008 → 009 | live on staging with **uuid** `user_id` (FK `profiles`); 009 restores `nonbinary` to the gender CHECK |
+> | `user_profile_events` | 005/006 → recreated 008 | live on staging with **uuid** `user_id` |
+> | `profiles`, `account_identifiers`, `account_settings` | 007 | live on **staging** |
+> | `auth_tenant_id()`, `handle_new_user()` trigger | 007 | live on staging |
+> | `complete_onboarding(display_name, preferred_language)` RPC | 008 | live on staging |
+> | RLS on all Phase 2 tables + `messages`/`message_translations` | 007/008 | enabled on staging; verified by Step 3 gate |
+> | `relationships`, `blocks`, `reports`, `invites`, `invite_redemptions` | — | **not built yet** (Phase 2 Step 5+) |
+> | `conversation_contexts`, `translation_corrections`, `translation_reviews`, `data_deletion_requests` | — | **not built yet** |
+>
+> Prod still runs the pre-007 schema (no `profiles`, `sender_id` still text, no RLS). The column
+> definitions in the subsections below are the design of record; where 007/008 diverged from the
+> original sketch it's noted inline.
+
 ### Tables that exist today (MVP)
 
 #### `messages`
@@ -205,7 +226,7 @@ The `_source` fields in `user_linguistic_profiles` (e.g., `dialect_source: 'expl
 |---|---|---|
 | `id` | uuid | Primary key, default `gen_random_uuid()` |
 | `created_at` | timestamp with time zone | Default `now()` |
-| `sender_id` | text | Currently the typed username string |
+| `sender_id` | text → **uuid** | Was the typed username string. **Staging (008):** now `uuid`, FK `auth.users(id)` ON DELETE SET NULL. Prod still `text`. |
 | `original_text` | text | The message as typed |
 | `source_language` | text | BCP 47 language code, detected by AI at send |
 | `tenant_id` | uuid | NOT NULL, FK to `tenants(id)`. Added by migration `001`. |
@@ -242,9 +263,10 @@ Unique: `(message_id, language)` — one cached translation per message per targ
 | `created_at` | timestamp without time zone | Default `now()` |
 | `tenant_id` | uuid | NOT NULL, FK to `tenants(id)`. Added by migration `001`. |
 
-**Replaced in Phase 2 by `profiles`** (see "Tables to add in Phase 2" below). The `user_id` text
-key and `default_language` move; identity becomes the `auth.users` uuid and language moves to
-`user_linguistic_profiles.preferred_language`.
+**Replaced by `profiles`** — and as of migration 008 this table is **dropped on staging**
+(`DROP TABLE public.user_profiles CASCADE`). The `user_id` text key and `default_language` moved:
+identity is now the `auth.users` uuid (via `profiles`) and language lives in
+`user_linguistic_profiles.preferred_language`. Prod still has `user_profiles` until the cutover.
 
 ### Tables to add in Phase 0 (cheap structural prep)
 
@@ -262,22 +284,25 @@ Seeded with one row representing the chat app itself. Every other table gets a `
 ### Tables to add in Phase 1 (with the contextual-translation feature)
 
 #### `user_linguistic_profiles`
+> **Live on staging** (recreated by migration 008 with a uuid key). PK is composite
+> `(user_id, tenant_id)`. Enum-like columns are enforced as text + `CHECK` constraints, not Postgres
+> enums. RLS: SELECT same-tenant, UPDATE own (`user_id = auth.uid()`).
 | Column | Type | Notes |
 |---|---|---|
-| `user_id` | uuid | FK to users |
-| `tenant_id` | uuid | FK to tenants |
-| `preferred_language` | text | e.g. `"es"` |
+| `user_id` | uuid | **FK to `profiles(id)`** ON DELETE CASCADE (008). Part of composite PK. |
+| `tenant_id` | uuid | FK to tenants. Part of composite PK. |
+| `preferred_language` | text | e.g. `"es"`; set `explicit` at onboarding |
 | `dialect_region` | text | e.g. `"es-AR"` (Rioplatense) |
-| `dialect_confidence` | float | 0.0–1.0 |
-| `dialect_source` | enum | `'explicit' \| 'inferred'` |
-| `formality_preference` | enum | `'formal' \| 'neutral' \| 'casual'` |
-| `formality_source` | enum | `'explicit' \| 'inferred'` |
-| `gender_signal` | enum | `'masculine' \| 'feminine' \| 'neutral' \| 'nonbinary' \| 'unknown'` — `neutral` = language has no grammatical gender (Finnish, Turkish, etc.); `nonbinary` = speaker actively uses gender-inclusive forms |
-| `gender_source` | enum | `'explicit' \| 'inferred'` |
+| `dialect_confidence` | float | 0.0–1.0, default 0.0 |
+| `dialect_source` | text+CHECK | `'explicit' \| 'inferred'`, default `'inferred'` |
+| `formality_preference` | text+CHECK | `'formal' \| 'neutral' \| 'casual'` |
+| `formality_source` | text+CHECK | `'explicit' \| 'inferred'`, default `'inferred'` |
+| `gender_signal` | text+CHECK | `'masculine' \| 'feminine' \| 'neutral' \| 'nonbinary' \| 'unknown'`. 008 dropped `nonbinary` from the CHECK (regression vs. migration 003); **migration 009 restores it** (pending its staging run). `neutral` = source language has no grammatical gender (Finnish, Turkish, …); `nonbinary` = speaker uses gender-inclusive forms (decisions.md 2026-05-12). |
+| `gender_source` | text+CHECK | `'explicit' \| 'inferred'`, default `'inferred'` |
 | `script_preference` | text | e.g. `"latin"`, `"traditional"`, `"simplified"` |
-| `script_source` | enum | `'explicit' \| 'inferred'` |
+| `script_source` | text+CHECK | `'explicit' \| 'inferred'`, default `'inferred'` |
 | `known_languages` | text[] | e.g. `["es", "en"]` for bilingual users |
-| `updated_at` | timestamp | |
+| `updated_at` | timestamptz | default `now()` |
 
 #### `conversation_contexts`
 | Column | Type | Notes |
@@ -348,6 +373,9 @@ Both human reviewers and AI auditors write into the same table — no schema cha
 The deletion job **anonymizes** corrections (strips user_id and PII, keeps translation pairs) rather than hard-deleting. Anonymized translation pairs remain legally usable for training. Hard-deletion destroys training data that is irreplaceable.
 
 #### `user_profile_events` (append-only event source)
+> **Live on staging** — first added by migration 005 (+ `task_id` in 006), recreated by 008 with a
+> **uuid** `user_id` (FK `profiles`). RLS: SELECT own, INSERT own. The inference workstream writes
+> here with `source='inference'`.
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid | Primary key |
@@ -361,9 +389,11 @@ The deletion job **anonymizes** corrections (strips user_id and PII, keeps trans
 
 Lets you reconstruct what the system believed about a user at any point in time. Critical for debugging bad translations and for quality control on training data.
 
-### Tables to add in Phase 2 (identity, discovery, social graph)
+### Phase 2 tables (identity, discovery, social graph)
 
-> Design rationale and trade-offs in `decisions.md` (2026-06-09 entries). Policy *values* live in
+> **Status:** `profiles`, `account_identifiers`, `account_settings` are **live on staging** (migration
+> 007). `relationships`, `blocks`, `reports`, `invites`/`invite_redemptions` are **not built yet**
+> (Phase 2 Step 5+). Design rationale and trade-offs in `decisions.md` (2026-06-09 entries). Policy *values* live in
 > `policies.md` + `lib/policies.js`. **Identity vs. discovery principle:** the stable identity is
 > the `auth.users` uuid; human-facing discovery handles are a separate normalized layer that
 > points at it and is never a key.
@@ -489,6 +519,14 @@ When an abandoned pending account is deleted (policies.md §6), a **hash** of it
 in an abuse-monitoring table (`email_hash`, `tenant_id`, `first_seen`, `abandon_count`) — not the
 plaintext — so repeat-abandon / signup-spam is detectable without retaining deleted-user PII.
 
+### Phase 2 DB functions (live on staging, 007/008)
+
+These three server-side functions are load-bearing for identity + RLS; treat them as part of the schema.
+
+- **`auth_tenant_id()`** (007, `SECURITY DEFINER`, SQL) — returns `tenant_id FROM profiles WHERE id = auth.uid()`. The linchpin of every tenant-scoped RLS policy. It's `SECURITY DEFINER` so it can read `profiles` without tripping the very RLS it feeds (avoids recursion); returns NULL for an unauthenticated caller → access denied by default.
+- **`handle_new_user()`** (007, `AFTER INSERT` trigger `on_auth_user_created` on `auth.users`) — creates the pending `profiles` row + `email` and `username` `account_identifiers` + default `account_settings`. System username = `'user_' + 8 hex chars` (needs pgcrypto). **Tenant hardcoded to the sole-tenant UUID `…001`** — every new signup lands in tenant 1. If it raises, the `auth.users` INSERT rolls back (no orphaned auth rows).
+- **`complete_onboarding(p_display_name, p_preferred_language)`** (008, `SECURITY DEFINER`, `GRANT EXECUTE … TO authenticated`) — the P1→P3 transition: sets `status='active'`, `display_name`, `onboarding_completed_at`, and creates the `user_linguistic_profiles` row with `preferred_language` written `_source='explicit'`. Routed through an RPC (not a direct table write) precisely because `authenticated` is *not* allowed to write `status` directly (see §10 column-grant note).
+
 ---
 
 ## 8. How a translation moves through the system
@@ -574,7 +612,9 @@ Fine-tuning takes a base model and trains it further on our corrections data. Be
 - OpenAI API key lives in backend env vars only; frontend never sees it.
 - Frontend never calls OpenAI directly.
 - Supabase anon key is in the frontend bundle (by design — that's how a browser app talks to Supabase).
-- **No RLS yet.** Anon key + no RLS = anyone with the URL can read every message in the database. Fixed in Phase 2.
+- **Prod: still no RLS.** Anon key + no RLS = anyone with the URL can read every message in the prod database. This is the single biggest reason the Phase 2 cutover matters.
+- **Staging: RLS built and verified.** Migrations 007/008 enable RLS on all identity/content tables; the Step 3 adversarial gate (`scripts/rls-adversarial-test.mjs`) proves cross-user and cross-tenant isolation as real authenticated users.
+- **Column-level write guard (007, OPUS-FIX #2).** RLS scopes *rows*, not *columns* — so even with a correct row policy, a `authenticated` user could PostgREST-PATCH `is_verified=true` on their own row to self-verify. Mitigation: `REVOKE UPDATE ON profiles FROM authenticated; GRANT UPDATE (display_name) ON profiles TO authenticated;`. Everything else on `profiles` (`status`, `username`, `is_verified`, …) is mutated only via `SECURITY DEFINER` RPCs (e.g. `complete_onboarding`). The Step 3 gate includes a self-write escalation negative test for exactly this.
 
 ### Target (post-Phase 2)
 - Supabase Auth providing real user identity (stable `auth.users` uuid under the hood; `username` and `display_name` are separate handles, neither is the key — see §7 + decisions.md 2026-06-09).
@@ -650,12 +690,23 @@ The OpenAI API key never leaves the backend. Frontend never calls OpenAI directl
 /V1
 ├── api/
 │   └── v1/
-│       └── translate.js      Vercel serverless backend (versioned routes)
+│       ├── translate.js      Vercel serverless: translate/detect (versioned routes)
+│       └── infer-profile.js  Vercel serverless: server-side profile inference
+├── lib/                       Shared (server + serverless) translation/policy logic
+│   ├── translatePrompt.js    System prompt + PROMPT_VERSION (semver, stamped on cache)
+│   └── policies.js           Machine source of truth for global identity/safety defaults
 ├── server/
 │   ├── index.js              Local dev backend (Express)
+│   ├── lib/
+│   │   ├── inferProfile.js   Inference→profile update logic (explicit-wins, confidence gate)
+│   │   └── events.js         user_profile_events writer
 │   └── .env                  Local OPENAI_API_KEY (not committed)
-├── migrations/
-│   └── 001_tenants_and_tenant_id.sql   Run in Supabase SQL editor, manually for now
+├── migrations/               Run in Supabase SQL editor, manually for now (000–008)
+│   ├── 000_base_schema.sql … 006_user_profile_events_task_id.sql
+│   ├── 007_phase2_identity_foundation.sql   profiles/identifiers/settings, auth_tenant_id(), trigger
+│   └── 008_phase2_step2_identity_cutover.sql  text→uuid cutover, RLS, complete_onboarding()
+├── scripts/
+│   └── rls-adversarial-test.mjs   Phase 2 Step 3 RLS gate (run on staging)
 ├── src/
 │   ├── App.jsx               Frontend UI (login, chat, message bubble) — single file currently
 │   ├── main.jsx              React entry point
@@ -668,14 +719,17 @@ The OpenAI API key never leaves the backend. Frontend never calls OpenAI directl
 │   ├── strategy.md           Product vision, two-phase plan, market
 │   ├── operations.md         Cost model, hiring, workflow
 │   ├── roadmap.md            Phased roadmap with checklists
+│   ├── phase2-implementation.md  Phase 2 step-by-step build spec
 │   ├── parking-lot.md        Uncommitted ideas
 │   ├── decisions.md          Dated decisions log
 │   ├── policies.md           Trust & safety / identity governance (living, audited)
+│   ├── specs.md              Hermes spec archive
 │   ├── verification.md       Verification and debugging checklists
 │   ├── hermes.md             Hermes Agent charter (VPS execution agent)
 │   └── cowork-handoff.md     Weekly Hermes→Cowork briefing
 ├── .cursorrules              Cursor rules and pointer to /docs
 ├── .env                      Frontend env vars
+├── .env.rls-test.example     Template for the Step 3 RLS gate config (committed; real one gitignored)
 ├── .gitignore                
 ├── index.html                HTML shell
 ├── package.json              

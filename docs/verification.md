@@ -10,7 +10,7 @@
 >
 > **When to revise a section:** when a failure mode is observed in the wild and the existing checklist would have missed it. Drift between this doc and reality is the failure mode this doc is designed against, same as the architecture doc.
 
-**Last updated:** 2026-06-10 ("Server-side profile inference" gate marked ✅ PASSED on staging — two-user gate, trust boundary, dialect guard (both directions), confidence-must-increase, and deferred Step 2 smoke test all confirmed against `translationapp1-staging`. Prod enablement still deferred. Earlier same day: section added with the gate checklist. Prior: Phase 2 Step 2 section — migration 008 schema checks + end-to-end signup→onboard→active flow.)
+**Last updated:** 2026-06-10 (Phase 2 Step 3 RLS adversarial gate ✅ **PASSED on staging — 21/21 GREEN**; Step 4 unblocked. Section documents the harness `scripts/rls-adversarial-test.mjs` + tenant-2/user-C fixture + 7 assertion categories + run instructions. Earlier same day: "Server-side profile inference" gate marked ✅ PASSED on staging; prod enablement still deferred. Prior: Phase 2 Step 2 section — migration 008 schema checks + end-to-end signup→onboard→active flow.)
 
 ---
 
@@ -693,48 +693,84 @@ Run this manually via a real browser pointing at the Vercel Preview (staging).
 
 ---
 
-## Phase 2 — Step 3: RLS Adversarial Gate (placeholder — fill in at build)
+## Phase 2 — Step 3: RLS Adversarial Gate (2026-06-10)
 
-**What this step does:** With identity + auth in place, verifies that RLS actually holds under
-adversarial conditions. Hard stop — do not build discovery/social on an unverified base.
+**Status: ✅ PASSED on staging 2026-06-10 — 21/21 assertions GREEN.** Confirmed cross-user read
+denial (own-only tables), intended same-tenant reads, self-escalation denial (`is_verified`/
+`username`/`status` → "permission denied for table profiles"), allowed self-write (`display_name`),
+cross-user write denial (row-scope + spoofed-sender INSERT → RLS violation), cross-tenant isolation
+(user C in tenant 2 ↔ tenant-1 data, both directions), and defense-in-depth (A's profile unchanged
+after escalation attempts: `is_verified=false`, `status=active`, `username` still `user_…`). Gate is
+a hard stop and it cleared — **Step 4 (discovery) is unblocked.** Re-run after any migration that
+adds/edits RLS policies or grants on Phase 2 tables.
 
-**Gate:** Both test categories below must pass. Step 4 cannot start until they do.
+**What this step does:** With identity + auth in place, proves RLS actually isolates users and
+tenants under adversarial conditions. **Hard stop** — do not build discovery/social (Step 4+)
+on an unverified base.
 
-### Test category A — Cross-user READ isolation
-Standard cross-user test: user A authenticates and attempts to read user B's data via direct
-Supabase client calls using their own JWT. All attempts must be denied or return 0 rows.
+**How it's verified:** A checked-in, re-runnable harness — `scripts/rls-adversarial-test.mjs` —
+not a one-off console snippet. It signs in as real users (own JWTs), runs a PASS/FAIL assertion
+matrix, and exits 0 (gate GREEN) or 1 (HARD STOP). Service-role is used ONLY for one-time
+fixture setup, never for the assertions (it bypasses RLS, so asserting with it proves nothing).
 
-Queries to run as user A (use Supabase JS client with user A's session token):
-- `SELECT * FROM profiles` → expect: only user A's own row (one row)
-- `SELECT * FROM account_identifiers` → expect: only user A's own rows (email + username)
-- `SELECT * FROM account_settings` → expect: only user A's own row
-- `SELECT * FROM messages` → expect: scoped to tenant (RLS added in Step 2 migration 008)
+**Gate:** `node scripts/rls-adversarial-test.mjs` exits 0 with every category PASS, on staging.
 
-### Test category B — Self-write COLUMN escalation (added from Opus review of migration 007)
-User A authenticates and attempts to PATCH columns on their OWN profile that should be
-write-restricted. All attempts must be rejected by the column-level grant.
+### Why the assertion *shape* matters (don't loosen these)
+RLS denial does not surface uniformly. Each assertion checks a specific shape, and a test that
+expected an error but got an empty result (or vice-versa) is a real failure, not a wording nit:
 
-Attempts to make as user A via PostgREST/Supabase client:
-```js
-// All of these should fail with "permission denied" or similar
-await supabase.from('profiles').update({ is_verified: true }).eq('id', userA.id)
-await supabase.from('profiles').update({ status: 'active' }).eq('id', userA.id)
-await supabase.from('profiles').update({ username: 'admin' }).eq('id', userA.id)
-await supabase.from('profiles').update({ username_source: 'user_set' }).eq('id', userA.id)
-```
+- Blocked **SELECT** → row filtered out → **empty array, NO error** (HTTP 200).
+- Blocked **UPDATE via row policy** (USING) → **0 rows changed, NO error**.
+- Blocked **UPDATE via column GRANT** (e.g. `is_verified`) → **ERROR** (permission denied).
+- Blocked **INSERT via WITH CHECK** (e.g. spoofed `sender_id`) → **ERROR** (RLS violation).
 
-Only `display_name` updates should succeed:
-```js
-// This should succeed
-await supabase.from('profiles').update({ display_name: 'Test Name' }).eq('id', userA.id)
-```
+### What is a leak vs. what is same-tenant-by-design (important)
+Several SELECT policies are intentionally same-tenant-readable — reading another user's row
+there is **not** a leak, it's the product working (a chat app shows you who you're talking to):
 
-**Why this test exists:** RLS policies scope rows, not columns. Migration 007 added a
-`REVOKE UPDATE / GRANT UPDATE (display_name)` block specifically because without it, a user
-could POST-gREST-patch `is_verified=true` to self-verify. This test confirms those grants are
-in place and survive any future migration that touches the profiles table.
+- **Same-tenant by design (reads across users expected):** `profiles`, `messages`,
+  `user_linguistic_profiles`, `message_translations`.
+- **Own-only (the genuine cross-user leak surface):** `account_identifiers` (emails live here),
+  `account_settings`, `user_profile_events`.
 
-*(Full verification queries to be written when Step 3 is built.)*
+So the read test does NOT expect `profiles` to return one row — it expects A to see all
+tenant-1 profiles (allowed) but **zero** of B's `account_identifiers`/`account_settings`.
+
+### Fixture (set up idempotently by the script, service-role)
+- Users **A** and **B**: existing staging users, tenant 1 (from the Step 2 / inference smoke test).
+- A throwaway **tenant 2** (`00000000-0000-0000-0000-000000000002`) and **user C**, re-pointed
+  into tenant 2, so cross-*tenant* isolation is actually exercisable (a single-tenant DB can't).
+- The script sets A/B/C passwords + confirms their emails via the admin API, and cleans up the
+  `RLS-TEST%` messages it inserts.
+
+### Assertion categories (all must PASS)
+1. **Cross-user reads of own-only tables** — A reads B's `account_identifiers` / `account_settings`
+   / `user_profile_events` → empty.
+2. **Intended same-tenant reads** — A reads `profiles` / `user_linguistic_profiles` → ≥1 row
+   (confirms we didn't over-lock and break the product).
+3. **Self-write privilege escalation** — A PATCHes own `is_verified` / `status` / `username` →
+   **error** (migration 007 OPUS-FIX #2 column grant).
+4. **Allowed self-write** — A PATCHes own `display_name` → succeeds (positive control).
+5. **Cross-user writes** — A edits B's profile (→ 0 rows) and inserts a message spoofing B as
+   sender (→ error); A inserts an own message (→ succeeds, positive control).
+6. **Cross-tenant isolation** — C (tenant 2) reads tenant-1 `profiles`/`ulp`/`messages` → empty;
+   A cannot read C; C can read own row.
+7. **Defense-in-depth** — re-read A's profile as service role; confirm `is_verified=false`,
+   `status='active'`, `username` still starts `user_` (the escalation attempts truly didn't land).
+
+### How to run (Isaac, on staging)
+1. `cp .env.rls-test.example .env.rls-test` and fill it in (staging URL + anon + service_role
+   keys; A/B/C emails; a throwaway password). `.env.rls-test` is gitignored.
+2. **Prerequisite:** enable the **Email/Password** auth provider on `translationapp1-staging`
+   (Supabase → Authentication → Providers). `signInWithPassword` fails without it.
+3. Set `RLS_TEST_CONFIRM_STAGING=yes` in `.env.rls-test` (the script refuses to run otherwise —
+   it mutates the DB; never point it at prod).
+4. `node scripts/rls-adversarial-test.mjs` from the `V1/` root.
+5. Exit 0 + all PASS = gate GREEN, Step 4 unblocked. Any FAIL = hard stop; fix RLS, re-run.
+
+**Why a checked-in script (not a console snippet):** it's deterministic, re-runnable after any
+future migration that touches these tables, and self-documenting. RLS regressions are silent
+(a too-broad policy just quietly returns more rows) — this is the tripwire.
 
 ---
 

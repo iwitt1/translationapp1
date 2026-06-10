@@ -5,7 +5,7 @@
 > **What lives here:** committed work in priority order.
 > **What does NOT live here:** ideas we haven't decided to build. Those go in `parking-lot.md`.
 
-**Last updated:** 2026-06-10 (Added build-spec pointer to Phase 2 "Profile inference" subsection — Option A decided, full spec in parking-lot.md, building next session in Cowork. Earlier same day: Phase 2 Step 2 — magic-link auth + onboarding app layer built. Migration 008 ships the coordinated breaking cutover: user_profiles dropped, user_linguistic_profiles/user_profile_events user_id promoted text→uuid, messages.sender_id text→uuid+FK, RLS enabled on messages+message_translations+ulp+upe, complete_onboarding() SECURITY DEFINER RPC. App.jsx rewritten with auth state machine: loading→email_input→onboarding→chat. Language selector removed; context/register dropdown kept. Gate: full signup→onboard→active flow on staging for two test users.)
+**Last updated:** 2026-06-10 (Phase 2 **Step 3 RLS adversarial gate PASSED** on staging — 21/21 GREEN via `scripts/rls-adversarial-test.mjs` (cross-user read/write denial, self-escalation denial, cross-tenant isolation, defense-in-depth); the cross-user-read roadmap item flipped to done; **Step 4 (discovery) unblocked**. Also: migration 009 restores the `nonbinary` gender signal that 008 dropped. Earlier same day: Phase 2 **Step 2 gate PASSED** on staging — full signup→onboard→active flow exercised for two test users during the inference smoke test; auth/onboarding/identity-cutover items flipped to done. **Server-side profile inference gate PASSED** on staging (Option A) — note updated in the Profile-inference subsection. Earlier same day: build-spec pointer added to "Profile inference"; Phase 2 Step 2 — magic-link auth + onboarding app layer built. Migration 008 ships the coordinated breaking cutover: user_profiles dropped, user_linguistic_profiles/user_profile_events user_id promoted text→uuid, messages.sender_id text→uuid+FK, RLS enabled on messages+message_translations+ulp+upe, complete_onboarding() SECURITY DEFINER RPC. App.jsx rewritten with auth state machine: loading→email_input→onboarding→chat. Language selector removed; context/register dropdown kept. Gate: full signup→onboard→active flow on staging for two test users.)
 
 **Prior update:** 2026-06-09 (Phase 2 identity/discovery/social-graph design — rewrote Phase 2 Authentication into magic-link auth + P1–P4 onboarding lifecycle; added Identity & discovery and Social graph primitives subsections; expanded RLS to all new tables + greenfield/cutover note; clarified Phase 3 invite reuses the Phase 2 invite primitive + context-dropdown relocation. See policies.md, architecture.md §7 Phase 2 tables, and decisions.md 2026-06-09 entries.)
 
@@ -134,16 +134,16 @@
 **Goal:** The app is shareable with real testers without privacy concerns. Up until this phase, no third party should have the URL.
 
 ### Authentication
-- [~] Supabase Auth via **magic links (email OTP)** as primary. Architecture supports a future password toggle (same JWT/session downstream; password path purely additive, switchable via config/UI without a refactor) *(Step 2 built; gate not yet run)*
-- [~] Onboarding lifecycle per policies.md §6: P1 email submitted → magic link + `auth.users` row + DB trigger creates pending `profiles` row (uuid, random `system_generated` username, email identifier); P2 link clicked → onboarding screen; P3 submit display name + language → `status='active'`; P4 first message (engagement, not a status) *(Step 1 trigger + Step 2 app layer built; gate not yet run)*
-- [~] Display name + language collected post-click on one onboarding screen ("the name other people see"). In-chat **language** selector removed. **Context/register** dropdown kept. *(built in Step 2; gate not yet run)*
+- [x] Supabase Auth via **magic links (email OTP)** as primary. Architecture supports a future password toggle (same JWT/session downstream; password path purely additive, switchable via config/UI without a refactor) *(Step 2 built; gate PASSED on staging 2026-06-10)*
+- [x] Onboarding lifecycle per policies.md §6: P1 email submitted → magic link + `auth.users` row + DB trigger creates pending `profiles` row (uuid, random `system_generated` username, email identifier); P2 link clicked → onboarding screen; P3 submit display name + language → `status='active'`; P4 first message (engagement, not a status) *(Step 1 trigger + Step 2 app layer built; gate PASSED on staging 2026-06-10)*
+- [x] Display name + language collected post-click on one onboarding screen ("the name other people see"). In-chat **language** selector removed. **Context/register** dropdown kept. *(built in Step 2; gate PASSED on staging 2026-06-10)*
 - [ ] Scheduled job: re-prompt pending accounts; delete abandoned ones after 30 days, release their system-generated username, record an email **hash** in the abuse-monitoring table *(Step 6)*
 - [ ] Token-based authentication on every backend API call, including the chat app's own calls
 - [ ] Refresh / rotation behavior verified
 - [x] No data migration needed — staging is wiped at Phase 2 start (existing data is throwaway)
 
 ### Identity & discovery (per architecture.md §7 "Phase 2" tables; decisions.md 2026-06-09)
-- [~] `profiles` table, `id = auth.users.id` (Model A — one tenant per user); migrate `user_id`/`sender_id` text → uuid *(profiles done Step 1; text→uuid cutover in migration 008 Step 2 — gate not yet run)*
+- [x] `profiles` table, `id = auth.users.id` (Model A — one tenant per user); migrate `user_id`/`sender_id` text → uuid *(profiles done Step 1; text→uuid cutover in migration 008 Step 2 — gate PASSED on staging 2026-06-10)*
 - [x] `account_identifiers` (normalized handles, non-reusable usernames via never-deleted rows + reserved seeds) *(migration 007, Step 1 — verified)*
 - [x] `account_settings` (per-user discoverability + `allow_dms_from`) *(migration 007, Step 1 — verified)*
 - [ ] Username policy mechanism: within-tenant uniqueness, `username_source`, `username_last_changed_at`; values in `lib/policies.js` + policies.md §1 *(Step 4)*
@@ -157,9 +157,9 @@
 
 ### Row-level security
 - [~] RLS policies on every table that exists by this point: `messages`, `message_translations`, `user_linguistic_profiles`, `conversation_contexts`, `user_profile_events`, and all Phase 2 identity/discovery/social tables (`profiles`, `account_identifiers`, `account_settings`, `relationships`, `blocks`, `reports`, `invites`, `invite_redemptions`, abuse-monitoring email-hash table) *(migration 007 + 008 cover profiles/account_identifiers/account_settings/messages/message_translations/ulp/upe; conversation_contexts + social tables come with Steps 4–5)*
-- [~] Tenant-scoped policies on top of user-scoped policies (use `auth.uid()`; tenant scope via `tenant_id`) *(all Step 1 + Step 2 policies follow this pattern)*
+- [~] Tenant-scoped policies on top of user-scoped policies (use `auth.uid()`; tenant scope via `tenant_id`) *(all Step 1 + Step 2 policies follow this pattern; the shipped subset is verified by the Step 3 gate — cross-tenant isolation confirmed both directions. Remains partial until Steps 4–5 add the social tables.)*
 - [x] **No RLS exists in Supabase today** — this is greenfield. Every policy must live in a migration from day one. Confirmed: migrations 007 and 008 ship RLS with the tables.
-- [ ] Test that one user cannot read another user's data via dev tools or direct API queries *(Step 3 adversarial gate)*
+- [x] Test that one user cannot read another user's data via dev tools or direct API queries *(Step 3 adversarial gate — PASSED on staging 2026-06-10, 21/21 GREEN via `scripts/rls-adversarial-test.mjs`; also covers self-escalation, cross-user write, cross-tenant isolation)*
 
 ### Data deletion
 - [ ] `data_deletion_requests` table
@@ -179,7 +179,7 @@
 - [x] Staging smoke-test runbook codified in `/docs/verification.md`.
 
 ### Profile inference (migrated from client-side)
-> **BUILT 2026-06-10 (Option A).** `POST /api/v1/infer-profile` (Express + Vercel) + `server/lib/inferProfile.js`; raw-pg `SELECT … FOR UPDATE`; client fires-and-forgets `message_id`; flag renamed `PROFILE_INFERENCE_ENABLED` and on. See `decisions.md` 2026-06-10 "Server-side profile inference (Option A)" and `verification.md` "Server-side profile inference". Verification gate (two users → profile row updates + event row lands) pending a staging run.
+> **BUILT + VERIFIED 2026-06-10 (Option A).** `POST /api/v1/infer-profile` (Express + Vercel) + `server/lib/inferProfile.js`; raw-pg `SELECT … FOR UPDATE`; client fires-and-forgets `message_id`; flag renamed `PROFILE_INFERENCE_ENABLED` and on. See `decisions.md` 2026-06-10 "Server-side profile inference (Option A)" and `verification.md` "Server-side profile inference". **Gate PASSED on staging 2026-06-10** (two users → sender's profile row updated, event rows landed, trust boundary + dialect guard both confirmed). Prod enablement (least-privilege `profile_writer` role + Production env var) deferred; prod safely no-ops until then.
 
 - [x] Move `applyInferences` logic to a server-side function (dedicated `/api/v1/infer-profile` endpoint). Client fires inference payload to the endpoint; server applies guards and writes atomically — eliminates the race condition via `SELECT … FOR UPDATE`.
 - [x] Dialect consistency guard updated to anchor on the authoritative server-read `source_language` (falling back to the live `detected_language` when `unknown`), rather than a client-supplied value.

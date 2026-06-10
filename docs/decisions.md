@@ -16,6 +16,34 @@
 
 ---
 
+## 2026-06-10 — Restore `nonbinary` to `gender_signal` (migration 009), don't ratify the 008 drop
+
+**Decision:** Re-add `nonbinary` to the `user_linguistic_profiles.gender_signal` CHECK via migration `009_restore_nonbinary_gender_signal.sql`, rather than accept its removal.
+
+**Context:** A 2026-06-10 docs audit (reconciling architecture.md against shipped migrations) found that migration 008, when it recreated `user_linguistic_profiles` during the identity cutover, wrote a CHECK of `('masculine','feminine','neutral','unknown')` — dropping `nonbinary`, which migration 003 had deliberately added (decisions.md 2026-05-12). On staging, any `gender_signal='nonbinary'` write now violates the CHECK.
+
+**Alternatives considered:** (1) **Ratify the drop** — treat 008 as an intentional simplification, update 003's note + architecture.md + this log to say `nonbinary` is not stored. Rejected: the 003 decision had concrete, still-valid reasoning (it's a translation-quality signal — it tells the model to use gender-inclusive target-language forms; conflating it with `neutral`, a source-language property, produces worse output). Nothing about that changed; the drop was an oversight in the 008 rewrite, not a reconsidered call. (2) **Restore via a small migration.** Chosen.
+
+**Reasoning:** Restoring realigns the schema with an existing, deliberate decision and with the prompt logic in `lib/translatePrompt.js` (which already distinguishes the two). The fix is a widening-only CHECK swap — it cannot fail on existing rows, and staging's `ulp` is empty anyway. Cheapest to settle now, while still staging-only, before 008's CHECK ships to prod in the cutover.
+
+**Implications:** `009` must run on staging (and replay on prod as part of / before the Phase 2 cutover) or prod will inherit the regression. Reinforces a process point: table *recreates* (vs. ALTERs) silently drop constraints/defaults/grants unless each is carried forward — worth a checklist item for any future recreate.
+
+**Revisit when:** Measured model quality on `nonbinary` forms is poor enough that we'd rather not store/act on the signal — at which point removal would be a real decision, made on purpose.
+
+## 2026-06-10 — Phase 2 Step 3 RLS gate is a checked-in adversarial script + a throwaway tenant
+
+**Decision:** Build the Step 3 RLS gate as a committed, re-runnable Node harness (`scripts/rls-adversarial-test.mjs`) that authenticates as real users and asserts RLS behavior by *denial shape*, and provision a real **second tenant** (`...002`) + a user C in it so cross-tenant isolation is actually testable.
+
+**Context:** Step 3 is the Phase 2 hard stop: prove one user can't read/write another's data, and tenant scoping holds. Two design questions had to be settled. (1) *How to run it* — browser-console snippets vs. a checked-in script. (2) *How to test tenant scoping at all* — the live DB has exactly one tenant, so cross-tenant policies (`auth_tenant_id()`-based) are unexercised by construction.
+
+**Alternatives considered:** (1) Console snippets — fast to write, but not re-runnable, not version-controlled, and RLS regressions are *silent* (a too-broad policy just returns more rows), so a one-off check rots immediately. Rejected. (2) Stay single-tenant and skip cross-tenant assertions — would leave the most important Phase 2 isolation guarantee untested. Rejected. **Chosen:** checked-in script + throwaway tenant 2/user C, set up idempotently by the script via service-role (fixture only — assertions use real user JWTs, since service-role bypasses RLS).
+
+**Reasoning:** The script is the tripwire that survives future migrations touching these tables; it encodes the non-obvious denial shapes (blocked SELECT → empty/no-error; column-grant write → error; WITH-CHECK insert → error) so we don't re-derive them each time. It also bakes in the migration 007 OPUS-FIX #2 self-write escalation test (PATCH own `is_verified`/`status`/`username` → denied), which RLS-alone (row scoping) would miss. A real second tenant is the only honest way to test tenant scoping.
+
+**Implications:** `scripts/rls-adversarial-test.mjs` + `.env.rls-test.example` are committed; `.env.rls-test` stays gitignored (added a `!.env.rls-test.example` negation so the example is tracked). The script mutates the DB, so it's interlocked behind `RLS_TEST_CONFIRM_STAGING=yes` and must never be pointed at prod. Staging needs the Email/Password auth provider enabled for `signInWithPassword`. Re-run this gate after any migration that adds/edits RLS policies or grants on Phase 2 tables.
+
+**Revisit when:** We move to automated CI (the script becomes a CI job, not a manual run), add tables with their own RLS, or change the tenancy model (more than the current shared-tenant-1 default).
+
 ## 2026-06-10 — Process: branch before touching `main` so staging verification comes first
 
 **Decision:** For any change that needs a staging gate before prod, create the feature/verify branch **first** and push *that* to get a Vercel Preview deploy — never push the work to `main` and then try to verify, because `main` deploys straight to Production.

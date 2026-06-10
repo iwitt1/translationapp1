@@ -2,7 +2,9 @@
 
 > Living document. Owns cost model, hiring plan, development workflow, and vendor decisions.
 
-**Last updated:** 2026-06-09 (added §6 "Trust & safety / identity policy review" ritual pointing at the new policies.md review cadence — start of each phase + quarterly, in sync with lib/policies.js and tenants.dm_initiation_policy)
+**Last updated:** 2026-06-10 (migrations list extended to 005–008; flagged that 007–008 are staging-only and the `nonbinary` gender-enum regression in 008; test-user note updated for the post-008 Supabase Auth identity model.)
+
+**Prior update:** 2026-06-09 (added §6 "Trust & safety / identity policy review" ritual pointing at the new policies.md review cadence — start of each phase + quarterly, in sync with lib/policies.js and tenants.dm_initiation_policy)
 
 **Prior update:** 2026-05-18 (staging environment added; §3 expanded with "Staging environment" subsection; §3 toolchain updated to three agents — Cowork + Cursor + Hermes; §4 Supabase region confirmed as us-east-1)
 
@@ -134,18 +136,34 @@ Set up 2026-05-18, pulled forward from Phase 2 to give Hermes (and us) a safe ta
 5. Verify on prod.
 6. The migration file lives in the repo as the canonical record. Any future fresh deploy can replay all migrations in order to reach the same state.
 
-**What's in `/migrations/` today (running them in order against an empty Postgres reproduces the prod schema):**
+**Table-recreate checklist (DROP + CREATE in one migration).** Recreating a table — `DROP TABLE … ; CREATE TABLE …` — does *not* carry anything over from the old definition. Everything attached to the old table is silently lost unless the new `CREATE` re-states it. Migration 008 recreated `user_linguistic_profiles` and dropped the `nonbinary` value from the gender CHECK this way (fixed in 009). Before shipping any migration that recreates a table, walk this list and confirm each item is re-stated in the new definition (or intentionally dropped, noted in the migration comment + decisions.md):
+
+- [ ] **CHECK constraints** — every `CHECK` from the old table (enum-like value lists are the easy ones to lose; cross-column checks too).
+- [ ] **Column defaults** — `DEFAULT now()`, `DEFAULT false`, `gen_random_uuid()`, etc.
+- [ ] **NOT NULL** on each column that had it.
+- [ ] **Primary key** — including composite PKs.
+- [ ] **Unique constraints / unique indexes** — including partial (`… WHERE …`) uniques.
+- [ ] **Foreign keys** — both directions: FKs *out* of this table, and FKs *into* it from others (a `DROP … CASCADE` silently drops inbound FKs).
+- [ ] **Plain indexes** — performance indexes don't error if missing, so they're easy to forget.
+- [ ] **RLS** — `ENABLE ROW LEVEL SECURITY` **and** every policy (RLS state and policies are dropped with the table).
+- [ ] **GRANTs / REVOKEs** — table- and column-level privileges (e.g. the `GRANT UPDATE (display_name)` column guard on `profiles`).
+- [ ] **Triggers** on the table, and **functions** that reference it by name.
+- [ ] **Comments**, generated columns, identity/sequence settings, if used.
+- [ ] **Prefer `ALTER` over recreate** when the change is small (add/drop a column, widen a CHECK) — recreate only when the change is structural enough to need it. 009 itself is an `ALTER`, not a recreate, for exactly this reason.
+
+**What's in `/migrations/` today.** Running 000–009 in order against an empty Postgres reproduces the **current staging** schema. **Migrations 007–009 are staging-only so far** — prod has not run them yet (the Phase 2 auth/RLS cutover is a deliberate, coordinated event; see architecture.md §10). ⚠️ *Action: confirm prod's actual migration high-water mark — prod is known to be pre-007, but whether 002–006 ran on prod should be verified before the cutover.*
 - `000_base_schema.sql` — base tables (`messages`, `message_translations`, `user_profiles`). Captures the pre-migration state of those tables, which were created via Supabase Studio UI before the migrations folder existed. See parking-lot.md for cleanup of vestigial columns surfaced during this work.
 - `001_tenants_and_tenant_id.sql` — adds the `tenants` table, seeds the chat-app tenant row, retrofits `tenant_id` on the base tables.
 - `002_phase1_schema.sql` — adds `user_linguistic_profiles`, `conversation_contexts`, `user_profile_events`.
-- `003_prompt_version_and_gender_nonbinary.sql` — adds `prompt_version` to `message_translations`, expands `gender_signal` enum.
+- `003_prompt_version_and_gender_nonbinary.sql` — adds `prompt_version` to `message_translations`, expands `gender_signal` enum to include `nonbinary`. (008 accidentally dropped `nonbinary` when it recreated `user_linguistic_profiles`; **009 restores it** — see below.)
 - `004_enable_realtime_publication.sql` — adds `messages` to the `supabase_realtime` publication. Captures a setting previously configured only via Supabase Studio UI on prod.
+- `005_event_log_tables.sql` — Hermes event-log tables (`translation_events` et al.).
+- `006_user_profile_events_task_id.sql` — adds `task_id` to `user_profile_events`.
+- `007_phase2_identity_foundation.sql` — **(staging only)** `profiles`, `account_identifiers`, `account_settings`; `auth_tenant_id()`; `handle_new_user()` trigger on `auth.users`; RLS + column-grant guard on `profiles`.
+- `008_phase2_step2_identity_cutover.sql` — **(staging only)** drops `user_profiles`; recreates `user_linguistic_profiles` + `user_profile_events` with uuid keys; `messages.sender_id` text→uuid (FK `auth.users`); RLS on `messages`/`message_translations`; `complete_onboarding()` RPC.
+- `009_restore_nonbinary_gender_signal.sql` — **(staging only)** restores `nonbinary` to the `user_linguistic_profiles.gender_signal` CHECK that 008 accidentally dropped (realigns with 003 + decisions.md 2026-05-12). Widening-only; safe on empty or populated tables.
 
-**Test users seeded on staging (not prod):**
-- `staging_test_a` (display name "Staging Test A (EN)", `default_language = 'en'`)
-- `staging_test_b` (display name "Staging Test B (ES)", `default_language = 'es'`)
-
-Use these to smoke-test without polluting any real-looking data.
+**Test users on staging (not prod):** the chat-room users are now real Supabase Auth accounts (post-008 identity), not `user_profiles` rows. The Step 3 RLS gate uses three: A and B (tenant 1, pre-existing) and C (tenant 2, created by the gate script). Their emails/passwords live in the local, gitignored `.env.rls-test` (template: `.env.rls-test.example`). Use these to smoke-test without polluting real-looking data.
 
 **Smoke-test runbook:** see `/docs/verification.md` "Staging environment" section.
 
