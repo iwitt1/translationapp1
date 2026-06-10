@@ -13,34 +13,17 @@
 
 import pg from 'pg';
 
-const { Pool } = pg;
+const { Client } = pg;
 
-// ── Lazy singleton pool ────────────────────────────────────────────────────────
-// We initialise only when the first write is attempted so the server can start
-// cleanly even if DATABASE_URL_PROD_WRITER isn't set in the local dev environment.
+// ── Connection string helper ───────────────────────────────────────────────────
+// Returns the connection string, or null if it isn't set.
+// We use a single Client per write (connect → query → end) rather than a Pool.
+// Pools are efficient for long-lived servers but cause connection-timeout failures
+// in Vercel serverless functions, where each invocation is short-lived and the pool
+// never has time to fully initialise before the function is torn down.
 
-let _pool = null;
-
-function getPool() {
-  if (!_pool) {
-    const connectionString = process.env.DATABASE_URL_PROD_WRITER;
-    if (!connectionString) {
-      // Return null — callers treat null pool as "skip write, log warning".
-      return null;
-    }
-    _pool = new Pool({
-      connectionString,
-      // Supabase transaction pooler uses session mode on port 5432.
-      // Keep the pool small; these are fire-and-forget audit writes.
-      max: 2,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
-    });
-    _pool.on('error', (err) => {
-      console.error('[events] Pool error (non-fatal):', err.message);
-    });
-  }
-  return _pool;
+function getConnectionString() {
+  return process.env.DATABASE_URL_PROD_WRITER || null;
 }
 
 // ── logTranslationEvent ────────────────────────────────────────────────────────
@@ -67,8 +50,8 @@ function getPool() {
  * @param {string}  fields.event_source     'chat_app' | 'hermes_test' | 'api_external'
  */
 export async function logTranslationEvent(fields) {
-  const pool = getPool();
-  if (!pool) {
+  const connectionString = getConnectionString();
+  if (!connectionString) {
     console.warn('[events] DATABASE_URL_PROD_WRITER not set — skipping translation_events write');
     return;
   }
@@ -124,11 +107,15 @@ export async function logTranslationEvent(fields) {
     event_source,
   ];
 
+  const client = new Client({ connectionString });
   try {
-    await pool.query(sql, values);
+    await client.connect();
+    await client.query(sql, values);
   } catch (err) {
     // Non-blocking: log the error but do NOT re-throw.
     console.error('[events] translation_events INSERT failed (non-fatal):', err.message);
+  } finally {
+    await client.end().catch(() => {});
   }
 }
 
@@ -171,8 +158,8 @@ export async function logTranslationEvent(fields) {
  * @param {string|null} fields.raw_report    Full §8.1 end-of-task report
  */
 export async function logAgentEvent(fields) {
-  const pool = getPool();
-  if (!pool) {
+  const connectionString = getConnectionString();
+  if (!connectionString) {
     console.warn('[events] DATABASE_URL_PROD_WRITER not set — skipping agent_events write');
     return;
   }
@@ -262,10 +249,14 @@ export async function logAgentEvent(fields) {
     raw_report,
   ];
 
+  const client = new Client({ connectionString });
   try {
-    await pool.query(sql, values);
+    await client.connect();
+    await client.query(sql, values);
   } catch (err) {
     // Non-blocking: log the error but do NOT re-throw.
     console.error('[events] agent_events INSERT failed (non-fatal):', err.message);
+  } finally {
+    await client.end().catch(() => {});
   }
 }
