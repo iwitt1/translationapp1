@@ -16,6 +16,22 @@
 
 ---
 
+## 2026-06-09 — New doc: phase2-implementation.md (build-order spec + Sonnet prompt)
+
+**Decision:** Add `docs/phase2-implementation.md` holding the Phase 2 plan of attack (dependency-ordered build steps with a test gate between each) and a paste-ready prompt for the Sonnet session that implements it.
+
+**Context:** Phase 2 design is done and spread across policies.md, architecture.md §7/§10, roadmap.md, and the 2026-06-09 decisions entries. Implementation runs Sonnet against an Opus-authored plan; we wanted one version-controlled artifact that Sonnet can read directly, pointing at all the supporting docs, rather than re-deriving sequencing or pasting an ephemeral prompt each session.
+
+**Alternatives considered:** (A) Keep the plan + prompt in chat only — not version-controlled, lost between sessions. (B) Fold it into roadmap.md — roadmap is the *what/priority*, not the *how-to-execute*; mixing them bloats it. (C) A dedicated implementation spec doc. **Chosen.**
+
+**Reasoning:** Separates "what we decided" (the existing docs) from "how Sonnet executes it" (this file). Keeps the model split explicit: Opus owns the plan and three flagged hard sub-tasks (text→uuid cutover + auth trigger, RLS correctness, DM-initiation logic); Sonnet executes the rest.
+
+**Implications:** One more doc to keep current as Phase 2 lands — update or retire it as steps complete. When Phase 2 is done it can be archived or collapsed into a "how Phase 2 was built" note.
+
+**Revisit when:** Phase 2 is complete (archive/retire), or the build order materially changes (update the file + note it here).
+
+---
+
 ## 2026-06-09 — Identity vs. discovery: stable uuid + normalized account_identifiers (Model A)
 
 **Decision:** A user's stable identity is the `auth.users` uuid, mirrored 1:1 into a `public.profiles` table (`profiles.id = auth.users.id`, FK, on delete cascade). All app tables FK to `profiles.id`; all RLS uses `auth.uid()`. Human-facing "discovery handles" (email, username, and later phone / friend_code) live in a separate normalized `account_identifiers` table that points at `profiles.id`. A discovery handle is never a primary key or FK target. We adopt **Model A — one tenant per user** (a profile row carries a single `tenant_id`).
