@@ -16,6 +16,22 @@
 
 ---
 
+## 2026-06-10 — Process: branch before touching `main` so staging verification comes first
+
+**Decision:** For any change that needs a staging gate before prod, create the feature/verify branch **first** and push *that* to get a Vercel Preview deploy — never push the work to `main` and then try to verify, because `main` deploys straight to Production.
+
+**Context:** Verifying server-side profile inference, we pushed the code to `main` (which Vercel deploys to **Production** → prod Supabase, where `DATABASE_URL_PROFILE_WRITER` is intentionally unset, so inference no-ops). All test data lived in **staging**. Code and data never met, so the gate appeared to fail. Compounding it: a Preview build needs a unique commit SHA — a branch pointing at the same SHA as `main` (`verify-inference == main == 0bf364e`) produced no new Preview because Vercel dedups by SHA and GitHub showed "no differences." We had to push an empty commit to force a unique hash and get the Preview to build.
+
+**Alternatives considered:** (1) Keep pushing to `main` and verify in Production — unsafe; that's verifying live, and it's why the gate was confusing here. (2) Branch-first, Preview-deploys-to-staging, verify, then merge to `main`/Production. **Chosen.**
+
+**Reasoning:** Vercel's model is fixed: `main` → Production, any other branch → Preview (staging env vars). The only way to get code onto staging is a non-`main` branch with its own SHA. Branching first makes the staging-before-prod rule automatic instead of something we reconstruct after a confusing failure.
+
+**Implications:** Standard flow for gated changes is now: branch → push → Preview build on staging → run the gate → merge to `main` only after it passes. If a verify branch ever shares a SHA with `main`, force a unique commit (an empty commit is fine) so Vercel builds a Preview. Throwaway verify branches + empty commits get deleted after merge.
+
+**Revisit when:** We change hosting/CI off Vercel's branch-based Preview/Production split, or introduce a dedicated long-lived `staging` branch/environment that changes how deploys map to environments.
+
+---
+
 ## 2026-06-10 — Server-side profile inference (Option A): dedicated endpoint, message_id trust boundary, raw pg + FOR UPDATE
 
 **Decision:** Move profile inference off the client into a dedicated `POST /api/v1/infer-profile` endpoint (Option A). The client sends `message_id` (not a sender id); the server derives the authoritative sender from the message row. The write runs through a raw `pg` client over a privileged connection (`DATABASE_URL_PROFILE_WRITER`) in a `SELECT … FOR UPDATE` transaction. Inference flag renamed `CLIENT_SIDE_INFERENCE_ENABLED` → `PROFILE_INFERENCE_ENABLED` and flipped on.

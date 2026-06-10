@@ -10,7 +10,7 @@
 >
 > **When to revise a section:** when a failure mode is observed in the wild and the existing checklist would have missed it. Drift between this doc and reality is the failure mode this doc is designed against, same as the architecture doc.
 
-**Last updated:** 2026-06-10 ("Server-side profile inference" section added: two-user gate (sender's profile row updates + event row lands), trust-boundary + dialect-guard + race checks, prod least-privilege-role prerequisite, plus the deferred Step 2 smoke test. Prior same day: Phase 2 Step 2 section — migration 008 schema checks + end-to-end signup→onboard→active flow.)
+**Last updated:** 2026-06-10 ("Server-side profile inference" gate marked ✅ PASSED on staging — two-user gate, trust boundary, dialect guard (both directions), confidence-must-increase, and deferred Step 2 smoke test all confirmed against `translationapp1-staging`. Prod enablement still deferred. Earlier same day: section added with the gate checklist. Prior: Phase 2 Step 2 section — migration 008 schema checks + end-to-end signup→onboard→active flow.)
 
 ---
 
@@ -884,6 +884,8 @@ previously are gone after the wipe. They'll be re-seeded via the real magic-link
 
 ## Server-side profile inference (2026-06-10)
 
+**Status: ✅ PASSED on staging 2026-06-10.** Gate run against `translationapp1-staging` (Vercel Preview deploy at commit `0bf364e`, `DATABASE_URL_PROFILE_WRITER` set in Preview env only). Two users (A=`es`, B=`en`). User A sent Argentine Spanish; viewing as User B fired `POST /api/v1/infer-profile` → `{"status":"updated","fields":[...]}`. Verified: A's profile row updated (dialect `es-AR`, formality `casual`, gender `masculine`, all `_source = 'inferred'`, `updated_at` bumped); `user_profile_events` rows landed with `source = 'inference'`; trust boundary held (B triggered, **A's** row written via `message_id`); dialect guard confirmed both ways (a later English message did **not** overwrite the `es-AR` dialect); confidence-must-increase re-write observed and correct (es-AR rewritten when a stronger second message raised confidence to 1.0). Deferred Step 2 smoke test exercised in the same run (signup → onboard → send → receive → translate → inference, no interference with the render path). Prod enablement (least-privilege `profile_writer` role + Production env var) deferred — see "Before prod" below; prod safely no-ops until then.
+
 **What shipped:** Profile inference moved off the (RLS-dead) client path to `POST /api/v1/infer-profile` — Express route in `server/index.js`, Vercel handler `api/v1/infer-profile.js`, shared logic in `server/lib/inferProfile.js`. The client fires-and-forgets `{ message_id, inferences, detected_language }`; the server derives the authoritative sender from the message row, applies the inference guards, and writes the sender's profile + event rows atomically under `SELECT … FOR UPDATE`. Flag `PROFILE_INFERENCE_ENABLED = true` in `App.jsx`. See `decisions.md` 2026-06-10 "Server-side profile inference (Option A)".
 
 ### Pre-flight (before the gate)
@@ -896,18 +898,18 @@ previously are gone after the wipe. They'll be re-seeded via the real magic-link
 
 The core gate: **a translated message from another user causes that sender's profile row to update and an event row to land.**
 
-1. [ ] Two users onboarded on staging (User A language `es`, User B language `en`), each on a separate browser/session.
-2. [ ] As User A, send a message with a clear regional/register/gender signal (e.g. an Argentine-Spanish phrase using `vos`).
-3. [ ] As User B (whose `preferred_language` differs), view the message so it routes through `/api/v1/translate`. Confirm Network tab shows a `POST /api/v1/infer-profile` returning 200 with a JSON body like `{"status":"updated","fields":[...]}` (or `"noop"` if nothing crossed the confidence threshold).
-4. [ ] Supabase → `user_linguistic_profiles`: **User A's** row (`user_id` = A's uuid) shows the inferred `dialect_region` / `formality_preference` / `gender_signal` with the matching `_source = 'inferred'` and `updated_at` bumped. (The write is to the *sender's* profile, not the viewer's.)
-5. [ ] Supabase → `user_profile_events`: a new row for User A with `source = 'inference'` and the matching `event_type` (`dialect_region_inferred` etc.), `previous_value` / `new_value` populated.
-6. [ ] Trust boundary: confirm the write landed on A's profile even though B triggered it — i.e. identity came from `message_id`, not the caller.
-7. [ ] Dialect guard: a same-language signal applies; a cross-language one is rejected (e.g. an English message should never write an `es-AR` dialect to the sender). When `source_language = 'unknown'`, the live `detected_language` is used as the anchor instead of blocking outright.
-8. [ ] Re-send/translate the same message again (or have a second viewer translate concurrently): the `FOR UPDATE` transaction serialises the writes — no error, no duplicate clobber, confidence-must-increase still holds for dialect.
+1. [x] Two users onboarded on staging (User A language `es`, User B language `en`), each on a separate browser/session.
+2. [x] As User A, send a message with a clear regional/register/gender signal (e.g. an Argentine-Spanish phrase using `vos`).
+3. [x] As User B (whose `preferred_language` differs), view the message so it routes through `/api/v1/translate`. Confirm Network tab shows a `POST /api/v1/infer-profile` returning 200 with a JSON body like `{"status":"updated","fields":[...]}` (or `"noop"` if nothing crossed the confidence threshold).
+4. [x] Supabase → `user_linguistic_profiles`: **User A's** row (`user_id` = A's uuid) shows the inferred `dialect_region` / `formality_preference` / `gender_signal` with the matching `_source = 'inferred'` and `updated_at` bumped. (The write is to the *sender's* profile, not the viewer's.)
+5. [x] Supabase → `user_profile_events`: a new row for User A with `source = 'inference'` and the matching `event_type` (`dialect_region_inferred` etc.), `previous_value` / `new_value` populated.
+6. [x] Trust boundary: confirm the write landed on A's profile even though B triggered it — i.e. identity came from `message_id`, not the caller.
+7. [x] Dialect guard: a same-language signal applies; a cross-language one is rejected (e.g. an English message should never write an `es-AR` dialect to the sender). When `source_language = 'unknown'`, the live `detected_language` is used as the anchor instead of blocking outright.
+8. [x] Re-send/translate the same message again (or have a second viewer translate concurrently): the `FOR UPDATE` transaction serialises the writes — no error, no duplicate clobber, confidence-must-increase still holds for dialect.
 
 ### Deferred Step 2 smoke test
 
-- [ ] Run the Phase 2 Step 2 end-to-end smoke test (signup → onboard → active → send/receive) now that inference is live, to confirm the inference POST doesn't interfere with the message render path. (This was deferred from the Step 2 gate.)
+- [x] Run the Phase 2 Step 2 end-to-end smoke test (signup → onboard → active → send/receive) now that inference is live, to confirm the inference POST doesn't interfere with the message render path. (This was deferred from the Step 2 gate.)
 
 ### Before prod
 
