@@ -12,6 +12,10 @@ const API_URL = import.meta.env.DEV
   ? 'http://localhost:3001/api/v1/translate'
   : '/api/v1/translate';
 
+const INFER_API_URL = import.meta.env.DEV
+  ? 'http://localhost:3001/api/v1/infer-profile'
+  : '/api/v1/infer-profile';
+
 /*
 ========================================================
 🌍 SUPPORTED LANGUAGES
@@ -37,18 +41,15 @@ const CONTEXT_TYPES = [
   { value: 'academic',     label: 'Academic' },
 ];
 
-// Confidence threshold: only apply inferences above this level to the sender profile.
-const INFERENCE_CONFIDENCE_THRESHOLD = 0.6;
-
-// Phase 2: client-side profile inference is DISABLED.
-// RLS on user_linguistic_profiles / user_profile_events restricts writes to the
-// authenticated user's own row (user_id = auth.uid()). But applyInferences only ever
-// runs for OTHER users' messages — your own messages skip translation entirely — so
-// every write is denied by RLS and was logging a console error + a wasted round-trip
-// on every translated message. Inference moves server-side; see parking-lot.md
-// "Move profile inference to server-side". Flip this to true ONLY when that endpoint
-// exists and writes are routed through it (not direct from the client).
-const CLIENT_SIDE_INFERENCE_ENABLED = false;
+// Profile inference is now SERVER-SIDE (api/v1/infer-profile + server/lib/inferProfile.js).
+// The client fires the translate response's `inferences` to that endpoint, keyed by
+// message_id; the server derives the authoritative sender, applies the guards, and
+// writes the profile atomically under a privileged connection that bypasses RLS.
+//
+// This flag gates the fire-and-forget POST. It exists so the call can be killed
+// without a redeploy if the endpoint misbehaves. (Was CLIENT_SIDE_INFERENCE_ENABLED,
+// which gated a now-removed client-side write path that RLS blocked entirely.)
+const PROFILE_INFERENCE_ENABLED = true;
 
 /*
 ========================================================
@@ -71,137 +72,6 @@ function normalizeLang(lang) {
   if (!lang) return lang;
   const lower = lang.toLowerCase();
   return LANG_NAME_TO_CODE[lower] ?? lower;
-}
-
-/*
-========================================================
-🧠 PROFILE INFERENCE HELPER
-========================================================
-Applies inferences returned by the translate API to the sender's
-user_linguistic_profiles row. Runs client-side because profile updates
-are a chat-layer concern (translation layer knows nothing about chat).
-
-NOTE (Phase 2): gated off behind CLIENT_SIDE_INFERENCE_ENABLED (see flag above).
-With RLS in place, writes to user_linguistic_profiles and user_profile_events are
-restricted to own-row, but applyInferences only ever runs for OTHER users' messages
-(own messages skip translation), so every write would be denied by RLS. Rather than
-fire doomed writes that log a console error per message, the flag short-circuits the
-whole path until inference moves server-side (parking-lot.md). The logic below is
-preserved so the move is a routing change, not a rewrite.
-
-Rules (per architecture.md §6):
-  - Never overwrite explicit values (dialect_source/formality_source/gender_source = 'explicit').
-  - For dialect: only update if new confidence > stored confidence.
-  - For formality/gender: update any 'inferred' value if confidence >= threshold.
-  - Logs each change to user_profile_events (append-only).
-*/
-async function applyInferences(senderId, inferences, currentProfile, detectedLanguage) {
-  if (!CLIENT_SIDE_INFERENCE_ENABLED) return;  // disabled in Phase 2 — see flag note above
-  if (!inferences) return;
-
-  const updates = {};
-  const events = [];
-  const prev = currentProfile ?? {};
-
-  // ── Dialect ──
-  // Guard: only apply a dialect signal if it's linguistically consistent with
-  // the message's detected source language. Prevents e.g. 'es-AR' being written
-  // to an English speaker's profile because their message was translated on a
-  // viewer's screen that had a stale/wrong targetLanguage set.
-  const dialectLangPrefix = inferences.detected_dialect?.split('-')[0];
-  const detectedLangPrefix = detectedLanguage?.split('-')[0];
-  const dialectConsistent =
-    !!detectedLangPrefix && dialectLangPrefix === detectedLangPrefix;
-
-  if (
-    inferences.detected_dialect &&
-    dialectConsistent &&
-    inferences.dialect_confidence >= INFERENCE_CONFIDENCE_THRESHOLD &&
-    prev.dialect_source !== 'explicit' &&
-    inferences.dialect_confidence > (prev.dialect_confidence ?? 0)
-  ) {
-    updates.dialect_region = inferences.detected_dialect;
-    updates.dialect_confidence = inferences.dialect_confidence;
-    updates.dialect_source = 'inferred';
-    events.push({
-      event_type: 'dialect_region_inferred',
-      previous_value: { value: prev.dialect_region ?? null },
-      new_value: { value: inferences.detected_dialect },
-    });
-  }
-
-  // ── Formality (mapped from register) ──
-  const REGISTER_TO_FORMALITY = {
-    formal: 'formal', professional: 'formal', academic: 'formal',
-    casual: 'casual', romantic: 'casual', family: 'casual', support: 'neutral',
-  };
-  if (
-    inferences.detected_register &&
-    inferences.register_confidence >= INFERENCE_CONFIDENCE_THRESHOLD &&
-    prev.formality_source !== 'explicit'
-  ) {
-    const mapped = REGISTER_TO_FORMALITY[inferences.detected_register] ?? 'neutral';
-    if (mapped !== prev.formality_preference) {
-      updates.formality_preference = mapped;
-      updates.formality_source = 'inferred';
-      events.push({
-        event_type: 'formality_preference_inferred',
-        previous_value: { value: prev.formality_preference ?? null },
-        new_value: { value: mapped },
-      });
-    }
-  }
-
-  // ── Gender ──
-  if (
-    inferences.gender_signal &&
-    inferences.gender_confidence >= INFERENCE_CONFIDENCE_THRESHOLD &&
-    prev.gender_source !== 'explicit'
-  ) {
-    if (inferences.gender_signal !== prev.gender_signal) {
-      updates.gender_signal = inferences.gender_signal;
-      updates.gender_source = 'inferred';
-      events.push({
-        event_type: 'gender_signal_inferred',
-        previous_value: { value: prev.gender_signal ?? null },
-        new_value: { value: inferences.gender_signal },
-      });
-    }
-  }
-
-  if (Object.keys(updates).length === 0) return;
-
-  updates.updated_at = new Date().toISOString();
-
-  // Upsert profile (fire and forget — don't block message rendering)
-  // NOTE: With RLS, this only succeeds when senderId === auth.uid().
-  // For other users' messages it fails silently (expected — see note above).
-  supabase
-    .from('user_linguistic_profiles')
-    .upsert(
-      { user_id: senderId, tenant_id: CHAT_APP_TENANT_ID, ...updates },
-      { onConflict: 'user_id,tenant_id' }
-    )
-    .then(({ error }) => {
-      if (error) console.error('Profile upsert error:', error);
-    });
-
-  // Log events (fire and forget)
-  for (const evt of events) {
-    supabase
-      .from('user_profile_events')
-      .insert({
-        user_id: senderId,
-        tenant_id: CHAT_APP_TENANT_ID,
-        event_type: evt.event_type,
-        previous_value: evt.previous_value,
-        new_value: evt.new_value,
-        source: 'inference',
-      })
-      .then(({ error }) => {
-        if (error) console.error('Profile event insert error:', error);
-      });
-  }
 }
 
 /*
@@ -323,11 +193,25 @@ function MessageBubble({ message, linguisticProfile, userId, contextType, histor
             if (error) console.error('Cache upsert error:', error);
           });
 
-        // ── 6. Apply inferences to sender's profile (fire and forget) ─────
-        // Disabled in Phase 2 — RLS blocks cross-user writes. See
-        // CLIENT_SIDE_INFERENCE_ENABLED note near the top of the file.
-        if (CLIENT_SIDE_INFERENCE_ENABLED && result?.inferences) {
-          applyInferences(message.sender_id, result.inferences, senderProfile, normalizeLang(sourceLang));
+        // ── 6. Apply inferences to sender's profile (server-side) ─────────
+        // Fire-and-forget POST to the inference endpoint. We send message_id (NOT
+        // a sender id): the server looks up the message row and derives the
+        // authoritative sender itself, so a client can't write to an arbitrary
+        // user's profile (trust boundary — decisions.md 2026-06-10). detected_language
+        // is the live translate-time detection, used by the server's dialect guard
+        // as a fallback anchor when the stored source_language is 'unknown'.
+        // We don't await or read the response — profile updates must never block
+        // or affect message rendering.
+        if (PROFILE_INFERENCE_ENABLED && result?.inferences) {
+          fetch(INFER_API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message_id: message.id,
+              inferences: result.inferences,
+              detected_language: normalizeLang(result.detected_language),
+            }),
+          }).catch((err) => console.error('infer-profile POST failed:', err));
         }
       } catch (err) {
         console.error('Translation error:', err);

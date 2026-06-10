@@ -16,6 +16,29 @@
 
 ---
 
+## 2026-06-10 — Server-side profile inference (Option A): dedicated endpoint, message_id trust boundary, raw pg + FOR UPDATE
+
+**Decision:** Move profile inference off the client into a dedicated `POST /api/v1/infer-profile` endpoint (Option A). The client sends `message_id` (not a sender id); the server derives the authoritative sender from the message row. The write runs through a raw `pg` client over a privileged connection (`DATABASE_URL_PROFILE_WRITER`) in a `SELECT … FOR UPDATE` transaction. Inference flag renamed `CLIENT_SIDE_INFERENCE_ENABLED` → `PROFILE_INFERENCE_ENABLED` and flipped on.
+
+**Context:** Migration 008 put RLS on `user_linguistic_profiles` / `user_profile_events` restricting writes to `user_id = auth.uid()`. But `applyInferences` only ever ran for *other* users' messages (your own skip translation), so every client write was RLS-denied — inference was 100% dead (`CLIENT_SIDE_INFERENCE_ENABLED = false`). The linguistic-profile half of the Phase 1 data flywheel wasn't turning. Two pre-existing problems also needed fixing: a multi-viewer write race, and the dialect guard trusting a client-supplied language anchor.
+
+**Alternatives considered:**
+- *Architecture:* (A) dedicated endpoint + privileged client — keeps the translation layer clean for the B2B story, relocates the JS logic without rewriting it, fixes the race by moving read+write server-side. **Chosen.** (B) fold inference into the translate path — couples chat and translation layers. (C) Postgres trigger/RPC doing inference — buries logic in SQL.
+- *Trust boundary:* (1) client sends `message_id`, server derives sender/tenant/source_language — closes profile-spoofing, cheap, still trusts the `inferences` payload (low-stakes). **Chosen.** (2) full server-side re-inference — fully closes it but drifts into Option B and doubles LLM cost. (3) accept client-sent sender id — testing-only hole.
+- *Locking mechanism:* (A) raw `pg` client mirroring `events.js`, JS guard logic verbatim, native `SELECT … FOR UPDATE`. **Chosen.** (B) Supabase service-role JS client + SECURITY DEFINER plpgsql RPC — uses the existing service-role key (no new credential) but rewrites the guard logic into SQL (a maintenance fork).
+
+**Reasoning:** Option A + message_id + raw pg is the combination that satisfies every stated goal at once: layer separation (clean translate path), relocate-not-rewrite (the guard logic moved into `server/lib/inferProfile.js` essentially verbatim), spoofing closed (authoritative identity from the message row), and the race fixed natively (`FOR UPDATE` serialises concurrent inferences for the same sender). Note the spec said "service-role *Supabase* client (lazy-init like events.js)" — but `events.js` is raw `pg`, not a Supabase client, and the Supabase JS/PostgREST client cannot express explicit transactions or row locks, so step 5 (`FOR UPDATE`) forced the raw-pg reading of that instruction. The credential is therefore a Postgres connection string, not `SUPABASE_SERVICE_ROLE_KEY`.
+
+**Implications:**
+- New privileged credential `DATABASE_URL_PROFILE_WRITER` (server-only, never `VITE_`). On staging it reuses the superuser URL (staging still lacks a least-privilege writer role — see cowork-handoff open gap); prod needs a least-privilege `profile_writer` role (SELECT+UPDATE on `user_linguistic_profiles`, SELECT on `messages`, INSERT on `user_profile_events`) on port 6543 before prod deploy.
+- The endpoint must `await` its transaction before responding (Vercel freezes the function at `res.json()` — same lesson as Spec 4b's event-log fire-and-forget bug). The *client* fires-and-forgets; the *server* awaits.
+- Resolves the parking-lot "dialect consistency guard uses stored `source_language`" sibling item: the guard now anchors on the authoritative server-read `source_language`, falling back to the live translate-time `detected_language` only when the stored code is missing/`unknown` (fixes both the legacy-`unknown` and wrong-original-detect edge cases).
+- The `inferences` payload is still trusted (option 1, not 2). A forged inference can write a plausible-but-false dialect/register/gender to a real sender's profile. Low-stakes at single tenant; revisit if multi-tenant or if profile integrity becomes a felt problem (parking-lot "Phase 2 RLS / validation gaps" #1 is the cache-side sibling of this).
+
+**Revisit when:** (a) First real multi-tenant move — re-evaluate trust option 2 (server-side re-inference) and provision per-tenant least-privilege writer roles. (b) Prod deploy — provision the least-privilege `profile_writer` role + port 6543, do not ship the superuser URL to prod. (c) If inference logic starts changing often, reconsider whether option B (logic in a versioned migration/RPC) is worth the rewrite for DB-native atomicity.
+
+---
+
 ## 2026-06-10 — Migration 008: coordinated breaking cutover for Step 2 identity promotion
 
 **Decision:** Deliver all text→uuid identity promotions, `user_profiles` drop, and RLS enablement on `messages` / `message_translations` / `user_linguistic_profiles` / `user_profile_events` in a single migration (008) that ships together with the App.jsx rewrite.

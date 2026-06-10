@@ -5,7 +5,7 @@
 > **What lives here:** committed work in priority order.
 > **What does NOT live here:** ideas we haven't decided to build. Those go in `parking-lot.md`.
 
-**Last updated:** 2026-06-10 (Phase 2 Step 2 — magic-link auth + onboarding app layer built. Migration 008 ships the coordinated breaking cutover: user_profiles dropped, user_linguistic_profiles/user_profile_events user_id promoted text→uuid, messages.sender_id text→uuid+FK, RLS enabled on messages+message_translations+ulp+upe, complete_onboarding() SECURITY DEFINER RPC. App.jsx rewritten with auth state machine: loading→email_input→onboarding→chat. Language selector removed; context/register dropdown kept. Gate: full signup→onboard→active flow on staging for two test users.)
+**Last updated:** 2026-06-10 (Added build-spec pointer to Phase 2 "Profile inference" subsection — Option A decided, full spec in parking-lot.md, building next session in Cowork. Earlier same day: Phase 2 Step 2 — magic-link auth + onboarding app layer built. Migration 008 ships the coordinated breaking cutover: user_profiles dropped, user_linguistic_profiles/user_profile_events user_id promoted text→uuid, messages.sender_id text→uuid+FK, RLS enabled on messages+message_translations+ulp+upe, complete_onboarding() SECURITY DEFINER RPC. App.jsx rewritten with auth state machine: loading→email_input→onboarding→chat. Language selector removed; context/register dropdown kept. Gate: full signup→onboard→active flow on staging for two test users.)
 
 **Prior update:** 2026-06-09 (Phase 2 identity/discovery/social-graph design — rewrote Phase 2 Authentication into magic-link auth + P1–P4 onboarding lifecycle; added Identity & discovery and Social graph primitives subsections; expanded RLS to all new tables + greenfield/cutover note; clarified Phase 3 invite reuses the Phase 2 invite primitive + context-dropdown relocation. See policies.md, architecture.md §7 Phase 2 tables, and decisions.md 2026-06-09 entries.)
 
@@ -179,9 +179,11 @@
 - [x] Staging smoke-test runbook codified in `/docs/verification.md`.
 
 ### Profile inference (migrated from client-side)
-- [ ] Move `applyInferences` logic to a server-side function (Supabase edge function or dedicated API endpoint). Client fires inference payload to the endpoint; server applies guards and writes atomically — eliminates the race condition from concurrent client-side writes.
-- [ ] Dialect consistency guard updated to validate against the live translate response rather than the stored `source_language` field, now that the server has both in scope.
-- [ ] All inference writes go through the server endpoint regardless of which viewer triggered the translation — single code path, auditable, no client-side divergence.
+> **BUILT 2026-06-10 (Option A).** `POST /api/v1/infer-profile` (Express + Vercel) + `server/lib/inferProfile.js`; raw-pg `SELECT … FOR UPDATE`; client fires-and-forgets `message_id`; flag renamed `PROFILE_INFERENCE_ENABLED` and on. See `decisions.md` 2026-06-10 "Server-side profile inference (Option A)" and `verification.md` "Server-side profile inference". Verification gate (two users → profile row updates + event row lands) pending a staging run.
+
+- [x] Move `applyInferences` logic to a server-side function (dedicated `/api/v1/infer-profile` endpoint). Client fires inference payload to the endpoint; server applies guards and writes atomically — eliminates the race condition via `SELECT … FOR UPDATE`.
+- [x] Dialect consistency guard updated to anchor on the authoritative server-read `source_language` (falling back to the live `detected_language` when `unknown`), rather than a client-supplied value.
+- [x] All inference writes go through the server endpoint regardless of which viewer triggered the translation — single code path, auditable, no client-side divergence.
 
 ### What "Phase 2 done" means
 - Two test users on two devices can each see only their own messages.

@@ -10,7 +10,7 @@
 >
 > **When to revise a section:** when a failure mode is observed in the wild and the existing checklist would have missed it. Drift between this doc and reality is the failure mode this doc is designed against, same as the architecture doc.
 
-**Last updated:** 2026-06-10 (Phase 2 Step 2 section added: migration 008 schema checks + end-to-end signup→onboard→active flow verification. Prior: Step 1 schema checks 1–6 + 8 confirmed on staging; A#7 — RLS policies exist — still to run.)
+**Last updated:** 2026-06-10 ("Server-side profile inference" section added: two-user gate (sender's profile row updates + event row lands), trust-boundary + dialect-guard + race checks, prod least-privilege-role prerequisite, plus the deferred Step 2 smoke test. Prior same day: Phase 2 Step 2 section — migration 008 schema checks + end-to-end signup→onboard→active flow.)
 
 ---
 
@@ -879,6 +879,50 @@ previously are gone after the wipe. They'll be re-seeded via the real magic-link
 | Migration replay fails on `001` | `tenants` table not created by `000` first | Confirm 000 ran clean before 001 |
 | `005` fails on `agent_events` | Tenant seed row from `001` missing — `tenant_id NOT NULL` | Re-run `001` first |
 | pgcrypto missing from audit | Extension not enabled by default on this Supabase plan | Enable in migration 007 with `CREATE EXTENSION IF NOT EXISTS pgcrypto` |
+
+---
+
+## Server-side profile inference (2026-06-10)
+
+**What shipped:** Profile inference moved off the (RLS-dead) client path to `POST /api/v1/infer-profile` — Express route in `server/index.js`, Vercel handler `api/v1/infer-profile.js`, shared logic in `server/lib/inferProfile.js`. The client fires-and-forgets `{ message_id, inferences, detected_language }`; the server derives the authoritative sender from the message row, applies the inference guards, and writes the sender's profile + event rows atomically under `SELECT … FOR UPDATE`. Flag `PROFILE_INFERENCE_ENABLED = true` in `App.jsx`. See `decisions.md` 2026-06-10 "Server-side profile inference (Option A)".
+
+### Pre-flight (before the gate)
+
+- [ ] `DATABASE_URL_PROFILE_WRITER` is set in the environment running the endpoint (local `server/.env` for `npm run dev`, or Vercel **Preview** env for staging deploys). On staging this is the staging superuser URL (no least-privilege writer role on staging yet). If unset, `inferProfile()` warns and skips — inference silently no-ops.
+- [ ] The credential is **not** `VITE_`-prefixed and `server/.env` is gitignored (it is — `.env*`).
+- [ ] Staging migrations 007 + 008 are applied (RLS + uuid `user_id` + `complete_onboarding`).
+
+### Gate (run on staging, two users)
+
+The core gate: **a translated message from another user causes that sender's profile row to update and an event row to land.**
+
+1. [ ] Two users onboarded on staging (User A language `es`, User B language `en`), each on a separate browser/session.
+2. [ ] As User A, send a message with a clear regional/register/gender signal (e.g. an Argentine-Spanish phrase using `vos`).
+3. [ ] As User B (whose `preferred_language` differs), view the message so it routes through `/api/v1/translate`. Confirm Network tab shows a `POST /api/v1/infer-profile` returning 200 with a JSON body like `{"status":"updated","fields":[...]}` (or `"noop"` if nothing crossed the confidence threshold).
+4. [ ] Supabase → `user_linguistic_profiles`: **User A's** row (`user_id` = A's uuid) shows the inferred `dialect_region` / `formality_preference` / `gender_signal` with the matching `_source = 'inferred'` and `updated_at` bumped. (The write is to the *sender's* profile, not the viewer's.)
+5. [ ] Supabase → `user_profile_events`: a new row for User A with `source = 'inference'` and the matching `event_type` (`dialect_region_inferred` etc.), `previous_value` / `new_value` populated.
+6. [ ] Trust boundary: confirm the write landed on A's profile even though B triggered it — i.e. identity came from `message_id`, not the caller.
+7. [ ] Dialect guard: a same-language signal applies; a cross-language one is rejected (e.g. an English message should never write an `es-AR` dialect to the sender). When `source_language = 'unknown'`, the live `detected_language` is used as the anchor instead of blocking outright.
+8. [ ] Re-send/translate the same message again (or have a second viewer translate concurrently): the `FOR UPDATE` transaction serialises the writes — no error, no duplicate clobber, confidence-must-increase still holds for dialect.
+
+### Deferred Step 2 smoke test
+
+- [ ] Run the Phase 2 Step 2 end-to-end smoke test (signup → onboard → active → send/receive) now that inference is live, to confirm the inference POST doesn't interfere with the message render path. (This was deferred from the Step 2 gate.)
+
+### Before prod
+
+- [ ] Provision a least-privilege `profile_writer` role on prod (`GRANT SELECT, UPDATE ON public.user_linguistic_profiles`; `GRANT SELECT ON public.messages`; `GRANT INSERT ON public.user_profile_events`) instead of the superuser URL, and set `DATABASE_URL_PROFILE_WRITER` in Vercel **Production** to that role on **port 6543** (transaction pooler — same serverless lesson as `DATABASE_URL_PROD_WRITER`).
+
+### Known failure modes and how to diagnose
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `POST /api/v1/infer-profile` returns 200 `{"status":"disabled"}` | `DATABASE_URL_PROFILE_WRITER` unset in that environment | Set it (server/.env locally; Vercel Preview env for staging). |
+| 200 but profile never updates; status `skipped`/`no_profile_row` | Sender hasn't completed onboarding (no `user_linguistic_profiles` row) | Expected for un-onboarded senders; otherwise confirm `complete_onboarding` ran for that user. |
+| Write succeeds locally but not on Vercel | Endpoint not awaiting the transaction (function frozen at `res.json()`) | Confirm `await inferProfile(...)` — both routes await; the *client* fires-and-forgets, the *server* must not. |
+| `permission denied for table user_linguistic_profiles` | Credential lacks UPDATE/SELECT (e.g. accidentally reused the INSERT-only `DATABASE_URL_PROD_WRITER`) | Use a credential with SELECT+UPDATE on profiles, SELECT on messages, INSERT on events. |
+| Dialect never applies | `source_language` is `unknown` and no `detected_language` sent, or dialect prefix ≠ source-language prefix | Confirm the translate response carries `detected_language`; check the guard anchor logic in `inferProfile.js`. |
+| 404 on `/api/v1/infer-profile` in prod but works locally | `api/v1/infer-profile.js` not deployed / not picked up by Vercel | Confirm the file exists and the deploy is the latest (same failure mode as the translate route). |
 
 ---
 

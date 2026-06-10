@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import { buildMessages, PROMPT_VERSION } from '../lib/translatePrompt.js';
 import { logTranslationEvent } from './lib/events.js';
+import { inferProfile } from './lib/inferProfile.js';
 
 dotenv.config();
 if (!process.env.OPENAI_API_KEY) {
@@ -136,6 +137,41 @@ app.post('/api/v1/translate', async (req, res) => {
     }
     console.error('🔥 SERVER ERROR:', err);
     return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/*
+========================================================
+🧠 PROFILE INFERENCE
+========================================================
+Server-side profile inference. The client fires-and-forgets the translate
+response's `inferences` here, keyed by `message_id`. The server derives the
+authoritative sender from the message row (trust boundary — decisions.md
+2026-06-10), then applies the inference guards and writes the sender's profile
+atomically (SELECT ... FOR UPDATE). Replaces the dead client-side applyInferences
+path that RLS blocked. See server/lib/inferProfile.js.
+*/
+app.post('/api/v1/infer-profile', async (req, res) => {
+  try {
+    const { message_id, inferences, detected_language } = req.body;
+
+    if (!message_id) {
+      return res.status(400).json({ error: 'Missing message_id' });
+    }
+
+    // Await the transaction: the caller fires-and-forgets, but the server must
+    // finish the write before responding (mirrors the Vercel-freeze fix in
+    // api/v1/translate.js — a write started but not awaited can be torn down).
+    const result = await inferProfile({
+      messageId: message_id,
+      inferences,
+      detectedLanguage: detected_language,
+    });
+
+    return res.json(result);
+  } catch (err) {
+    console.error('🔥 infer-profile ERROR:', err);
+    return res.status(500).json({ error: 'Inference failed' });
   }
 });
 
