@@ -4,7 +4,7 @@
 >
 > Format: each item has a short description, a "why interesting" note, and (if relevant) a "trigger" — the condition under which it should be reconsidered for the roadmap.
 
-**Last updated:** 2026-06-02 (added "GitHub branch protection — paid-tier upgrade" under Infrastructure; surfaced during Spec 3 execution when GitHub blocked free-tier private-repo branch protection.)
+**Last updated:** 2026-06-09 (added "Identity, discovery & social graph (deferred)" section — friend-code, phone/contact-matching, QR, username reclaim, verification feature, rate-limit counters — during Phase 2 identity/discovery design.)
 
 ---
 
@@ -301,6 +301,56 @@ Stay free? Freemium with paid tier (priority routing, unlimited messages, premiu
 ### Target verticals beyond the primary ones
 Education (language-learning platforms), publishing (in-flow document translation), travel apps, accessibility (sign-language pipelines?), interpreter staffing tools. Many adjacencies once translation quality is proven.
 - **Trigger:** Two named verticals landed (dating + one other), free capacity to explore.
+
+---
+
+## Identity, discovery & social graph (deferred)
+
+> Structural prep for these lands in Phase 2 (normalized discovery handles, contact graph,
+> invite primitive). The items below are features built on top of that structure, deferred
+> until later phases.
+
+### Friend-code discovery handle
+A short, shareable, non-PII code (BattleTag / Snapchat-style) users can hand out in person or
+embed in a QR code, distinct from username and email.
+- **Why interesting:** Stable shareable identifier that isn't PII and isn't tied to the
+  username namespace. Trivial to add given the normalized discovery-handle table.
+- **Trigger:** When in-person / QR adding becomes desirable (likely alongside mobile).
+
+### Phone number + address-book contact matching
+Phone as a discovery handle plus contact-list matching (the WhatsApp/Signal growth mechanic).
+- **Why interesting:** Best zero-friction discovery and strongest anti-spam signal (numbers
+  are costly to acquire).
+- **Why deferred:** Heavy privacy ask + SMS verification infra; conflicts with the low-friction,
+  email-first onboarding. Phone is modeled as a possible handle type but not collected.
+- **Trigger:** Mobile (Phase 5), or a spam problem that email-add gating can't contain.
+
+### QR codes for add / invite
+A client-side feature that encodes an invite link or friend-code as a QR image for in-person adds.
+- **Why interesting:** Pure presentation layer over the invite-link / friend-code primitives —
+  no schema cost.
+- **Trigger:** In-person sharing flows or mobile.
+
+### Username timed-release / contact-the-holder reclaim
+Usernames are non-reusable by default. A future mechanism could release a retired/squatted
+username after N years, or let a requester ask the current holder to release it.
+- **Why interesting:** Recovers desirable handles without enabling impersonation of a prior holder.
+- **Trigger:** Username squatting becomes a real problem worth operational effort.
+
+### User verification feature (the mechanism, not the flag)
+The schema carries an `is_verified` flag and a `verification_method` field from Phase 2, but the
+actual ways a user becomes verified (linking an external platform, a manual review, a paid check,
+etc.) are unbuilt. Verification also activates the "allow if verified" DM-permission tiers.
+- **Why interesting:** Anti-impersonation defense + unlocks higher-trust DM permissions.
+- **Trigger:** Impersonation reports rise, a public/known user joins, or a tenant wants a
+  verified tier.
+
+### Rate-limit counters (performance optimization)
+Rate limiting itself is parked, but note: every action table (relationships, invites,
+invite_redemptions, reports, username changes) already carries actor + timestamp + tenant_id, so
+rates are computable retroactively with no schema change. A dedicated counters/buckets table would
+only be a performance optimization if live rate checks get expensive.
+- **Trigger:** Live rate-limit enforcement is built and per-request count queries become a hotspot.
 
 ---
 

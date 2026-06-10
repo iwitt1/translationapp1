@@ -530,7 +530,9 @@ The OpenAI API key never leaves the backend. Frontend never calls OpenAI directl
 │   ├── roadmap.md            Phased roadmap with checklists
 │   ├── parking-lot.md        Uncommitted ideas
 │   ├── decisions.md          Dated decisions log
-│   └── verification.md       Verification and debugging checklists
+│   ├── verification.md       Verification and debugging checklists
+│   ├── hermes.md             Hermes Agent charter (VPS execution agent)
+│   └── cowork-handoff.md     Weekly Hermes→Cowork briefing
 ├── .cursorrules              Cursor rules and pointer to /docs
 ├── .env                      Frontend env vars
 ├── .gitignore                
