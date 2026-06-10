@@ -16,6 +16,112 @@
 
 ---
 
+## 2026-06-09 — Identity vs. discovery: stable uuid + normalized account_identifiers (Model A)
+
+**Decision:** A user's stable identity is the `auth.users` uuid, mirrored 1:1 into a `public.profiles` table (`profiles.id = auth.users.id`, FK, on delete cascade). All app tables FK to `profiles.id`; all RLS uses `auth.uid()`. Human-facing "discovery handles" (email, username, and later phone / friend_code) live in a separate normalized `account_identifiers` table that points at `profiles.id`. A discovery handle is never a primary key or FK target. We adopt **Model A — one tenant per user** (a profile row carries a single `tenant_id`).
+
+**Context:** Phase 2 establishes auth and migrates `user_id`/`sender_id` from text to uuid. Phase 3 adds DMs/groups and a contact graph. We need to future-proof how users find and add each other without Phase 2's identity work creating friction for Phase 3.
+
+**Alternatives considered:**
+- *Handles as columns on the profile* — simpler, but adding phone/friend_code later means migrations, and you can't hold multiple values per type.
+- *Email or phone as the identity key (WhatsApp/Signal model)* — zero-friction discovery, but the key becomes unchangeable, leaks via enumeration, and can't carry multiple handle types.
+- *Stable uuid + normalized identifiers (iMessage "handles" model)* — more join complexity now, zero migration churn later. **Chosen.**
+- *Model B — one human, many tenant memberships (Slack model)* — a `memberships` table with profile split into global identity + per-tenant profile. More flexible, more complex. **Not chosen** — our B2B future treats tenants as API customers, not workspaces a single end-user joins many of.
+
+**Reasoning:** The uuid never changes, is never shown to users, and is never a discovery handle — eliminating the entire class of "we keyed off a mutable handle" migrations (Discord's username#discriminator unwind is the cautionary case). Model A is correct for a consumer app where the app *is* the tenant.
+
+**Implications:**
+- New Phase 2 tables: `profiles`, `account_identifiers`, `account_settings`. (Social-graph tables in a separate entry.)
+- `profiles` carries `is_verified` (default false; placeholder until a verification feature exists) and `verification_method` (nullable; how a user was verified — may become enum/array once methods are known).
+- Identifier rows are never hard-deleted (supports username non-reuse).
+- **Uniqueness matrix** — global (across tenants): `profiles.id` (uuid), `tenant_id`, invite `token`. Within tenant: `username`. Not unique anywhere: `display_name`.
+
+**Concerns to carry (Model A trade-offs, accepted for now):**
+- **Multi-tenant email uniqueness.** Supabase Auth enforces one `auth.users` row per email *per project* (global), not per tenant. Single-tenant today, so a non-issue. For multi-tenant, the same email existing in two tenants would require a Supabase-project-per-tenant or a custom identity mapping. Unsolved by design.
+- **Model A is a one-way-ish door.** Moving to Model B later is a migration (introduce `memberships`, possibly split profile). We keep B reachable by ensuring every social/discovery table carries its *own* `tenant_id` (not inherited via the profile) and invites are tenant-scoped — so a `memberships` table could slot in without re-tenanting every row.
+
+**Revisit when:** We onboard tenant #2 (forces both the email-uniqueness decision and the Model A vs B call), or join complexity from the normalized identifiers table measurably hurts read performance.
+
+---
+
+## 2026-06-09 — Username policy: unique within tenant, non-reusable, one change per year
+
+**Decision:** Usernames are ASCII alphanumeric + underscore (`[a-z0-9_]`), case-insensitive-unique **within a tenant**, non-reusable even after a user changes theirs, and changeable at most once per year. Every user gets a random `system_generated` username at signup; the first change to a user-chosen value is free and does not start the yearly clock. Display names are alphanumeric + space + hyphen + apostrophe, not unique. Detailed values live in `docs/policies.md`.
+
+**Context:** Usernames need to be a stable, real-feeling handle. Reuse, squatting, and impersonation are all expensive to fix retroactively.
+
+**Alternatives considered:** (A) Reusable usernames freed on change — enables impersonation of the prior holder and breaks cached references. (B) No usernames at launch — but Phase 3 assumes "invite by username," and bolting uniqueness on later is a painful migration. (C) Unique-within-tenant + non-reusable + rate-limited changes. **Chosen.**
+
+**Reasoning:** Non-reuse + ASCII-only charset + a reserved-word list together close the common impersonation and homoglyph vectors (ASCII-only kills Cyrillic-lookalike attacks). The 1/year limit (noted in UI even before it's enforced) discourages churn. System-generated-first keeps usernames non-load-bearing, so we can de-emphasize or drop them with no data risk.
+
+**Implications:**
+- `profiles.username`, `username_source` (`system_generated | user_set`), `username_last_changed_at`.
+- Retired usernames stay locked via non-deleted `account_identifiers` rows (status `retired`).
+- Policy *values* (charset, reserved words, change cadence) live in `policies.md` + `lib/policies.js`; changeable without a schema change.
+- A future timed-release / contact-the-holder reclaim mechanism is parked.
+
+**Revisit when:** Username squatting becomes a real problem, or we build the reclaim mechanism.
+
+---
+
+## 2026-06-09 — Social-graph primitives built in Phase 2 (schema), DM policy deferred
+
+**Decision:** Phase 2 builds the schema and safety primitives even though DMs/groups are Phase 3: `relationships` (contacts, with provenance), `blocks`, `reports`, `invites` + `invite_redemptions`. DM-initiation is gated by a swappable **tenant-level** policy enforced in the application layer. The sole tenant launches with **no special permissions**, so DMs require **mutual acceptance** (Snapchat model). Conversations remain independent of the contact graph.
+
+**Context:** Phase 2 is titled "Multi-user safety." Blocking and reporting are safety primitives that should exist before the app is shared. We want to avoid fully-open DMs but keep the option to grant non-mutual DMs based on discovery handle + (future) verification, without locking policy into schema.
+
+**Alternatives considered:** (A) Defer all social tables to Phase 3 — ships the "safety" phase without block/report, and forces provenance to be backfilled (impossible — it's only knowable at add-time). (B) Hard-code DM gating into schema constraints — unswappable. (C) Build schema + provenance now, keep gate logic in the app layer + tenant config. **Chosen.**
+
+**Reasoning:** Provenance (`via_identifier_type`) is only knowable when a connection is made, so the column must exist in Phase 2 even if the policy reading it is decided later. Keeping the gate in the app layer makes the policy a config change, not a migration.
+
+**Implications:**
+- `relationships.via_identifier_type`: email / username / phone / friend_code / invite_link.
+- `tenants.dm_initiation_policy` (jsonb) holds per-tenant overrides; sole tenant = `{}` → mutual-acceptance-only. Global defaults live in `lib/policies.js`.
+- **Conflict-resolution rule (confirmed):** mutually-accepted contacts can always DM each other; otherwise non-mutual DMs are allowed only where a tenant override permits the initiator's handle type.
+- "Allow if verified" tiers are inert until a verification feature exists (`is_verified` defaults false).
+- `blocks.unblocked_at` (nullable; null = active) preserves block/unblock history; partial unique index `(blocker_id, blocked_id) WHERE unblocked_at IS NULL` prevents double-blocking.
+- `reports` initially just records + auto-creates a block; no moderation queue UI yet.
+
+**Revisit when:** Verification ships (activates verified tiers), or spam volume forces revisiting the handle→DM matrix.
+
+---
+
+## 2026-06-09 — New doc: policies.md (trust & safety / identity governance)
+
+**Decision:** Add `docs/policies.md` as a living, periodically-audited doc holding username policy, discoverability & DM-initiation policy, blocking/reporting policy, and account-lifecycle rules. The machine-readable global defaults live in a single `lib/policies.js` module; per-tenant overrides live in DB (`tenants.dm_initiation_policy`).
+
+**Context:** These are governance rules (values, blocklists, cadences), not technical system design (architecture.md) or cost/workflow (operations.md). They need continual updating and auditing against best practice.
+
+**Alternatives considered:** (A) Fold into architecture.md — mixes mutable policy values with stable system design. (B) decisions.md only — append-only point-in-time records, wrong shape for a living policy. (C) Dedicated policies.md + `lib/policies.js`. **Chosen.**
+
+**Reasoning:** A focused doc with an audit cadence keeps policy values in one auditable place; a single code module keeps enforcement reading from one source. Matches the 2026-05-12 doc-structure precedent.
+
+**Implications:** policies.md is referenced from architecture.md §7/§10 and roadmap Phase 2. operations.md gets a one-line pointer to its review cadence. Schema enforces *mechanism*; policies.md + `lib/policies.js` own the *values*.
+
+**Revisit when:** policies.md grows past ~800 lines (split it) or a vertical needs its own policy doc.
+
+---
+
+## 2026-06-09 — Onboarding: explicit display name + system-generated username + pending-signup lifecycle
+
+**Decision:** Signup is a four-stage lifecycle. **(P1)** User submits email and clicks Sign up → magic link sent; `auth.users` row (uuid) is created immediately, and a DB trigger on that insert creates a `profiles` row with `status='pending'`, a random `system_generated` username, and the email identifier. **(P2)** User clicks the link, authenticates, lands on the onboarding screen (display name + language). **(P3)** User submits → `status='active'`, `onboarding_completed_at` set, language written to `user_linguistic_profiles` as `explicit`. **(P4)** User sends a first message — an engagement milestone, *not* an account status, so it is not in the `status` column. Email is collected only to send the link; display name ("the name other people see") and language are collected post-click on the same screen.
+
+**Context:** We considered deriving display name from the email local-part (`isaac@gmail.com` → `isaac`), which is confusing if users don't realize it's changeable. We also want to capture incomplete signups so we can re-prompt them.
+
+**Alternatives considered:** (A) Display name from email local-part — confusing, collides, implies a fixed name. (B) Ask name before sending the link — lost when the link opens on another device; collects profile data pre-auth. (C) Explicit name + language post-click; random username assigned at P1 via trigger; pending lifecycle. **Chosen.**
+
+**Reasoning:** Post-click collection is device-safe and post-auth. Assigning uuid + random username at P1 means an incomplete account is a real, re-promptable record. Random `system_generated` username keeps usernames non-load-bearing.
+
+**Implications:**
+- `profiles.status` (`pending | active | deactivated`), `onboarding_completed_at`.
+- First username change (system→chosen) is free; see username-policy entry.
+- The in-chat language selector is removed; the context/register dropdown stays for now (see roadmap note + parking lot).
+- **Abandoned pending accounts** are deleted after 30 days. The system-generated username is released (it was never user-chosen or shared). To monitor repeat-abandon / signup-spam without retaining deleted-user PII, a **hash** of the email (not plaintext) is recorded in an abuse-monitoring table with first-seen + abandon-count. (Hash chosen over plaintext for GDPR cleanliness — confirm at build.)
+
+**Revisit when:** We add OAuth/social login (changes what the provider hands us at signup), or abandoned-signup abuse patterns require more than hash-based monitoring.
+
+---
+
 ## 2026-06-02 — hermes_writer Postgres role scoped to INSERT-only on event tables
 
 **Decision:** Hermes writes `agent_events` and `translation_events` rows via a dedicated `hermes_writer` Postgres role with INSERT-only access on those two tables. No SELECT, no UPDATE, no DELETE, no other tables.

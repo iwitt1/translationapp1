@@ -2,7 +2,9 @@
 
 > Living document. Owns cost model, hiring plan, development workflow, and vendor decisions.
 
-**Last updated:** 2026-05-18 (staging environment added; §3 expanded with "Staging environment" subsection; §3 toolchain updated to three agents — Cowork + Cursor + Hermes; §4 Supabase region confirmed as us-east-1)
+**Last updated:** 2026-06-09 (added §6 "Trust & safety / identity policy review" ritual pointing at the new policies.md review cadence — start of each phase + quarterly, in sync with lib/policies.js and tenants.dm_initiation_policy)
+
+**Prior update:** 2026-05-18 (staging environment added; §3 expanded with "Staging environment" subsection; §3 toolchain updated to three agents — Cowork + Cursor + Hermes; §4 Supabase region confirmed as us-east-1)
 
 ---
 
@@ -184,6 +186,10 @@ Cursor has its own AI built in (`Cmd-K` for inline edits, the chat panel for que
 ---
 
 ## 6. Operational rituals
+
+### Trust & safety / identity policy review
+
+`/docs/policies.md` (identity, discovery, DM-initiation, blocking, anti-abuse, account lifecycle) is reviewed **at the start of each phase and at minimum quarterly**. Each review updates the doc's "Last reviewed" line and logs material changes in `decisions.md`. Keep `policies.md` (human-readable) in sync with `lib/policies.js` (machine defaults) and `tenants.dm_initiation_policy` (per-tenant overrides). See policies.md header.
 
 ### 90-day PAT rotation
 

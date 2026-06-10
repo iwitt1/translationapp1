@@ -4,7 +4,7 @@
 >
 > Format: each item has a short description, a "why interesting" note, and (if relevant) a "trigger" — the condition under which it should be reconsidered for the roadmap.
 
-**Last updated:** 2026-06-09 (added "Identity, discovery & social graph (deferred)" section — friend-code, phone/contact-matching, QR, username reclaim, verification feature, rate-limit counters — during Phase 2 identity/discovery design.)
+**Last updated:** 2026-06-09 (added "Identity, discovery & social graph (deferred)" section — friend-code, phone/contact-matching, QR, username reclaim, verification feature, rate-limit counters; plus a consolidated "UI improvements" entry and the "Multi-tenant email uniqueness vs. Supabase project-global auth" Model A tension — all during Phase 2 identity/discovery design.)
 
 ---
 
@@ -69,9 +69,30 @@ The viewer's side of the same feature: when a received translation is flagged am
 - **Why interesting:** Even if the sender didn't clarify, the receiver knows to read carefully. Lower-friction than the send-side intervention.
 - **Trigger:** Same as above. Could ship before or after the send-side clarification.
 
+### UI improvements (consolidated — deferred from Phase 2 identity/onboarding work)
+A single holding pen for UI/UX adjustments surfaced while designing Phase 2 identity, discovery, and onboarding. None are blocking; they're presentation-layer polish on top of the schema/policy work landing in Phase 2. Capture now, design later.
+
+- **Single-entry add field.** One "add a contact" box that accepts either a username or a full email and routes to the right exact-match lookup, rather than separate fields per handle type. Respects discovery policy + handle minimization (policies.md §2).
+- **Settings home for identity attributes.** A settings screen where the user sets/changes username (subject to the 1-change/365-days rule), display name, language, and discoverability toggles (`discoverable_by_email`, `discoverable_by_username`). The system-generated username's first change to a user-chosen one is free and surfaced here.
+- **Onboarding screen polish.** The post-magic-link screen (display name + language) is functionally specified in policies.md §6 (P2/P3); visual/UX design is open.
+- **Block/report surfaces.** Where and how a user blocks or reports from a conversation or profile view. Schema exists (Phase 2); UI placement is open.
+- **Pending-account re-prompt UX.** Reminder email cadence + in-app state for pending (un-onboarded) accounts before 30-day deletion (policies.md §6).
+
+- **Why interesting:** Keeps Phase 2 scoped to schema + policy + enforcement without scope-creeping into UI design, while not losing the UX threads.
+- **Surfaced:** 2026-06-09 during Phase 2 identity/discovery design.
+- **Trigger:** Phase 2 schema + auth land; UI build is the natural next pass.
+
 ---
 
 ## Known technical debt
+
+### Multi-tenant email uniqueness vs. Supabase project-global auth (Model A tension)
+We chose **Model A** (one tenant per user) for Phase 2. Under Model A this is dormant, but it's a known one-way-door risk worth recording. Supabase Auth enforces email uniqueness **globally per project** (`auth.users.email` is unique across the whole project), whereas our app-level identity model scopes discovery handles **within a tenant** (`account_identifiers` keyed on `(tenant_id, type, value)`). For the sole consumer tenant these never collide. But if we ever move to **Model B** (Slack-style — one human with memberships in multiple tenants, e.g. the same email belonging to distinct identities in two B2B customer workspaces), Supabase's global email uniqueness fights the per-tenant identity model directly: one `auth.users` row cannot represent two tenant-scoped identities.
+
+- **Why interesting:** This is the concrete mechanism behind the "Model A is a one-way door" caveat in decisions.md (2026-06-09 identity entry). Resolving it later means either (a) decoupling app identity from Supabase Auth's user table (an `identities`/`memberships` layer above `auth.users`), (b) one Supabase project per tenant, or (c) a different auth provider. All are heavier than anything Model A needs now.
+- **Why deferred:** Model A makes it a non-issue at current scale, and Phase 2's job is the consumer chat app, not B2B multi-tenancy. Over-building the auth layer now contradicts "build the structural pieces, not the speculative ones."
+- **Trigger:** First serious move toward B2B multi-tenant (Phase 6 / strategic Phase 2), or any requirement that one email map to identities in more than one tenant. Re-open the Model A vs. Model B decision (decisions.md 2026-06-09) at that point.
+- **Surfaced:** 2026-06-09 during Phase 2 identity/discovery design.
 
 ### Robust testing, QA, and CI process — staged build-out
 Current testing posture is largely manual: smoke-test runbook in `/docs/verification.md`, run by a human after deploys. As the project scales (Hermes online, real users in Phase 2, multiple verticals in Phase 6), the manual approach won't hold. The forward state is a multi-layered testing / QA / CI pipeline with the 2026-05-18 staging smoke-test as its first iteration. Likely build-out order, each layer earning the next:

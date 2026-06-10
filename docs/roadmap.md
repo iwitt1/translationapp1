@@ -5,7 +5,9 @@
 > **What lives here:** committed work in priority order.
 > **What does NOT live here:** ideas we haven't decided to build. Those go in `parking-lot.md`.
 
-**Last updated:** 2026-06-02 (Phase 1.5 infrastructure — Discord gateway live; Sonnet routing live; per-agent Opus tier override carved into Spec 2.1. Checkbox 4 done; checkbox 3 partial. Spec 3 — access credentials — approved and ready to execute. Added "Cowork ↔ Hermes interface follow-ups" subsection capturing the Cowork-sandbox git-pull auth gap surfaced during Spec 3 drafting. See specs.md Spec 2 (shipped 2026-06-02 narrowed) + Spec 2.1 (draft) + Spec 3 (approved) and decisions.md 2026-06-02 entries.)
+**Last updated:** 2026-06-09 (Phase 2 identity/discovery/social-graph design — rewrote Phase 2 Authentication into magic-link auth + P1–P4 onboarding lifecycle; added Identity & discovery and Social graph primitives subsections; expanded RLS to all new tables + greenfield/cutover note; clarified Phase 3 invite reuses the Phase 2 invite primitive + context-dropdown relocation. See policies.md, architecture.md §7 Phase 2 tables, and decisions.md 2026-06-09 entries.)
+
+**Prior update:** 2026-06-02 (Phase 1.5 infrastructure — Discord gateway live; Sonnet routing live; per-agent Opus tier override carved into Spec 2.1. Checkbox 4 done; checkbox 3 partial. Spec 3 — access credentials — approved and ready to execute. Added "Cowork ↔ Hermes interface follow-ups" subsection capturing the Cowork-sandbox git-pull auth gap surfaced during Spec 3 drafting. See specs.md Spec 2 (shipped 2026-06-02 narrowed) + Spec 2.1 (draft) + Spec 3 (approved) and decisions.md 2026-06-02 entries.)
 
 ---
 
@@ -130,14 +132,31 @@
 **Goal:** The app is shareable with real testers without privacy concerns. Up until this phase, no third party should have the URL.
 
 ### Authentication
-- [ ] Adopt Supabase Auth (email + password). Real user identities; UUID under the hood, username as display name
+- [ ] Supabase Auth via **magic links (email OTP)** as primary. Architecture supports a future password toggle (same JWT/session downstream; password path purely additive, switchable via config/UI without a refactor)
+- [ ] Onboarding lifecycle per policies.md §6: P1 email submitted → magic link + `auth.users` row + DB trigger creates pending `profiles` row (uuid, random `system_generated` username, email identifier); P2 link clicked → onboarding screen; P3 submit display name + language → `status='active'`; P4 first message (engagement, not a status)
+- [ ] Display name + language collected post-click on one onboarding screen ("the name other people see"). Remove the in-chat **language** selector. Keep the **context/register** dropdown for now (see Phase 3 note)
+- [ ] Scheduled job: re-prompt pending accounts; delete abandoned ones after 30 days, release their system-generated username, record an email **hash** in the abuse-monitoring table
 - [ ] Token-based authentication on every backend API call, including the chat app's own calls
 - [ ] Refresh / rotation behavior verified
-- [ ] Migration plan for existing user_profile rows (mostly: blow them away, this is a fresh start)
+- [ ] No data migration needed — staging is wiped at Phase 2 start (existing data is throwaway)
+
+### Identity & discovery (per architecture.md §7 "Phase 2" tables; decisions.md 2026-06-09)
+- [ ] `profiles` table, `id = auth.users.id` (Model A — one tenant per user); migrate `user_id`/`sender_id` text → uuid
+- [ ] `account_identifiers` (normalized handles, non-reusable usernames via never-deleted rows + reserved seeds)
+- [ ] `account_settings` (per-user discoverability + `allow_dms_from`)
+- [ ] Username policy mechanism: within-tenant uniqueness, `username_source`, `username_last_changed_at`; values in `lib/policies.js` + policies.md §1
+- [ ] Discovery: exact-match add by email/username only (no email search), autocomplete on username, **handle minimization** enforced in the query/API
+
+### Social graph primitives (schema + safety; DM *policy values* and DM *UI* are Phase 3)
+- [ ] `relationships` (contacts, with `via_identifier_type` provenance), `blocks` (with `unblocked_at` + partial unique index), `reports` (auto-creates a block)
+- [ ] `invites` + `invite_redemptions` (deep-link primitive; serves contact-add now, conversation-join in Phase 3)
+- [ ] `tenants.dm_initiation_policy` jsonb (sole tenant `'{}'` → mutual-acceptance-only); enforcement reads `lib/policies.js` defaults + tenant overrides
+- [ ] `email_hash` abuse-monitoring table for abandoned-signup spam detection
 
 ### Row-level security
-- [ ] RLS policies on `messages`, `message_translations`, `user_profiles`, `user_linguistic_profiles`, `conversation_contexts`, every other table that exists by this point
-- [ ] Tenant-scoped policies on top of user-scoped policies
+- [ ] RLS policies on every table that exists by this point: `messages`, `message_translations`, `user_linguistic_profiles`, `conversation_contexts`, `user_profile_events`, and all Phase 2 identity/discovery/social tables (`profiles`, `account_identifiers`, `account_settings`, `relationships`, `blocks`, `reports`, `invites`, `invite_redemptions`, abuse-monitoring email-hash table)
+- [ ] Tenant-scoped policies on top of user-scoped policies (use `auth.uid()`; tenant scope via `tenant_id`)
+- [ ] **No RLS exists in Supabase today** — this is greenfield. Every policy must live in a migration from day one (per parking-lot.md "Other config state lives outside /migrations/"). The identity migration + RLS enablement is a coordinated breaking cutover on wiped staging, not an additive change (see architecture.md §10)
 - [ ] Test that one user cannot read another user's data via dev tools or direct API queries
 
 ### Data deletion
@@ -184,8 +203,8 @@
 ### UI
 - [ ] Conversation list view
 - [ ] Create conversation flow
-- [ ] Invite-by-username
-- [ ] Per-conversation context type setting
+- [ ] Invite-to-conversation — reuses the Phase 2 `invites` + `invite_redemptions` primitive (built in Phase 2 for contact-add; extended here to conversation-join). Not a username-only flow: add by any discovery handle the user already has, subject to discovery policy + handle minimization (policies.md §2)
+- [ ] Per-conversation context type setting. **This is where the in-chat context/register dropdown moves** — kept in the header through Phase 2, relocated to per-conversation setting here (auto-inference is the longer-term target; see parking-lot.md "Context type: auto-inferred, not manually set")
 
 ### What "Phase 3 done" means
 - A user can have multiple distinct conversations with different other users.

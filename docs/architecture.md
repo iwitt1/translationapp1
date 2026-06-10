@@ -242,6 +242,10 @@ Unique: `(message_id, language)` — one cached translation per message per targ
 | `created_at` | timestamp without time zone | Default `now()` |
 | `tenant_id` | uuid | NOT NULL, FK to `tenants(id)`. Added by migration `001`. |
 
+**Replaced in Phase 2 by `profiles`** (see "Tables to add in Phase 2" below). The `user_id` text
+key and `default_language` move; identity becomes the `auth.users` uuid and language moves to
+`user_linguistic_profiles.preferred_language`.
+
 ### Tables to add in Phase 0 (cheap structural prep)
 
 #### `tenants`
@@ -357,6 +361,134 @@ The deletion job **anonymizes** corrections (strips user_id and PII, keeps trans
 
 Lets you reconstruct what the system believed about a user at any point in time. Critical for debugging bad translations and for quality control on training data.
 
+### Tables to add in Phase 2 (identity, discovery, social graph)
+
+> Design rationale and trade-offs in `decisions.md` (2026-06-09 entries). Policy *values* live in
+> `policies.md` + `lib/policies.js`. **Identity vs. discovery principle:** the stable identity is
+> the `auth.users` uuid; human-facing discovery handles are a separate normalized layer that
+> points at it and is never a key.
+
+#### Uniqueness scope (across vs. within tenant)
+| Thing | Unique scope |
+|---|---|
+| `profiles.id` (uuid) | Global (across all tenants) |
+| `tenant_id` | Global |
+| invite `token` | Global (it's a URL) |
+| `username` | **Within tenant** (`(tenant_id, canonical_username)`) |
+| `display_name` | Not unique anywhere |
+| email (at auth layer) | Global per Supabase project — see Model-A concern in decisions.md |
+
+#### `profiles` (replaces `user_profiles` in Phase 2)
+1:1 with `auth.users`. `id` = `auth.users.id` (FK, on delete cascade). RLS uses `auth.uid()`.
+Adopts **Model A — one tenant per user** (decisions.md 2026-06-09).
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid | PK = `auth.users.id` |
+| `tenant_id` | uuid | NOT NULL, FK to `tenants(id)` |
+| `display_name` | text | NOT NULL. "The name other people see." Not unique. |
+| `username` | text | Canonical (lowercased). Unique **within tenant**. See policies.md §1. |
+| `username_source` | enum | `'system_generated' \| 'user_set'`, default `'system_generated'` |
+| `username_last_changed_at` | timestamptz | Supports the 1/year rule |
+| `is_verified` | boolean | default false. Placeholder; no verification feature yet. |
+| `verification_method` | text | nullable. How verified (platform/tool); may become enum/array later. |
+| `status` | enum | `'pending' \| 'active' \| 'deactivated'`, default `'pending'` |
+| `onboarding_completed_at` | timestamptz | null until display_name + language set; flips status to `active` |
+| `created_at` / `updated_at` | timestamptz | |
+
+Language/dialect preferences do NOT live here — they stay in `user_linguistic_profiles`
+(`preferred_language` written `explicit` at onboarding). Lifecycle (pending → active →
+abandonment) is governed by policies.md §6; a DB trigger on `auth.users` insert creates the
+pending profile + random username.
+
+#### `account_identifiers` (normalized discovery handles)
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid | PK |
+| `account_id` | uuid | FK to `profiles(id)`, on delete cascade |
+| `tenant_id` | uuid | FK to tenants |
+| `type` | enum | `'email' \| 'username' \| 'phone' \| 'friend_code'` |
+| `value` | text | Canonical/normalized (lowercased email/username) |
+| `status` | enum | `'active' \| 'retired' \| 'reserved'`. Rows are never hard-deleted. |
+| `verified` | boolean | default false |
+| `created_at` | timestamptz | |
+
+Usernames unique within tenant via `(tenant_id, type, value)` covering active+retired+reserved
+(enforces non-reuse). Reserved words seeded as `reserved` rows. **Handle minimization** (policies.md
+§2): a discovery query returns only the matched handle, never an account's other identifiers.
+
+#### `account_settings` (per-user privacy prefs, 1:1)
+| Column | Type | Notes |
+|---|---|---|
+| `account_id` | uuid | PK, FK to `profiles(id)` |
+| `tenant_id` | uuid | FK to tenants |
+| `discoverable_by_email` | boolean | default true |
+| `discoverable_by_username` | boolean | default true |
+| `allow_dms_from` | enum | `'everyone' \| 'contacts' \| 'nobody'`, default `'contacts'` |
+| `updated_at` | timestamptz | |
+
+#### `relationships` (contact graph; conversations are independent of this)
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid | PK |
+| `tenant_id` | uuid | FK to tenants |
+| `requester_id` | uuid | FK to `profiles(id)` |
+| `addressee_id` | uuid | FK to `profiles(id)` |
+| `state` | enum | `'pending' \| 'accepted' \| 'declined'` |
+| `via_identifier_type` | enum | `'email' \| 'username' \| 'phone' \| 'friend_code' \| 'invite_link'` — **provenance**, set at add-time, read by the DM-initiation policy |
+| `created_at` / `updated_at` | timestamptz | |
+
+Unique `(tenant_id, requester_id, addressee_id)`.
+
+#### `blocks` (directional)
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid | PK |
+| `tenant_id` | uuid | FK to tenants |
+| `blocker_id` | uuid | FK to `profiles(id)` |
+| `blocked_id` | uuid | FK to `profiles(id)` |
+| `unblocked_at` | timestamptz | nullable; null = currently blocked. Kept after unblock for history. |
+| `created_at` | timestamptz | |
+
+Partial unique index `(blocker_id, blocked_id) WHERE unblocked_at IS NULL` — no double-blocking.
+
+#### `reports`
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid | PK |
+| `tenant_id` | uuid | FK to tenants |
+| `reporter_id` | uuid | FK to `profiles(id)` |
+| `reported_id` | uuid | FK to `profiles(id)` |
+| `reason` | enum | `'spam' \| 'abuse' \| 'impersonation' \| 'other'` |
+| `details` | text | nullable |
+| `status` | enum | `'open' \| 'reviewed' \| 'actioned' \| 'dismissed'`, default `'open'` |
+| `created_at` | timestamptz | |
+
+Initial behavior: records the report and auto-creates a block. No moderation queue UI yet.
+
+#### `invites` + `invite_redemptions` (deep-link / invite-link primitive)
+`invites`: `id`, `tenant_id`, `token` (globally unique, opaque), `kind` enum
+`'contact' \| 'conversation'`, `created_by` FK profiles, `target_conversation_id` uuid nullable
+(Phase 3), `max_uses` int nullable, `use_count` int default 0, `expires_at` timestamptz nullable,
+`revoked` boolean default false, `created_at`.
+`invite_redemptions`: `id`, `invite_id` FK, `redeemed_by` FK profiles, `redeemed_at`. Redeeming a
+`contact` invite creates a `relationships` row with `via_identifier_type='invite_link'`.
+
+#### `tenants` — add column
+`dm_initiation_policy` jsonb — per-tenant overrides on top of `lib/policies.js` global defaults.
+Sole tenant launches `'{}'` (no overrides → mutual-acceptance-only; policies.md §3).
+
+#### Where policy lives (three layers)
+1. `docs/policies.md` — human-readable values, audited on a cadence.
+2. `lib/policies.js` — machine source of truth for **global** defaults; all enforcement reads here.
+3. `tenants.dm_initiation_policy` (jsonb) — per-**tenant** overrides.
+
+Schema enforces *mechanism* (uniqueness, non-deletion, the partial index); layers 1–3 own *values*.
+
+#### Abuse-monitoring (signup spam)
+When an abandoned pending account is deleted (policies.md §6), a **hash** of its email is recorded
+in an abuse-monitoring table (`email_hash`, `tenant_id`, `first_seen`, `abandon_count`) — not the
+plaintext — so repeat-abandon / signup-spam is detectable without retaining deleted-user PII.
+
 ---
 
 ## 8. How a translation moves through the system
@@ -445,10 +577,18 @@ Fine-tuning takes a base model and trains it further on our corrections data. Be
 - **No RLS yet.** Anon key + no RLS = anyone with the URL can read every message in the database. Fixed in Phase 2.
 
 ### Target (post-Phase 2)
-- Supabase Auth providing real user identity (UUID under the hood, username as display name).
-- RLS enabled on every table. Messages visible only to participants. Profiles writable only by owner. Conversations scoped by membership.
+- Supabase Auth providing real user identity (stable `auth.users` uuid under the hood; `username` and `display_name` are separate handles, neither is the key — see §7 + decisions.md 2026-06-09).
+- RLS enabled on every table (incl. the new identity/discovery/social tables). Messages visible only to participants. Profiles writable only by owner. Conversations scoped by membership. Discovery honors handle minimization (a user adding another sees only the handle they used).
 - Tenant-scoped access on top of user-scoped access. A user in tenant A can never read data from tenant B.
 - Token-based auth on every translate API call, even from the first-party frontend.
+
+### Phase 2 migration is a coordinated cutover (breaking, by design)
+The six new identity/discovery/social tables are **purely additive**. The **breaking** changes are
+(1) `user_profiles → profiles` plus `user_id`/`sender_id` text→uuid, and (2) enabling RLS — the
+moment RLS is on, the current anon-key / no-auth frontend can no longer read anything. This is
+intended: new auth + schema + RLS + updated frontend ship **together** on a **wiped staging**
+database (existing data is throwaway), and prod is untouched until staging verifies. Nothing breaks
+accidentally — the current no-auth app is deliberately replaced.
 
 ### Privacy positioning (see strategy.md for marketable framing)
 
@@ -530,6 +670,7 @@ The OpenAI API key never leaves the backend. Frontend never calls OpenAI directl
 │   ├── roadmap.md            Phased roadmap with checklists
 │   ├── parking-lot.md        Uncommitted ideas
 │   ├── decisions.md          Dated decisions log
+│   ├── policies.md           Trust & safety / identity governance (living, audited)
 │   ├── verification.md       Verification and debugging checklists
 │   ├── hermes.md             Hermes Agent charter (VPS execution agent)
 │   └── cowork-handoff.md     Weekly Hermes→Cowork briefing
@@ -556,11 +697,14 @@ Plain-English definitions for jargon used here. Keeps the door open for non-tech
 - **Cache.** Storing the result of a slow or expensive operation so the next request for the same thing is free.
 - **Context object.** A small structured JSON payload describing the user and conversation, attached to every translate call.
 - **CORS.** Cross-Origin Resource Sharing — browser security policy controlling which web origins are allowed to call which APIs.
+- **Discovery handle.** A human-facing identifier used to *find or add* a user — email, username, phone, friend-code. Distinct from the stable identity (the uuid); never used as a key. A user can have several.
 - **Event sourcing.** A pattern where every state change is recorded as an event in an append-only table. Lets you reconstruct state at any historical point.
 - **Fine-tuning.** Additional training on top of a base AI model using your own labeled data. Doesn't create a new model; makes an existing one better at your specific task.
 - **Foreign key (FK).** A column in one table that points at a row in another table. Connects tables together.
 - **Frontend.** Code that runs in the user's browser. What the user actually sees.
 - **GDPR.** EU privacy regulation. Right to Erasure means users can demand deletion of their data.
+- **Handle minimization.** A privacy rule: when one user adds another, they see only the discovery handle they used to find them — never the target's other handles.
+- **Homoglyph.** A character that looks like another (e.g. Cyrillic "а" vs Latin "a"). Used for impersonation; blocked by restricting usernames to ASCII.
 - **IDE.** Integrated Development Environment — fancy text editor for code (Cursor and VS Code are IDEs).
 - **Idempotency key.** A unique identifier sent with an API call so that retries don't accidentally do the same operation twice.
 - **Inference (in this context).** What the model can tell about a user or conversation from the text alone — their dialect, register, gender signal, etc.
@@ -569,6 +713,7 @@ Plain-English definitions for jargon used here. Keeps the door open for non-tech
 - **OpenAI.** The company whose API we use for translation. `gpt-4o-mini` is the specific model currently.
 - **Optimistic UI.** Showing a result immediately, before the server confirms — a UX trick to make things feel fast.
 - **Postgres.** The relational database under Supabase.
+- **Provenance (in the contact graph).** A record of *how* a connection was made (`via_identifier_type`: email / username / phone / friend_code / invite_link), captured at add-time and read by the DM-initiation policy.
 - **Realtime.** Supabase's feature that pushes database changes to connected clients without polling.
 - **Register.** The level of formality and tone of communication. Critical in Japanese, Korean, Arabic; meaningful in most languages.
 - **Repo / repository.** A folder of code tracked by Git, usually mirrored on GitHub.
@@ -576,6 +721,7 @@ Plain-English definitions for jargon used here. Keeps the door open for non-tech
 - **Serverless function.** A small backend function that runs on demand in the cloud (Vercel hosts ours). No server to manage, scales automatically.
 - **Snapshot (in corrections).** Capturing the state of context at the moment of an event, not a reference to current state. Necessary because state drifts.
 - **Supabase.** A backend-as-a-service built on Postgres. Provides database, realtime, auth.
+- **System-generated username.** A random username assigned at signup (flagged `system_generated`). Keeps usernames non-load-bearing — a user can set their own later, and we can de-emphasize usernames with no data risk.
 - **System prompt.** Instructions given to the AI model before the user's message, setting its behavior.
 - **Tenant.** A customer of a multi-tenant API. Phase 1 has one tenant (the chat app). Phase 2 has many.
 - **Token (AI).** The unit of text OpenAI bills on. Roughly ¾ of a word. Translation messages are small; context objects are tiny by design.
