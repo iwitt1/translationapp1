@@ -1,7 +1,8 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
-import { buildMessages } from '../lib/translatePrompt.js';
+import { buildMessages, PROMPT_VERSION } from '../lib/translatePrompt.js';
+import { logTranslationEvent } from './lib/events.js';
 
 dotenv.config();
 if (!process.env.OPENAI_API_KEY) {
@@ -71,6 +72,8 @@ app.post('/api/v1/translate', async (req, res) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
 
+    const startTime = Date.now();
+
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       signal: controller.signal,
@@ -84,6 +87,7 @@ app.post('/api/v1/translate', async (req, res) => {
     clearTimeout(timeout);
 
     const data = await response.json();
+    const latency_ms = Date.now() - startTime;
 
     if (!response.ok) {
       console.error('❌ OpenAI error:', data);
@@ -101,6 +105,28 @@ app.post('/api/v1/translate', async (req, res) => {
     }
 
     console.log('✅ AI response:', parsed);
+
+    // ── Event log (non-blocking) ───────────────────────────────────────────
+    // was_cached: hardcoded false — no cache check exists in this path yet.
+    // Known gap: update when message_translations cache is wired.
+    // tenant_id: chat-app tenant UUID (hardcoded until multi-tenant routing exists).
+    // user_id: not available in request body — null until auth is threaded through.
+    logTranslationEvent({
+      tenant_id: '00000000-0000-0000-0000-000000000001',
+      task_id: null,
+      user_id: null,
+      target_language: targetLanguage ?? 'detect',
+      was_cached: false,
+      model_used: 'gpt-4o-mini',
+      prompt_version: PROMPT_VERSION,
+      latency_ms,
+      character_count: text.length,
+      input_tokens: data?.usage?.prompt_tokens ?? null,
+      output_tokens: data?.usage?.completion_tokens ?? null,
+      event_source: 'chat_app',
+    });
+    // Note: we intentionally do NOT await this — fire-and-forget.
+    // Response is already built; we must not block the caller on a DB write.
 
     return res.json(parsed);
   } catch (err) {

@@ -5,3 +5,5 @@ dist
 Bash
 echo
 which
+.vercel
+.env*
