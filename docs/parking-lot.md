@@ -4,7 +4,7 @@
 >
 > Format: each item has a short description, a "why interesting" note, and (if relevant) a "trigger" — the condition under which it should be reconsidered for the roadmap.
 
-**Last updated:** 2026-06-09 (added "Identity, discovery & social graph (deferred)" section — friend-code, phone/contact-matching, QR, username reclaim, verification feature, rate-limit counters; plus a consolidated "UI improvements" entry and the "Multi-tenant email uniqueness vs. Supabase project-global auth" Model A tension — all during Phase 2 identity/discovery design.)
+**Last updated:** 2026-06-09 (added "Identity, discovery & social graph (deferred)" section — friend-code, phone/contact-matching, QR, username reclaim, verification feature, rate-limit counters; plus a consolidated "UI improvements" entry, the "Multi-tenant email uniqueness vs. Supabase project-global auth" Model A tension, and an "Onboarding funnel events" analytics item — all during Phase 2 identity/discovery design.)
 
 ---
 
@@ -81,6 +81,14 @@ A single holding pen for UI/UX adjustments surfaced while designing Phase 2 iden
 - **Why interesting:** Keeps Phase 2 scoped to schema + policy + enforcement without scope-creeping into UI design, while not losing the UX threads.
 - **Surfaced:** 2026-06-09 during Phase 2 identity/discovery design.
 - **Trigger:** Phase 2 schema + auth land; UI build is the natural next pass.
+
+### Onboarding funnel events
+Explicit event logging for the signup funnel beyond what account state already captures. Today (policies.md §6) the lifecycle distinguishes only the states that matter for the *account*: `pending` vs `active`, with P2 (clicked-but-not-onboarded) inferred for free from the Supabase Auth sign-in timestamps. This item is the *analytics* layer on top: deliberate events for where people drop off — link clicked → onboarding page loaded → started typing → submitted — so we can measure funnel conversion, not just final state.
+- **Why interesting:** Tells us *where* onboarding leaks, which the account-state model can't. Useful once we're optimizing signup conversion.
+- **Why deferred:** Same usage-analytics-vs-account-state separation we deliberately drew at P4 — engagement/funnel instrumentation is intentionally kept out of the `status` column and the lifecycle policy. The auth timestamps already cover the account-lifecycle need (re-prompt, abandonment) with zero extra logging, so explicit funnel events earn their place only when we actually want drop-off data.
+- **Where it'd live:** an analytics/events table (or `user_profile_events`-style append-only log), not the `profiles.status` column.
+- **Trigger:** We start optimizing signup conversion, or onboarding drop-off becomes a felt problem.
+- **Surfaced:** 2026-06-09, follow-up to the P1–P4 lifecycle design ("is a P2 page load logged?" — no, inferred from auth).
 
 ---
 

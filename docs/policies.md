@@ -103,6 +103,13 @@ email" as strong trust.
   immediately; a DB trigger on that insert creates a `profiles` row with `status='pending'`, a
   random `system_generated` username, and the email identifier.
 - **P2 — link clicked, authenticated:** onboarding screen (display name + language picker).
+  *P2 is **inferred, not logged.** We do not write a P2 event or a P2 status value. Reaching P2
+  is detectable for free from Supabase Auth: `auth.users.last_sign_in_at` / `email_confirmed_at`
+  are stamped when the magic link is consumed. So three states are distinguishable with no extra
+  instrumentation — never clicked (`pending` + no sign-in timestamp), clicked-but-abandoned-
+  onboarding (sign-in timestamp set + `status` still `pending`), and onboarded (`status='active'`).
+  Enough for the abandonment/re-prompt logic; explicit onboarding-funnel events are parked (see
+  parking-lot.md "Onboarding funnel events").*
 - **P3 — onboarding submitted:** `status='active'`, `onboarding_completed_at` set, language
   written to `user_linguistic_profiles` as `explicit`.
 - **P4 — first message sent:** engagement milestone, **not** an account status (kept out of the
