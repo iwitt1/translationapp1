@@ -4,7 +4,7 @@
 >
 > Format: each item has a short description, a "why interesting" note, and (if relevant) a "trigger" — the condition under which it should be reconsidered for the roadmap.
 
-**Last updated:** 2026-06-09 (added "Identity, discovery & social graph (deferred)" section — friend-code, phone/contact-matching, QR, username reclaim, verification feature, rate-limit counters; plus a consolidated "UI improvements" entry, the "Multi-tenant email uniqueness vs. Supabase project-global auth" Model A tension, and an "Onboarding funnel events" analytics item — all during Phase 2 identity/discovery design.)
+**Last updated:** 2026-06-10 (Step 2 review: escalated "Move profile inference to server-side" — client-side path is now fully dead under Phase 2 RLS, flagged its flywheel weight; added "Phase 2 RLS / validation gaps" entry — cache poisoning, realtime RLS, display_name charset. Prior 2026-06-09: added "Identity, discovery & social graph (deferred)" section, consolidated "UI improvements", the Model A email-uniqueness tension, and "Onboarding funnel events".)
 
 ---
 
@@ -102,6 +102,18 @@ We chose **Model A** (one tenant per user) for Phase 2. Under Model A this is do
 - **Trigger:** First serious move toward B2B multi-tenant (Phase 6 / strategic Phase 2), or any requirement that one email map to identities in more than one tenant. Re-open the Model A vs. Model B decision (decisions.md 2026-06-09) at that point.
 - **Surfaced:** 2026-06-09 during Phase 2 identity/discovery design.
 
+### Phase 2 RLS / validation gaps (surfaced in Step 2 review, 2026-06-10)
+Three gaps spotted reviewing migration 008 + App.jsx. None block the Step 2 gate or matter much in the single consumer tenant, but all three become real once the "build as if the B2B API has external customers" principle meets actual multi-tenancy. Recorded so they're not silently shipped.
+
+1. **`message_translations` cache is poisonable within a tenant.** The RLS policies (`mt_insert_same_tenant`, `mt_update_same_tenant`) gate only on `tenant_id = auth_tenant_id()`. So any authenticated user can INSERT or *overwrite* any translation-cache row for their tenant, and the INSERT check never verifies the `message_id` actually belongs to that tenant. In one shared consumer tenant this is low-risk (derived data, semi-trusted users) — one user could corrupt another's cached translations with garbage, nothing worse. Across B2B customers sharing a project it's a cross-customer integrity hole. *Fix when:* multi-tenant, or cache integrity becomes a felt problem. *Sketch:* scope writes by a join to `messages` ownership, or restrict cache writes to a service role / server path rather than the client.
+
+2. **Realtime subscription doesn't enforce RLS or tenant scope.** App.jsx's `postgres_changes` channel appends every `INSERT` on `public.messages` with no tenant filter; only the initial fetch is tenant-scoped. Supabase Realtime doesn't apply RLS to `postgres_changes` unless realtime authorization (private channels) is configured. Fine for one shared tenant; a cross-tenant message-leak vector the moment a second tenant exists on the project. *Fix when:* before any real multi-tenant data shares a Supabase project. *Sketch:* enable Realtime RLS / private channels, or filter the subscription by `tenant_id` and stop trusting the client filter for isolation.
+
+3. **`display_name` charset not validated server-side.** policies.md §1 specifies display-name charset = alphanumeric + space + hyphen + apostrophe. `complete_onboarding()` validates only length (1–50 after trim), not charset, so arbitrary characters (emoji, control chars, RTL overrides) can land in `display_name`. Low severity, but the RPC is the right boundary to enforce it. *Fix when:* cheap to fold into the next touch of `complete_onboarding()` or the Step 4 username/identity work, which already has to enforce the stricter username charset.
+
+- **Surfaced:** 2026-06-10, Cowork review of Sonnet's Step 2 implementation.
+- **Trigger:** #1 and #2 at first real multi-tenant move (strategic Phase 2 / B2B API); #3 anytime we touch `complete_onboarding()` or build identity validation in Step 4.
+
 ### Robust testing, QA, and CI process — staged build-out
 Current testing posture is largely manual: smoke-test runbook in `/docs/verification.md`, run by a human after deploys. As the project scales (Hermes online, real users in Phase 2, multiple verticals in Phase 6), the manual approach won't hold. The forward state is a multi-layered testing / QA / CI pipeline with the 2026-05-18 staging smoke-test as its first iteration. Likely build-out order, each layer earning the next:
 
@@ -127,13 +139,16 @@ A scripted, repeatable test conversation that an agent (e.g. Hermes) can run end
 - **Depends on:** Staging environment (can't run destructive test scripts against prod). Prioritise staging first, then this.
 - **Trigger:** Before onboarding any autonomous build agent. Also useful for regression testing after prompt version bumps.
 
-### Move profile inference to server-side (current approach is client-side, race-prone)
-Profile inference (`applyInferences`) currently runs in each viewer's browser when they translate a message. This means: (a) multiple viewers watching the same conversation fire simultaneous writes to the same profile row with no coordination — race condition; (b) the dialect consistency guard relies on `message.source_language` being correct, which is good enough for Phase 1 but is a dependency on detect-call accuracy at send time; (c) inference logic lives in client code, harder to evolve, instrument, or audit.
+### Move profile inference to server-side (client-side path is now DEAD under Phase 2 RLS)
+Profile inference (`applyInferences`) ran in each viewer's browser when they translated a message. Original Phase 1 problems: (a) multiple viewers watching the same conversation fire simultaneous writes to the same profile row with no coordination — race condition; (b) the dialect consistency guard relies on `message.source_language` being correct, which is good enough for Phase 1 but is a dependency on detect-call accuracy at send time; (c) inference logic lives in client code, harder to evolve, instrument, or audit.
 
-The right architecture is a server-side function (Supabase edge function or a dedicated `/api/v1/infer-profile` endpoint) that receives the inference payload, applies the guards, and writes atomically. Client fires and forgets to that endpoint; profile updates are serialized.
+**Phase 2 escalated this from "race-prone" to "non-functional."** Migration 008 put RLS on `user_linguistic_profiles` and `user_profile_events` restricting writes to `user_id = auth.uid()`. But `applyInferences` only ever runs for *other* users' messages (your own skip translation), so every write is denied by RLS. As of the Step 2 review (2026-06-10) the call is gated off behind `CLIENT_SIDE_INFERENCE_ENABLED = false` in `App.jsx` to stop the doomed writes from logging a console error per translated message. **Net effect: no profile inference happens at all right now.** The dialect/formality/gender columns will never populate until this moves server-side.
 
-- **Why parked:** Phase 1 scope. Client-side inference is simpler to ship and the race condition is low-impact at current scale (two users).
-- **Trigger:** Multiple concurrent users or any evidence of race-condition corruption in `user_linguistic_profiles`. Definitely before Phase 2 API opens.
+The right architecture is a server-side function (Supabase edge function or a dedicated `/api/v1/infer-profile` endpoint) that receives the inference payload, applies the guards, and writes atomically — running with a service role so RLS doesn't block legitimate cross-user profile writes. Client fires and forgets to that endpoint; profile updates are serialized. Flipping `CLIENT_SIDE_INFERENCE_ENABLED` back on without that endpoint will NOT work — the writes are RLS-blocked regardless.
+
+- **Strategic weight:** the data flywheel is the stated point of Phase 1 (consumer app as data-generation vehicle). With inference off, the linguistic-profile half of the flywheel isn't turning. This is the strongest argument for promoting this item onto the roadmap rather than leaving it parked — it's not just tech debt, it's a paused core mechanic.
+- **Why parked (historically):** Phase 1 scope; client-side was simpler to ship and the race was low-impact at two users.
+- **Trigger:** Promote when we want the flywheel actually generating profile data — which, given the strategy, is plausibly *now* / early Phase 2 rather than "before the API opens." At minimum, make a deliberate call on timing rather than letting it drift. The phase2-implementation.md plan already lists "server-side profile inference" as a separable workstream that can run in parallel after Step 1.
 
 ### Dialect consistency guard uses stored `source_language`, not live re-detection
 The guard preventing cross-language dialect contamination (e.g. `es-AR` being written to an English speaker's profile) currently uses `message.source_language` as its reference — the BCP 47 code stored in the DB when the sender originally sent the message. This is correct and reliable for new messages, but has two edge cases: (a) legacy messages with `source_language = 'unknown'` will conservatively block all dialect inference (right behavior, but means some early test messages never build a profile); (b) the original detect call could theoretically have been wrong, making `source_language` the wrong anchor. These are acceptable for Phase 1; ideally the server-side inference move (above) would validate language consistency against the live translate response instead of relying on the stored code.

@@ -16,6 +16,38 @@
 
 ---
 
+## 2026-06-10 — Migration 008: coordinated breaking cutover for Step 2 identity promotion
+
+**Decision:** Deliver all text→uuid identity promotions, `user_profiles` drop, and RLS enablement on `messages` / `message_translations` / `user_linguistic_profiles` / `user_profile_events` in a single migration (008) that ships together with the App.jsx rewrite.
+
+**Context:** Phase 1 stored `sender_id` as a plain text username string and `user_id` in linguistic profile tables as text. Phase 2 needs real auth identities (uuid from `auth.users`). Multiple tables needed coordinated changes, and the old App.jsx couldn't coexist with the new schema (sender_id type mismatch would break inserts).
+
+**Alternatives considered:** (A) Spread the cutover across multiple migrations with a compatibility shim — adds complexity and a window where the schema is half-migrated. (B) Single migration + deploy both together on wiped staging — clean and safe since there's no production data to migrate. **Chosen.**
+
+**Reasoning:** Staging was wiped at Phase 2 start. With no rows to transform, the text→uuid promotion is a one-line ALTER. The risk of a partial cutover (old app + new schema) outweighs the simplicity of splitting. Shipping migration + app together is standard practice for breaking schema changes.
+
+**Implications:** Migration 008 and the new App.jsx must be deployed atomically. Running 008 without the new frontend (or vice versa) breaks the app. Document this in the deployment notes.
+
+**Revisit when:** If we ever need to do this cutover in prod with real data, we'd need a proper data migration that casts existing text sender_ids to uuids (requires a lookup table or backfill).
+
+---
+
+## 2026-06-10 — complete_onboarding() as SECURITY DEFINER RPC for P1→P3 transition
+
+**Decision:** Implement the P1→P3 status transition (pending → active) as a SECURITY DEFINER PostgreSQL function called via `supabase.rpc()`, rather than a direct UPDATE from the client.
+
+**Context:** Migration 007 [OPUS-FIX #2] added column-level GRANTs that restrict `authenticated` users to updating only `profiles.display_name` directly. `status`, `username`, `is_verified` are intentionally blocked to prevent privilege escalation. The onboarding flow must set `status='active'` and create the `user_linguistic_profiles` row — neither of which the client can do directly.
+
+**Alternatives considered:** (A) Relax the column grants temporarily during onboarding — defeats the security model. (B) Server-side API endpoint (`POST /api/v1/onboarding`) — adds a new API route and auth token forwarding complexity for a one-time operation. (C) SECURITY DEFINER RPC in Postgres — runs in the DB with elevated privileges, callable via `supabase.rpc()` without an extra HTTP hop. **Chosen.**
+
+**Reasoning:** Keeps the privilege escalation guard intact. The RPC is the canonical path for controlled status transitions — consistent with how username changes and verification will work (Steps 4+). Validation (display_name length, non-empty language) lives in the function body close to the write.
+
+**Implications:** Any future status transition (active → deactivated, username change) should also be a SECURITY DEFINER RPC, not a direct UPDATE. The `GRANT EXECUTE ... TO authenticated` is required for PostgREST to expose it via `supabase.rpc()`.
+
+**Revisit when:** Server-side inference migration (parking-lot.md) may consolidate some DB writes into API endpoints — revisit whether some RPCs should move there.
+
+---
+
 ## 2026-06-09 — Scaffold lib/policies.js as machine mirror of policies.md
 
 **Decision:** Create `lib/policies.js` at Phase 2 Step 0 as the single machine-readable source of truth for global policy defaults. All enforcement code reads from this module. Per-tenant overrides remain in `tenants.dm_initiation_policy` (jsonb).

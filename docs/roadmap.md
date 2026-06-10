@@ -5,7 +5,9 @@
 > **What lives here:** committed work in priority order.
 > **What does NOT live here:** ideas we haven't decided to build. Those go in `parking-lot.md`.
 
-**Last updated:** 2026-06-09 (Phase 2 identity/discovery/social-graph design — rewrote Phase 2 Authentication into magic-link auth + P1–P4 onboarding lifecycle; added Identity & discovery and Social graph primitives subsections; expanded RLS to all new tables + greenfield/cutover note; clarified Phase 3 invite reuses the Phase 2 invite primitive + context-dropdown relocation. See policies.md, architecture.md §7 Phase 2 tables, and decisions.md 2026-06-09 entries.)
+**Last updated:** 2026-06-10 (Phase 2 Step 2 — magic-link auth + onboarding app layer built. Migration 008 ships the coordinated breaking cutover: user_profiles dropped, user_linguistic_profiles/user_profile_events user_id promoted text→uuid, messages.sender_id text→uuid+FK, RLS enabled on messages+message_translations+ulp+upe, complete_onboarding() SECURITY DEFINER RPC. App.jsx rewritten with auth state machine: loading→email_input→onboarding→chat. Language selector removed; context/register dropdown kept. Gate: full signup→onboard→active flow on staging for two test users.)
+
+**Prior update:** 2026-06-09 (Phase 2 identity/discovery/social-graph design — rewrote Phase 2 Authentication into magic-link auth + P1–P4 onboarding lifecycle; added Identity & discovery and Social graph primitives subsections; expanded RLS to all new tables + greenfield/cutover note; clarified Phase 3 invite reuses the Phase 2 invite primitive + context-dropdown relocation. See policies.md, architecture.md §7 Phase 2 tables, and decisions.md 2026-06-09 entries.)
 
 **Prior update:** 2026-06-02 (Phase 1.5 infrastructure — Discord gateway live; Sonnet routing live; per-agent Opus tier override carved into Spec 2.1. Checkbox 4 done; checkbox 3 partial. Spec 3 — access credentials — approved and ready to execute. Added "Cowork ↔ Hermes interface follow-ups" subsection capturing the Cowork-sandbox git-pull auth gap surfaced during Spec 3 drafting. See specs.md Spec 2 (shipped 2026-06-02 narrowed) + Spec 2.1 (draft) + Spec 3 (approved) and decisions.md 2026-06-02 entries.)
 
@@ -132,20 +134,20 @@
 **Goal:** The app is shareable with real testers without privacy concerns. Up until this phase, no third party should have the URL.
 
 ### Authentication
-- [ ] Supabase Auth via **magic links (email OTP)** as primary. Architecture supports a future password toggle (same JWT/session downstream; password path purely additive, switchable via config/UI without a refactor)
-- [ ] Onboarding lifecycle per policies.md §6: P1 email submitted → magic link + `auth.users` row + DB trigger creates pending `profiles` row (uuid, random `system_generated` username, email identifier); P2 link clicked → onboarding screen; P3 submit display name + language → `status='active'`; P4 first message (engagement, not a status)
-- [ ] Display name + language collected post-click on one onboarding screen ("the name other people see"). Remove the in-chat **language** selector. Keep the **context/register** dropdown for now (see Phase 3 note)
-- [ ] Scheduled job: re-prompt pending accounts; delete abandoned ones after 30 days, release their system-generated username, record an email **hash** in the abuse-monitoring table
+- [~] Supabase Auth via **magic links (email OTP)** as primary. Architecture supports a future password toggle (same JWT/session downstream; password path purely additive, switchable via config/UI without a refactor) *(Step 2 built; gate not yet run)*
+- [~] Onboarding lifecycle per policies.md §6: P1 email submitted → magic link + `auth.users` row + DB trigger creates pending `profiles` row (uuid, random `system_generated` username, email identifier); P2 link clicked → onboarding screen; P3 submit display name + language → `status='active'`; P4 first message (engagement, not a status) *(Step 1 trigger + Step 2 app layer built; gate not yet run)*
+- [~] Display name + language collected post-click on one onboarding screen ("the name other people see"). In-chat **language** selector removed. **Context/register** dropdown kept. *(built in Step 2; gate not yet run)*
+- [ ] Scheduled job: re-prompt pending accounts; delete abandoned ones after 30 days, release their system-generated username, record an email **hash** in the abuse-monitoring table *(Step 6)*
 - [ ] Token-based authentication on every backend API call, including the chat app's own calls
 - [ ] Refresh / rotation behavior verified
-- [ ] No data migration needed — staging is wiped at Phase 2 start (existing data is throwaway)
+- [x] No data migration needed — staging is wiped at Phase 2 start (existing data is throwaway)
 
 ### Identity & discovery (per architecture.md §7 "Phase 2" tables; decisions.md 2026-06-09)
-- [ ] `profiles` table, `id = auth.users.id` (Model A — one tenant per user); migrate `user_id`/`sender_id` text → uuid
-- [ ] `account_identifiers` (normalized handles, non-reusable usernames via never-deleted rows + reserved seeds)
-- [ ] `account_settings` (per-user discoverability + `allow_dms_from`)
-- [ ] Username policy mechanism: within-tenant uniqueness, `username_source`, `username_last_changed_at`; values in `lib/policies.js` + policies.md §1
-- [ ] Discovery: exact-match add by email/username only (no email search), autocomplete on username, **handle minimization** enforced in the query/API
+- [~] `profiles` table, `id = auth.users.id` (Model A — one tenant per user); migrate `user_id`/`sender_id` text → uuid *(profiles done Step 1; text→uuid cutover in migration 008 Step 2 — gate not yet run)*
+- [x] `account_identifiers` (normalized handles, non-reusable usernames via never-deleted rows + reserved seeds) *(migration 007, Step 1 — verified)*
+- [x] `account_settings` (per-user discoverability + `allow_dms_from`) *(migration 007, Step 1 — verified)*
+- [ ] Username policy mechanism: within-tenant uniqueness, `username_source`, `username_last_changed_at`; values in `lib/policies.js` + policies.md §1 *(Step 4)*
+- [ ] Discovery: exact-match add by email/username only (no email search), autocomplete on username, **handle minimization** enforced in the query/API *(Step 4)*
 
 ### Social graph primitives (schema + safety; DM *policy values* and DM *UI* are Phase 3)
 - [ ] `relationships` (contacts, with `via_identifier_type` provenance), `blocks` (with `unblocked_at` + partial unique index), `reports` (auto-creates a block)
@@ -154,10 +156,10 @@
 - [ ] `email_hash` abuse-monitoring table for abandoned-signup spam detection
 
 ### Row-level security
-- [ ] RLS policies on every table that exists by this point: `messages`, `message_translations`, `user_linguistic_profiles`, `conversation_contexts`, `user_profile_events`, and all Phase 2 identity/discovery/social tables (`profiles`, `account_identifiers`, `account_settings`, `relationships`, `blocks`, `reports`, `invites`, `invite_redemptions`, abuse-monitoring email-hash table)
-- [ ] Tenant-scoped policies on top of user-scoped policies (use `auth.uid()`; tenant scope via `tenant_id`)
-- [ ] **No RLS exists in Supabase today** — this is greenfield. Every policy must live in a migration from day one (per parking-lot.md "Other config state lives outside /migrations/"). The identity migration + RLS enablement is a coordinated breaking cutover on wiped staging, not an additive change (see architecture.md §10)
-- [ ] Test that one user cannot read another user's data via dev tools or direct API queries
+- [~] RLS policies on every table that exists by this point: `messages`, `message_translations`, `user_linguistic_profiles`, `conversation_contexts`, `user_profile_events`, and all Phase 2 identity/discovery/social tables (`profiles`, `account_identifiers`, `account_settings`, `relationships`, `blocks`, `reports`, `invites`, `invite_redemptions`, abuse-monitoring email-hash table) *(migration 007 + 008 cover profiles/account_identifiers/account_settings/messages/message_translations/ulp/upe; conversation_contexts + social tables come with Steps 4–5)*
+- [~] Tenant-scoped policies on top of user-scoped policies (use `auth.uid()`; tenant scope via `tenant_id`) *(all Step 1 + Step 2 policies follow this pattern)*
+- [x] **No RLS exists in Supabase today** — this is greenfield. Every policy must live in a migration from day one. Confirmed: migrations 007 and 008 ship RLS with the tables.
+- [ ] Test that one user cannot read another user's data via dev tools or direct API queries *(Step 3 adversarial gate)*
 
 ### Data deletion
 - [ ] `data_deletion_requests` table

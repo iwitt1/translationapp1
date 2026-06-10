@@ -40,6 +40,16 @@ const CONTEXT_TYPES = [
 // Confidence threshold: only apply inferences above this level to the sender profile.
 const INFERENCE_CONFIDENCE_THRESHOLD = 0.6;
 
+// Phase 2: client-side profile inference is DISABLED.
+// RLS on user_linguistic_profiles / user_profile_events restricts writes to the
+// authenticated user's own row (user_id = auth.uid()). But applyInferences only ever
+// runs for OTHER users' messages — your own messages skip translation entirely — so
+// every write is denied by RLS and was logging a console error + a wasted round-trip
+// on every translated message. Inference moves server-side; see parking-lot.md
+// "Move profile inference to server-side". Flip this to true ONLY when that endpoint
+// exists and writes are routed through it (not direct from the client).
+const CLIENT_SIDE_INFERENCE_ENABLED = false;
+
 /*
 ========================================================
 🔤 LANGUAGE CODE NORMALIZER
@@ -71,6 +81,14 @@ Applies inferences returned by the translate API to the sender's
 user_linguistic_profiles row. Runs client-side because profile updates
 are a chat-layer concern (translation layer knows nothing about chat).
 
+NOTE (Phase 2): gated off behind CLIENT_SIDE_INFERENCE_ENABLED (see flag above).
+With RLS in place, writes to user_linguistic_profiles and user_profile_events are
+restricted to own-row, but applyInferences only ever runs for OTHER users' messages
+(own messages skip translation), so every write would be denied by RLS. Rather than
+fire doomed writes that log a console error per message, the flag short-circuits the
+whole path until inference moves server-side (parking-lot.md). The logic below is
+preserved so the move is a routing change, not a rewrite.
+
 Rules (per architecture.md §6):
   - Never overwrite explicit values (dialect_source/formality_source/gender_source = 'explicit').
   - For dialect: only update if new confidence > stored confidence.
@@ -78,6 +96,7 @@ Rules (per architecture.md §6):
   - Logs each change to user_profile_events (append-only).
 */
 async function applyInferences(senderId, inferences, currentProfile, detectedLanguage) {
+  if (!CLIENT_SIDE_INFERENCE_ENABLED) return;  // disabled in Phase 2 — see flag note above
   if (!inferences) return;
 
   const updates = {};
@@ -89,14 +108,8 @@ async function applyInferences(senderId, inferences, currentProfile, detectedLan
   // the message's detected source language. Prevents e.g. 'es-AR' being written
   // to an English speaker's profile because their message was translated on a
   // viewer's screen that had a stale/wrong targetLanguage set.
-  // 'es-AR'.split('-')[0] === 'es'; that must match 'en'.split('-')[0] === 'en'
-  // before we proceed — if they don't match, skip the dialect block entirely.
   const dialectLangPrefix = inferences.detected_dialect?.split('-')[0];
   const detectedLangPrefix = detectedLanguage?.split('-')[0];
-  // Require BOTH prefixes to be present and match.
-  // If detectedLanguage is missing/null, err on the side of blocking — we can't
-  // verify consistency so we must not write. The previous OR-based logic had the
-  // opposite null-safety: !detectedLangPrefix === true allowed null to bypass.
   const dialectConsistent =
     !!detectedLangPrefix && dialectLangPrefix === detectedLangPrefix;
 
@@ -161,6 +174,8 @@ async function applyInferences(senderId, inferences, currentProfile, detectedLan
   updates.updated_at = new Date().toISOString();
 
   // Upsert profile (fire and forget — don't block message rendering)
+  // NOTE: With RLS, this only succeeds when senderId === auth.uid().
+  // For other users' messages it fails silently (expected — see note above).
   supabase
     .from('user_linguistic_profiles')
     .upsert(
@@ -194,18 +209,18 @@ async function applyInferences(senderId, inferences, currentProfile, detectedLan
 💬 MESSAGE BUBBLE
 ========================================================
 Props:
-  message      — the message row from Supabase
-  userProfile  — logged-in user's user_profiles row (for targetLanguage)
-  userId       — logged-in user's ID
-  contextType  — 'casual'|'dating'|'professional'|'academic'
-  history      — last N messages before this one (for context injection)
+  message          — the message row from Supabase (sender_id is now uuid)
+  linguisticProfile — logged-in user's user_linguistic_profiles row (for targetLanguage)
+  userId           — logged-in user's auth.uid() (uuid)
+  contextType      — 'casual'|'dating'|'professional'|'academic'
+  history          — last N messages before this one (for context injection)
 */
-function MessageBubble({ message, userProfile, userId, contextType, history }) {
+function MessageBubble({ message, linguisticProfile, userId, contextType, history }) {
   const [translatedText, setTranslatedText] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
-  const targetLanguage = userProfile?.default_language || 'en';
+  const targetLanguage = linguisticProfile?.preferred_language || 'en';
   const isSender = message.sender_id === userId;
 
   useEffect(() => {
@@ -219,8 +234,8 @@ function MessageBubble({ message, userProfile, userId, contextType, history }) {
         const sourceLang = message.source_language;
 
         // ── 1. No translation needed ──────────────────────────────────────
-        // Skip if: (a) source matches target (normalised — 'English'==='en'),
-        // (b) no source detected, or (c) this is the viewer's own message.
+        // Skip if: (a) source matches target (normalised), (b) no source
+        // detected, or (c) this is the viewer's own message.
         const normSource = normalizeLang(sourceLang);
         const normTarget = normalizeLang(targetLanguage);
         if (!sourceLang || normSource === normTarget || isSender) {
@@ -309,12 +324,9 @@ function MessageBubble({ message, userProfile, userId, contextType, history }) {
           });
 
         // ── 6. Apply inferences to sender's profile (fire and forget) ─────
-        // Pass the message's own source_language (already stored in DB, set by
-        // the dedicated detect call when the sender typed it) as the reference
-        // language for the dialect consistency guard. This is more reliable than
-        // result.detected_language, which can come back null or wrong from the
-        // translate API and was causing the guard to be bypassed.
-        if (result?.inferences) {
+        // Disabled in Phase 2 — RLS blocks cross-user writes. See
+        // CLIENT_SIDE_INFERENCE_ENABLED note near the top of the file.
+        if (CLIENT_SIDE_INFERENCE_ENABLED && result?.inferences) {
           applyInferences(message.sender_id, result.inferences, senderProfile, normalizeLang(sourceLang));
         }
       } catch (err) {
@@ -363,65 +375,190 @@ function MessageBubble({ message, userProfile, userId, contextType, history }) {
 ========================================================
 🚀 MAIN APP
 ========================================================
+Auth state machine (authView):
+  'loading'     — initial; waiting for getSession() to resolve
+  'email_input' — not authenticated; show magic-link email form. The
+                  "check your email" confirmation is the same view gated on
+                  the authSent boolean (not a separate authView state).
+  'onboarding'  — authenticated + status='pending'; show onboarding form
+  'chat'        — authenticated + status='active'; show chat UI
+
+State notes:
+  - session      — Supabase Auth session (null = not signed in)
+  - profile      — profiles row for the current user
+  - linguisticProfile — user_linguistic_profiles row (has preferred_language)
+  - userId       — session.user.id alias for readability (uuid string)
 */
 export default function App() {
-  const [username, setUsername] = useState(
-    localStorage.getItem('chat_username') || ''
-  );
-  const [userProfile, setUserProfile] = useState(() => {
-    const stored = localStorage.getItem('chat_user_profile');
-    return stored ? JSON.parse(stored) : null;
-  });
-  const [tempName, setTempName] = useState('');
-  const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState('');
-  const [contextType, setContextType] = useState('casual');
+  const [authView, setAuthView]           = useState('loading');
+  const [session, setSession]             = useState(null);
+  const [profile, setProfile]             = useState(null);
+  const [linguisticProfile, setLinguistic] = useState(null);
+
+  // Email input screen
+  const [authEmail, setAuthEmail]         = useState('');
+  const [authSent, setAuthSent]           = useState(false);
+  const [authError, setAuthError]         = useState('');
+
+  // Onboarding form
+  const [onboardingName, setOnboardingName] = useState('');
+  const [onboardingLang, setOnboardingLang] = useState('en');
+  const [onboardingError, setOnboardingError] = useState('');
+  const [onboardingLoading, setOnboardingLoading] = useState(false);
+
+  // Chat state
+  const [messages, setMessages]           = useState([]);
+  const [input, setInput]                 = useState('');
+  const [contextType, setContextType]     = useState('casual');
 
   /*
   ========================================================
-  LOGIN
+  AUTH STATE LISTENER
   ========================================================
   */
-  async function handleJoin() {
-    if (!tempName.trim()) return;
+  useEffect(() => {
+    // Resolve initial session (handles page-load with existing session or
+    // magic-link redirect — Supabase sets the session from the URL hash before
+    // this fires, so SIGNED_IN fires via onAuthStateChange when the hash is consumed)
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        setSession(session);
+        loadProfile(session.user.id);
+      } else {
+        setAuthView('email_input');
+      }
+    });
 
-    const user_id = tempName.trim();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        if (session) {
+          setSession(session);
+          loadProfile(session.user.id);
+        } else {
+          // SIGNED_OUT
+          setSession(null);
+          setProfile(null);
+          setLinguistic(null);
+          setAuthView('email_input');
+        }
+      }
+    );
 
-    // Get or create user_profiles row
-    let { data } = await supabase
-      .from('user_profiles')
+    return () => subscription.unsubscribe();
+  }, []);
+
+  /*
+  ========================================================
+  LOAD PROFILE
+  ========================================================
+  Fetches the profiles row and (if active) the linguistic profile.
+  Routes to the appropriate auth view based on status.
+  */
+  async function loadProfile(userId) {
+    const { data: p, error } = await supabase
+      .from('profiles')
       .select('*')
-      .eq('user_id', user_id)
+      .eq('id', userId)
       .maybeSingle();
 
-    if (!data) {
-      const { data: inserted } = await supabase
-        .from('user_profiles')
-        .insert([{
-          user_id,
-          display_name: user_id,
-          default_language: 'en',
-          tenant_id: CHAT_APP_TENANT_ID,
-        }])
-        .select()
-        .single();
-      data = inserted;
+    if (error) {
+      console.error('loadProfile error:', error);
+      setAuthView('email_input');
+      return;
     }
 
-    // Ensure a linguistic profile row exists for this user.
-    // On conflict (returning user) this is a no-op thanks to ignoreDuplicates.
-    await supabase
-      .from('user_linguistic_profiles')
-      .upsert(
-        { user_id, tenant_id: CHAT_APP_TENANT_ID },
-        { onConflict: 'user_id,tenant_id', ignoreDuplicates: true }
-      );
+    setProfile(p);
 
-    localStorage.setItem('chat_username', user_id);
-    localStorage.setItem('chat_user_profile', JSON.stringify(data));
+    if (!p || p.status === 'pending') {
+      setAuthView('onboarding');
+      return;
+    }
 
-    setUsername(user_id);
-    setUserProfile(data);
+    if (p.status === 'active') {
+      const { data: lp } = await supabase
+        .from('user_linguistic_profiles')
+        .select('*')
+        .eq('user_id', userId)
+        .maybeSingle();
+      setLinguistic(lp);
+      setAuthView('chat');
+    }
+  }
+
+  /*
+  ========================================================
+  MAGIC LINK
+  ========================================================
+  */
+  async function handleMagicLink(e) {
+    e.preventDefault();
+    setAuthError('');
+    if (!authEmail.trim()) return;
+
+    const { error } = await supabase.auth.signInWithOtp({
+      email: authEmail.trim(),
+      options: {
+        // Redirect back to wherever the app is hosted (works for localhost,
+        // Vercel Preview, and production without hardcoding URLs).
+        emailRedirectTo: window.location.origin,
+        shouldCreateUser: true,
+      },
+    });
+
+    if (error) {
+      setAuthError(error.message);
+    } else {
+      setAuthSent(true);
+    }
+  }
+
+  /*
+  ========================================================
+  ONBOARDING SUBMIT
+  ========================================================
+  Calls the complete_onboarding() SECURITY DEFINER RPC which:
+    - sets profiles.status = 'active', profiles.display_name, profiles.onboarding_completed_at
+    - creates the user_linguistic_profiles row with preferred_language
+  Then re-loads the profile to transition to the chat view.
+  */
+  async function handleOnboarding(e) {
+    e.preventDefault();
+    setOnboardingError('');
+
+    if (!onboardingName.trim()) {
+      setOnboardingError('Display name is required.');
+      return;
+    }
+    if (onboardingName.trim().length > 50) {
+      setOnboardingError('Display name must be 50 characters or fewer.');
+      return;
+    }
+
+    setOnboardingLoading(true);
+    const { error } = await supabase.rpc('complete_onboarding', {
+      p_display_name:       onboardingName.trim(),
+      p_preferred_language: onboardingLang,
+    });
+    setOnboardingLoading(false);
+
+    if (error) {
+      console.error('complete_onboarding error:', error);
+      setOnboardingError(error.message || 'Something went wrong. Please try again.');
+      return;
+    }
+
+    // Re-load profile — this transitions authView to 'chat'
+    await loadProfile(session.user.id);
+  }
+
+  /*
+  ========================================================
+  SIGN OUT
+  ========================================================
+  */
+  async function handleSignOut() {
+    await supabase.auth.signOut();
+    // onAuthStateChange fires → clears state → routes to 'email_input'
   }
 
   /*
@@ -430,11 +567,12 @@ export default function App() {
   ========================================================
   */
   useEffect(() => {
-    if (!username) return;
+    if (authView !== 'chat') return;
 
     supabase
       .from('messages')
       .select('*')
+      .eq('tenant_id', CHAT_APP_TENANT_ID)
       .order('created_at', { ascending: true })
       .then(({ data }) => setMessages(data || []));
 
@@ -448,23 +586,7 @@ export default function App() {
       .subscribe();
 
     return () => supabase.removeChannel(channel);
-  }, [username]);
-
-  /*
-  ========================================================
-  CHANGE PREFERRED LANGUAGE
-  ========================================================
-  */
-  async function handleLanguageChange(e) {
-    const newLang = e.target.value;
-    await supabase
-      .from('user_profiles')
-      .update({ default_language: newLang })
-      .eq('user_id', username);
-    const updated = { ...userProfile, default_language: newLang };
-    setUserProfile(updated);
-    localStorage.setItem('chat_user_profile', JSON.stringify(updated));
-  }
+  }, [authView]);
 
   /*
   ========================================================
@@ -472,7 +594,7 @@ export default function App() {
   ========================================================
   */
   async function sendMessage() {
-    if (!input.trim()) return;
+    if (!input.trim() || !session) return;
 
     try {
       const res = await fetch(API_URL, {
@@ -483,22 +605,19 @@ export default function App() {
 
       const detection = res.ok ? await res.json() : null;
 
-      // If detect confidence is low (Spanglish, mixed-language, ambiguous),
-      // fall back to the sender's own preferred language rather than guessing.
-      // Threshold 0.85: below this the detection is too uncertain to act on.
       const DETECT_CONFIDENCE_THRESHOLD = 0.85;
       const detectedLang = normalizeLang(detection?.detected_language);
-      const detectedConf = detection?.confidence ?? 1.0; // legacy: if no confidence field, trust it
+      const detectedConf = detection?.confidence ?? 1.0;
       const sourceLang =
         detectedLang && detectedConf >= DETECT_CONFIDENCE_THRESHOLD
           ? detectedLang
-          : (userProfile?.default_language || 'unknown');
+          : (linguisticProfile?.preferred_language || 'unknown');
 
       await supabase.from('messages').insert([{
-        sender_id: username,
-        original_text: input,
+        sender_id:       session.user.id,  // uuid (auth.uid() on the server)
+        original_text:   input,
         source_language: sourceLang,
-        tenant_id: CHAT_APP_TENANT_ID,
+        tenant_id:       CHAT_APP_TENANT_ID,
       }]);
 
       setInput('');
@@ -507,28 +626,114 @@ export default function App() {
     }
   }
 
+  // ── userId alias ─────────────────────────────────────────────────────────
+  const userId = session?.user?.id ?? null;
+
   /*
   ========================================================
-  LOGIN UI
+  LOADING SCREEN
   ========================================================
   */
-  if (!username) {
+  if (authView === 'loading') {
+    return (
+      <main className="min-h-screen flex items-center justify-center text-gray-400 text-sm">
+        Loading…
+      </main>
+    );
+  }
+
+  /*
+  ========================================================
+  EMAIL INPUT (MAGIC LINK) SCREEN
+  ========================================================
+  */
+  if (authView === 'email_input') {
     return (
       <main className="min-h-screen flex items-center justify-center">
-        <div className="p-6 border rounded space-y-3">
-          <input
-            className="block w-full border px-2 py-1"
-            placeholder="Username"
-            value={tempName}
-            onChange={(e) => setTempName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
-          />
-          <button
-            className="w-full bg-blue-500 text-white px-4 py-1 rounded"
-            onClick={handleJoin}
-          >
-            Join
-          </button>
+        <div className="p-6 border rounded space-y-3 w-80">
+          <h1 className="font-semibold text-lg">Sign in</h1>
+          {authSent ? (
+            <p className="text-sm text-gray-600">
+              Check your email for a sign-in link. You can close this tab.
+            </p>
+          ) : (
+            <form onSubmit={handleMagicLink} className="space-y-3">
+              <input
+                className="block w-full border px-2 py-1 rounded text-sm"
+                type="email"
+                placeholder="you@example.com"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                autoFocus
+              />
+              {authError && (
+                <p className="text-xs text-red-500">{authError}</p>
+              )}
+              <button
+                type="submit"
+                className="w-full bg-blue-500 text-white px-4 py-1.5 rounded text-sm"
+              >
+                Send sign-in link
+              </button>
+            </form>
+          )}
+        </div>
+      </main>
+    );
+  }
+
+  /*
+  ========================================================
+  ONBOARDING SCREEN
+  ========================================================
+  Shown when authenticated but status = 'pending'.
+  Collects display name + preferred language.
+  */
+  if (authView === 'onboarding') {
+    return (
+      <main className="min-h-screen flex items-center justify-center">
+        <div className="p-6 border rounded space-y-4 w-80">
+          <h1 className="font-semibold text-lg">Set up your profile</h1>
+          <form onSubmit={handleOnboarding} className="space-y-3">
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">
+                Display name
+              </label>
+              <input
+                className="block w-full border px-2 py-1 rounded text-sm"
+                type="text"
+                placeholder="How others will see you"
+                value={onboardingName}
+                onChange={(e) => setOnboardingName(e.target.value)}
+                maxLength={50}
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">
+                Your language
+              </label>
+              <select
+                className="block w-full border px-2 py-1 rounded text-sm"
+                value={onboardingLang}
+                onChange={(e) => setOnboardingLang(e.target.value)}
+              >
+                {LANGUAGES.map((l) => (
+                  <option key={l.code} value={l.code}>{l.label}</option>
+                ))}
+              </select>
+            </div>
+            {onboardingError && (
+              <p className="text-xs text-red-500">{onboardingError}</p>
+            )}
+            <button
+              type="submit"
+              disabled={onboardingLoading}
+              className="w-full bg-blue-500 text-white px-4 py-1.5 rounded text-sm disabled:opacity-50"
+            >
+              {onboardingLoading ? 'Saving…' : 'Continue'}
+            </button>
+          </form>
         </div>
       </main>
     );
@@ -548,19 +753,12 @@ export default function App() {
 
       <div className="w-full max-w-md h-[80vh] flex flex-col border">
 
-        {/* Header: username + language picker + context type picker */}
+        {/* Header: display name + context type picker + sign out */}
         <div className="p-3 border-b flex items-center justify-between gap-2">
-          <span className="font-medium text-sm">{username}</span>
-          <div className="flex gap-2">
-            <select
-              className="text-xs border rounded px-1 py-0.5"
-              value={userProfile?.default_language || 'en'}
-              onChange={handleLanguageChange}
-            >
-              {LANGUAGES.map((l) => (
-                <option key={l.code} value={l.code}>{l.label}</option>
-              ))}
-            </select>
+          <span className="font-medium text-sm truncate">
+            {profile?.display_name || '…'}
+          </span>
+          <div className="flex gap-2 items-center">
             <select
               className="text-xs border rounded px-1 py-0.5"
               value={contextType}
@@ -570,6 +768,13 @@ export default function App() {
                 <option key={c.value} value={c.value}>{c.label}</option>
               ))}
             </select>
+            <button
+              className="text-xs text-gray-400 hover:text-gray-700"
+              onClick={handleSignOut}
+              title="Sign out"
+            >
+              Sign out
+            </button>
           </div>
         </div>
 
@@ -579,8 +784,8 @@ export default function App() {
             <MessageBubble
               key={msg.id}
               message={msg}
-              userProfile={userProfile}
-              userId={username}
+              linguisticProfile={linguisticProfile}
+              userId={userId}
               contextType={contextType}
               history={messages.slice(Math.max(0, index - 3), index)}
             />

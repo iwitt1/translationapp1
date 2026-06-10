@@ -10,7 +10,7 @@
 >
 > **When to revise a section:** when a failure mode is observed in the wild and the existing checklist would have missed it. Drift between this doc and reality is the failure mode this doc is designed against, same as the architecture doc.
 
-**Last updated:** 2026-06-10 (Phase 2 Step 1 schema checks 1–6 + 8 and the trigger smoke test confirmed on staging; check A#7 — RLS policies exist — still to run. Prior update 2026-06-09: Phase 2 Step 1 + Step 0 sections added)
+**Last updated:** 2026-06-10 (Phase 2 Step 2 section added: migration 008 schema checks + end-to-end signup→onboard→active flow verification. Prior: Step 1 schema checks 1–6 + 8 confirmed on staging; A#7 — RLS policies exist — still to run.)
 
 ---
 
@@ -561,6 +561,138 @@ WHERE account_id = '<profile_id>';
 
 ---
 
+## Phase 2 — Step 2: Auth + Onboarding (migration 008 + App.jsx rewrite)
+
+**What this step does:** Migration 008 is the coordinated breaking cutover — drops `user_profiles`,
+promotes `user_id` from text→uuid in `user_linguistic_profiles` and `user_profile_events`, alters
+`messages.sender_id` from text→uuid, enables RLS on `messages`, `message_translations`, `ulp`, and
+`upe`, and creates the `complete_onboarding()` SECURITY DEFINER RPC. App.jsx is rewritten with a
+magic-link auth flow and onboarding screen.
+
+**Gate (must pass before Step 3 starts):**
+- [ ] Migration 008 replays clean on staging
+- [ ] All schema checks below pass
+- [ ] Full signup → onboard → active flow verified for two test users
+
+---
+
+### A. Schema verification (run in staging SQL editor after 008)
+
+```sql
+-- 1. user_profiles is gone
+SELECT tablename FROM pg_tables
+WHERE schemaname = 'public' AND tablename = 'user_profiles';
+-- Expect: 0 rows
+
+-- 2. user_linguistic_profiles.user_id is now uuid
+SELECT column_name, data_type FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'user_linguistic_profiles'
+  AND column_name = 'user_id';
+-- Expect: data_type = 'uuid'
+
+-- 3. user_profile_events.user_id is now uuid
+SELECT column_name, data_type FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'user_profile_events'
+  AND column_name = 'user_id';
+-- Expect: data_type = 'uuid'
+
+-- 4. messages.sender_id is now uuid
+SELECT column_name, data_type FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'messages'
+  AND column_name = 'sender_id';
+-- Expect: data_type = 'uuid'
+
+-- 4b. FK constraint exists on messages.sender_id
+SELECT constraint_name FROM information_schema.table_constraints
+WHERE table_schema = 'public' AND table_name = 'messages'
+  AND constraint_type = 'FOREIGN KEY';
+-- Expect: messages_sender_id_fk present
+
+-- 5. RLS enabled on messages and message_translations
+SELECT relname, relrowsecurity FROM pg_class
+WHERE relnamespace = 'public'::regnamespace
+  AND relname IN ('messages', 'message_translations',
+                  'user_linguistic_profiles', 'user_profile_events')
+  AND relkind = 'r'
+ORDER BY relname;
+-- Expect: relrowsecurity = true for all four
+
+-- 6. RLS policies exist on messages and message_translations
+SELECT tablename, policyname, cmd FROM pg_policies
+WHERE schemaname = 'public'
+  AND tablename IN ('messages', 'message_translations',
+                    'user_linguistic_profiles', 'user_profile_events')
+ORDER BY tablename, policyname;
+-- Expect policies:
+--   messages                | messages_insert_own          | INSERT
+--   messages                | messages_select_same_tenant  | SELECT
+--   message_translations    | mt_insert_same_tenant        | INSERT
+--   message_translations    | mt_select_same_tenant        | SELECT
+--   message_translations    | mt_update_same_tenant        | UPDATE
+--   user_linguistic_profiles | ulp_select_same_tenant      | SELECT
+--   user_linguistic_profiles | ulp_update_own              | UPDATE
+--   user_profile_events     | upe_insert_own               | INSERT
+--   user_profile_events     | upe_select_own               | SELECT
+
+-- 7. complete_onboarding() function exists
+SELECT routine_name, security_type FROM information_schema.routines
+WHERE routine_schema = 'public' AND routine_name = 'complete_onboarding';
+-- Expect: 1 row, security_type = 'DEFINER'
+
+-- 7b. authenticated role has EXECUTE on complete_onboarding
+SELECT grantee, privilege_type FROM information_schema.routine_privileges
+WHERE routine_schema = 'public' AND routine_name = 'complete_onboarding'
+  AND grantee = 'authenticated';
+-- Expect: 1 row, privilege_type = 'EXECUTE'
+```
+
+---
+
+### B. End-to-end signup → onboard → active flow
+
+Run this manually via a real browser pointing at the Vercel Preview (staging).
+
+1. Open the preview URL in a fresh browser (or private/incognito window).
+2. **Sign-in screen:** enter a test email address you control. Click "Send sign-in link."
+   - Verify: screen transitions to "Check your email" message.
+3. Check your email inbox. Click the magic link.
+   - Verify: browser redirects back to the preview URL.
+   - Verify in staging SQL editor: profile row exists with `status = 'pending'`, no display_name yet.
+4. **Onboarding screen:** enter a display name (e.g. "Test User A") and select a language. Click "Continue."
+   - Verify: spinner shows briefly; screen transitions to the chat view.
+   - Verify in staging SQL editor:
+     ```sql
+     SELECT id, display_name, status, onboarding_completed_at FROM public.profiles
+     WHERE status = 'active';
+     -- Expect: 1 active row, display_name = 'Test User A', onboarding_completed_at not null
+
+     SELECT user_id, preferred_language FROM public.user_linguistic_profiles;
+     -- Expect: 1 row, preferred_language matches what you selected
+     ```
+5. **Chat view:** send a test message. Verify it appears in the messages table with `sender_id = <uuid>` (not a text string).
+   ```sql
+   SELECT sender_id, original_text, source_language FROM public.messages;
+   -- Expect: sender_id is a uuid (not a text username string)
+   ```
+6. Repeat steps 1–4 with a second test email. Verify two active profiles exist.
+7. **Sign out:** click "Sign out" in the chat header. Verify screen returns to the sign-in form.
+
+---
+
+### C. Failure modes
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Magic link redirects to wrong URL | Supabase "Site URL" or "Redirect URLs" misconfigured | Dashboard → Auth → URL Configuration: add the Preview URL to allowed list |
+| Onboarding screen shows but "Continue" errors | `complete_onboarding()` RPC not found or not granted | Confirm schema check 7 + 7b pass; re-run migration 008 section 7 |
+| `permission denied` on `complete_onboarding` | GRANT EXECUTE missing | Run: `GRANT EXECUTE ON FUNCTION public.complete_onboarding(text, text) TO authenticated;` |
+| Chat loads but no messages visible | RLS on messages blocking SELECT | Check policy `messages_select_same_tenant` exists (schema check 6); confirm auth_tenant_id() returns non-null |
+| Message send fails (PostgREST 403) | RLS INSERT policy failing | WITH CHECK requires `sender_id = auth.uid()` AND `tenant_id = auth_tenant_id()`. Confirm both are set correctly in App.jsx sendMessage() |
+| Profile not flipping to 'active' after onboarding | complete_onboarding raised exception | Check browser console for the Supabase error; likely a validation failure (empty name, name > 50 chars) |
+| Page shows blank / loading forever | getSession() or loadProfile() error | Check browser console; likely a Supabase URL/key mismatch in Vercel Preview env vars |
+
+---
+
 ## Phase 2 — Step 3: RLS Adversarial Gate (placeholder — fill in at build)
 
 **What this step does:** With identity + auth in place, verifies that RLS actually holds under
@@ -576,7 +708,7 @@ Queries to run as user A (use Supabase JS client with user A's session token):
 - `SELECT * FROM profiles` → expect: only user A's own row (one row)
 - `SELECT * FROM account_identifiers` → expect: only user A's own rows (email + username)
 - `SELECT * FROM account_settings` → expect: only user A's own row
-- `SELECT * FROM messages` → (once RLS is on messages in Step 3) expect: scoped to tenant
+- `SELECT * FROM messages` → expect: scoped to tenant (RLS added in Step 2 migration 008)
 
 ### Test category B — Self-write COLUMN escalation (added from Opus review of migration 007)
 User A authenticates and attempts to PATCH columns on their OWN profile that should be
