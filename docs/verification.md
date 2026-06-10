@@ -390,6 +390,40 @@ Rotate all three PATs in one sitting (Vercel expires 2026-08-31 — earliest; Gi
 
 ---
 
+## Event log wiring — Spec 4b (2026-06-10)
+
+**What shipped:** `translation_events` write wired into `api/v1/translate.js` (Vercel/prod path) and `server/index.js` (local Express path) via `server/lib/events.js`. `agent_events` wired via Python hook at `~/.hermes/hooks/agent-event-logger/`. Key fix: switched from `pg.Pool` to `pg.Client` (connect → query → end) and added `await` on the Vercel path — Vercel freezes the process at `res.json()`, so fire-and-forget writes never complete.
+
+**Commits:** `8cfa0a2` (initial wiring), `a4131b2` (Pool→Client fix), `2dd38df` (await fix)
+
+### Verification (staging, confirmed 2026-06-10)
+
+1. Open the staging Preview URL
+2. Send a message in any non-English language
+3. Run: `SELECT id, target_language, model_used, event_source, latency_ms, created_at FROM translation_events ORDER BY created_at DESC LIMIT 1;`
+4. Expect: row with `event_source = 'chat_app'`, populated `latency_ms`, `input_tokens`, `output_tokens`
+
+### Known gaps
+
+| Gap | Severity | Fix when |
+|---|---|---|
+| `hermes_writer_user` role on staging has a JS-client permission quirk — staging Vercel Preview uses `postgres` superuser URL as workaround | Low (staging only) | Investigate Supabase role trust config; or accept superuser on staging |
+| `agent_events` staging end-to-end not yet verified via Vercel (only VPS hook smoke-tested) | Low | Next agent task after gateway restart |
+| `was_cached` hardcoded `false` — no cache check exists yet | Known | Wire when `message_translations` cache is added |
+| Vercel Production env var `DATABASE_URL_PROD_WRITER` must use port 6543 (transaction pooler) at prod deploy time | **Flag** | Before running `vercel --prod` |
+
+### Failure modes
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `info` log on translate, no row in DB | `await` missing on event write (fire-and-forget killed by serverless) | Add `await` before `logTranslationEvent()` in the handler |
+| `[events] INSERT failed: Connection terminated due to connection timeout` | `pg.Pool` used instead of `pg.Client` — pool never initialises in short-lived function | Switch to `Client` (connect → query → end) pattern |
+| `[events] INSERT failed: password authentication failed` | Special chars in password not URL-encoded in connection string | URL-encode password with `urllib.parse.quote(password, safe='')` |
+| `[events] INSERT failed: permission denied` via JS but psql works | Supabase role trust quirk — restricted role may need direct `GRANT` to user, not just via role membership | `GRANT INSERT ON table TO user_name` directly; or use superuser for staging |
+| No `[events]` log line at all | `DATABASE_URL_PROD_WRITER` not set in Vercel env | Add env var + redeploy |
+
+---
+
 ## How to use this doc
 
 - Before shipping a feature, draft its verification section first. Easier than scrambling after.

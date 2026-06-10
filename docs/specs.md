@@ -12,7 +12,7 @@
 
 **Linked roadmap item:** Phase 1.5 → Infrastructure (checkbox 6 — `translation_events` and `agent_events` tables created and wired)
 **Author:** Isaac (drafted with Cowork, 2026-06-02)
-**Status:** **draft** (blocked by Spec 4a migrations being run against staging and prod)
+**Status:** **shipped 2026-06-10** (commits 8cfa0a2, a4131b2, 2dd38df on `main`). `translation_events` wired in `api/v1/translate.js` and `server/index.js`; `agent_events` wired via VPS hook. Verified on staging: `chat_app` rows appear after every translate call. Known gaps: `hermes_writer_user` role on staging has a Supabase JS-client permission quirk (staging uses `postgres` superuser credential for now); `agent_events` staging INSERT not yet verified end-to-end. See verification.md.
 **Estimated time:** ~60-75 min
 **Executor:** Hermes
 

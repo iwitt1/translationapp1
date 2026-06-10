@@ -99,7 +99,7 @@
 
 ### Event log schema (per hermes.md §7)
 - [x] Create `translation_events` and `agent_events` tables. *Spec 4a shipped 2026-06-02 — migrations 005 and 006 run on staging and prod; `hermes_writer` role provisioned; schemas finalized in hermes.md §7.2 and §7.3.*
-- [ ] Wire the live application's translate call sites to write `translation_events` on every call, and Hermes task lifecycle to write `agent_events`. *Spec 4b — Hermes-executed; approved; blocked until Spec 4a migrations confirmed on prod (done).*
+- [x] Wire the live application's translate call sites to write `translation_events` on every call, and Hermes task lifecycle to write `agent_events`. *Spec 4b shipped 2026-06-10 — commits 8cfa0a2, a4131b2, 2dd38df. Verified on staging: `chat_app` rows appear in `translation_events` after every translate call. See verification.md.*
 
 ### Promote items pulled from parking lot
 - [ ] Promote "Autonomous test harness for agent-driven builds" from `/docs/parking-lot.md` → this phase. Required before Hermes operates beyond supervised mode.

@@ -2,7 +2,38 @@
 
 > **Read this first at every Cowork session start** (after `git pull --ff-only`).
 > Format per `hermes.md` §17: reverse chronological, weekly sections.
-> Maintained by Hermes. Last written: 2026-06-03.
+> Maintained by Hermes. Last written: 2026-06-10.
+
+---
+
+## Week of 2026-06-09
+
+### Completed this week
+
+- **Spec 4b shipped** — commits `8cfa0a2`, `a4131b2`, `2dd38df` on `main`
+  Event log wiring complete and verified on staging. `translation_events` writes appear in the DB with `event_source = 'chat_app'` after every translate call. Two key bugs found and fixed during verification: (1) `pg.Pool` causes connection-timeout failures in Vercel serverless — switched to `pg.Client`; (2) fire-and-forget writes are killed when Vercel freezes the process at `res.json()` — added `await`. Full details in `verification.md` "Event log wiring — Spec 4b".
+
+### Open escalations
+
+- **Vercel Production env var must use port 6543 before prod deploy.** `DATABASE_URL_PROD_WRITER` in Vercel's Production environment needs to be set to port 6543 (transaction pooler). The `.env` copy on the VPS uses 5432 (fine for the VPS). This must be done before running `vercel --prod`. See verification.md Known gaps table.
+
+- **`hermes_writer_user` staging JS-client quirk unresolved.** The restricted role works via `psql` but fails via the `pg` JS client with "permission denied" even though `has_table_privilege` returns true. Staging Vercel Preview currently uses the `postgres` superuser URL as a workaround. Low urgency — staging is not user-facing. Options: investigate Supabase role trust config, or accept superuser credential on staging only.
+
+- **`agent_events` end-to-end via Vercel not yet verified.** The VPS hook was smoke-tested via direct INSERT in a previous session. The full Vercel → DB path for `agent_events` hasn't been walked through. Will self-verify on the next Hermes task that completes normally.
+
+- **Cowork ↔ Hermes git-pull auth gap still open.** Same as previous week.
+
+### Costs spent
+
+- Spec 4b verification session: higher than normal due to multiple redeploy cycles diagnosing the Vercel serverless + pg.Pool/await issues. No budget breach; within Sonnet-tier bounds.
+
+### Skills created / changed
+
+- `translation-app-dev` skill updated with new pitfalls: Pool→Client pattern for serverless, await requirement for Vercel, URL-encoding for passwords, port 5432 vs 6543 distinction.
+
+### For strategic attention
+
+- **Spec 4b is the last Phase 1.5 infrastructure spec.** With 4a + 4b shipped, the event log is live. Phase 1.5 checklist items still open: Cowork git-pull auth gap, Spec 2.1 (Opus tier override), parking-lot promotions, open questions in hermes.md §13. Worth a Cowork session to triage which of these block Phase 2.
 
 ---
 
