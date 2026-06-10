@@ -102,7 +102,7 @@
 - [x] Wire the live application's translate call sites to write `translation_events` on every call, and Hermes task lifecycle to write `agent_events`. *Spec 4b shipped 2026-06-10 — commits 8cfa0a2, a4131b2, 2dd38df. Verified on staging: `chat_app` rows appear in `translation_events` after every translate call. See verification.md.*
 
 ### Promote items pulled from parking lot
-- [ ] Promote "Autonomous test harness for agent-driven builds" from `/docs/parking-lot.md` → this phase. Required before Hermes operates beyond supervised mode.
+- [x] Promote "Autonomous test harness for agent-driven builds" from `/docs/parking-lot.md` → this phase. Required before Hermes operates beyond supervised mode. *Promoted 2026-06-09 → Spec 5 (approved, pending Hermes execution).*
 - [ ] Audit Supabase config that lives outside `/migrations/` (per `/docs/parking-lot.md` "Other config state lives outside /migrations/"). Capture findings as new migrations before Phase 2 RLS work begins.
 
 ### Open questions to resolve (from hermes.md §13)

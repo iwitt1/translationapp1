@@ -228,11 +228,73 @@ Full record lives in `/docs/verification.md` "Hermes access credentials — Spec
 
 ---
 
+## Spec 5 — Autonomous test harness
+
+**Linked roadmap item:** Phase 1.5 → "Promote items pulled from parking lot" (Autonomous test harness for agent-driven builds)
+**Author:** Isaac (drafted with Cowork, 2026-06-09)
+**Status:** approved
+**Estimated time:** ~60–90 min
+**Executor:** Hermes
+
+### Goal
+
+Build a scripted, repeatable integration test that Hermes can run end-to-end without human involvement before any staging deploy. End state: `node scripts/test-harness.js` runs from the VPS, drives the staging translate API through a fixed set of test cases, asserts expected DB state, and exits 0 (pass) or non-zero (fail) with descriptive output. This is the prerequisite for Hermes operating beyond supervised mode — without it, there is no automated check that a change didn't break translation quality, profile inference, or the event log.
+
+### Acceptance criteria
+
+**Script setup**
+- Script at `scripts/test-harness.js`, runnable via `node scripts/test-harness.js` from `/home/hermes/work/translation-app/`.
+- Reads all credentials from env vars already present in `~/.hermes/.env` (staging Supabase URL + anon key + staging translate endpoint). No new env vars added; no credentials hardcoded.
+- Outputs a per-assertion result line: `[PASS] translation_events row written` / `[FAIL] was_cached=false expected, got true`.
+- Exits 0 if all assertions pass, non-zero on any failure. Compatible with being called from a shell one-liner.
+- All test data written during the run (messages, translations, profile rows, event rows) is cleaned up in a `finally` block — runs regardless of pass or fail.
+
+**Translation path assertions**
+- Sends a fixed Spanish message (`"Che, vamos al cine esta noche?"`) through the staging translate endpoint with `target_language: "en"` and a minimal test user context (preferred_language + tenant_id).
+- Asserts response structure: `translated_text` (non-empty), `detected_language: "es"`, `inferences` object present with at least `detected_dialect`, `detected_register`, `gender_signal` fields.
+- Sends the identical message a second time. Asserts `was_cached: true` on the second response.
+- DB check: `translation_events` has one row per call; `was_cached` matches expected; `latency_ms`, `character_count`, and `model_used` are non-null.
+
+**No dialect contamination check**
+- Sends an English message (`"Hey, what are you up to tonight?"`) through the endpoint using the same test user (who now has a Spanish dialect in their inferred profile from the prior step).
+- Asserts that `user_linguistic_profiles.dialect_region` for the test user is NOT updated with a Spanish dialect code as a result of the English-source message.
+
+**Failure mode check**
+- Calls the translate endpoint with a malformed request (missing `target_language`). Asserts the response is a non-2xx error, not a hallucinated translation.
+
+**Hermes pre-deploy protocol**
+- `hermes.md` updated (per §4 #11 proposal + Isaac approval) to document that Hermes runs `node scripts/test-harness.js` and confirms a 0 exit before every staging deploy. If the harness exits non-zero, deploy is blocked and Isaac is notified per §8.4 failure format.
+- A new Hermes skill (`run_test_harness`) proposed per §6.8 (Hermes surfaces it in the task report; Isaac approves on first use).
+
+### Out of scope
+- UI / browser automation — this drives the API directly, not the frontend
+- CI gate (GitHub Actions) — Layer 1 of the testing pyramid; this spec builds Layer 3; CI gate is a later spec
+- Translation quality benchmark — needs a corrections corpus; separate spec when Phase 4 begins
+- Testing against prod — staging only; prod test traffic would pollute `translation_events` with `event_source='hermes_test'` rows
+
+### Open questions (resolve at execution)
+1. **Stable staging URL?** Is there a fixed staging Vercel URL, or does it rotate per branch? If no stable URL, the script should derive it from `vercel ls --token $VERCEL_TOKEN` at run time and pick the most recent non-main preview deploy.
+2. **Profile row cleanup safety.** The test writes inferred rows to `user_linguistic_profiles`. Deletion is safe (history remains in `user_profile_events`), but confirm the test user's `user_id` won't collide with any real staging data before deleting. Staging has only `staging_test_a` and `staging_test_b` seeded — use one of those or a clearly namespaced UUID.
+
+### Technical sketch (for Hermes)
+1. Read `api/v1/translate.js` and `server/lib/events.js` to understand the request shape, response shape, and what fields are written to `translation_events`.
+2. Read `src/lib/config.js` for the chat-app tenant UUID.
+3. Write `scripts/test-harness.js` using Node built-in `fetch` (Node 18+, no new npm dependency). Structure: `setup()` → test cases in sequence → `teardown()` in a `finally` block. Each test case is a named function that returns `{passed: bool, message: string}`.
+4. Use the Supabase REST API (same anon key as the frontend) for DB assertions — query `translation_events`, `message_translations`, `user_linguistic_profiles` directly via fetch.
+5. Feature branch `hermes/test-harness`, commit with descriptive message + why paragraph, open draft PR per §8.1.
+6. Run the harness from the VPS (`node scripts/test-harness.js`) and include the full output in the task report.
+7. Propose the `hermes.md` pre-deploy protocol update per §4 #11 — wait for Isaac's explicit approval before that doc change lands.
+
+### Verification plan
+After ship: Hermes runs the harness and pastes the full output in the Discord task report. Isaac spot-checks one assertion (e.g., queries `translation_events` in the Supabase staging dashboard and confirms a matching row). Spec marked shipped when all assertions green and cleanup confirmed.
+
+---
+
 ## Spec 2.1 — Hermes Agent — Opus tier override, Hermes-internal cost caps, browser tools activation
 
 **Linked roadmap item:** Phase 1.5 → Infrastructure (checkbox 3 follow-up — finish the *tiered* part of tiered model routing)
 **Author:** Isaac (drafted with Cowork, 2026-06-02; carved out of Spec 2 on ship day)
-**Status:** **draft** (not yet sequenced; will be scheduled after at least 24-72h of Hermes-on-Discord observation gives us actual usage signal)
+**Status:** **approved** (usage signal confirmed — Spec 4b executed end-to-end on Discord 2026-06-10; ready to schedule)
 **Estimated time:** ~45-60 min
 
 ### Goal

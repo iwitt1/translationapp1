@@ -90,6 +90,8 @@ The smoke test we built 2026-05-18 is the manual seed of layer 1. Each layer bui
 - **Related items:** "Autonomous test harness for agent-driven builds" (next item below), "Internal translation quality benchmark" (in "Translation quality and intelligence" section).
 
 ### Autonomous test harness for agent-driven builds
+*[Promoted to roadmap 2026-06-09 → Spec 5 (approved).]*
+
 A scripted, repeatable test conversation that an agent (e.g. Hermes) can run end-to-end without human involvement: create two test users, exchange a fixed set of messages across a known language pair, then assert specific outcomes — translation quality within acceptable range, correct profile inference (right dialect for the Spanish speaker, no dialect bleed onto the English speaker), no duplicate messages, event log clean. Currently testing requires a human to manually run the conversation and eyeball the Supabase tables.
 - **Why interesting:** Required infrastructure before an autonomous agent can safely build and deploy. Without it, the agent has no way to verify a change didn't break translation quality or inference logic.
 - **Implementation sketch:** A Node.js script (or Supabase edge function) that drives the chat API directly, inserts messages as named test users, then queries the DB and asserts against expected values. Could also drive the UI via browser automation for a fuller end-to-end check.
