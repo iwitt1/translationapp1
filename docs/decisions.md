@@ -16,6 +16,29 @@
 
 ---
 
+## 2026-06-11 — Step 7 data deletion / GDPR Right to Erasure
+
+**Decision:** A **two-phase, 30-day grace** erasure. A user-facing `request_account_deletion(interval default '30 days')` RPC soft-deletes the account (`profiles.status='deactivated'`) and enqueues a row in a net-new `data_deletion_requests` table (status `pending`); `cancel_account_deletion()` reverses it within the window. A **second daily Vercel cron** (`/api/v1/jobs/deletion`, 09:00 UTC — an hour after abandonment so the two destructive jobs don't overlap) runs a Node sweep (`server/lib/deletion.js`) that picks up requests past `grace_until`, claims each (pending→processing), records an **abuse-monitoring HMAC** of the canonical email, then **hard-deletes** the `auth.users` row via the admin API. Content is **de-identified, not deleted**: the 007/008 FK topology CASCADE-deletes PII (profiles/identifiers/settings/ULP/events) while `messages.sender_id` is **ON DELETE SET NULL**, so message content survives with its author link severed. Migration 013. Triggered by an **on-demand RPC + cron processor** pattern.
+
+**Context:** Step 7 of the Phase 2 spec — GDPR Article 17 Right to Erasure. We need a user-initiated path that reclaims PII on a defined timeline, survives accidental requests (grace window), leaves an audit trail, and — because Phase 2 treats the translation engine as a B2B product — generalizes to a future tenant/admin-initiated erasure.
+
+**Sub-decisions surfaced and approved before building:**
+- *Extra lifecycle columns on `data_deletion_requests`* (`status`, `requested_by`, `grace_until`, `completed_at`, `deleted_fields jsonb`, partial unique index for one-open-request-per-user) — over a minimal table — so the row is a real audit/operational record, not just a flag. Approved.
+- *`data_deletion_requests.user_id` FK = ON DELETE SET NULL* (not CASCADE) — **load-bearing**: the audit row must survive the very deletion it records. CASCADE would erase the proof the erasure happened. Approved.
+- *Reuse `email_hash_abuse` + `record_abandoned_email_hash` (shared pepper / key_version) for the voluntary-erasure HMAC* — no schema change, but it conflates two sources (abandonment vs. voluntary erasure) in one table. The **source-column split is parked** (parking-lot.md). Approved.
+
+**Alternatives considered:**
+- *Immediate hard-delete, no grace* — rejected: no protection against accidental or coerced deletion, and no cancellation path. 30-day grace is the GDPR-conventional balance.
+- *Delete content rows too (not de-identify)* — rejected: per spec, message content is retained de-identified (sender severed) so conversations for the *other* party and the translation corpus aren't destroyed. The FK SET NULL on `messages.sender_id` already gives us this for free.
+- *Trigger via a pure cron scan of `profiles.status` (no request table)* — rejected: loses the audit trail, the grace timer, the cancellation path, and the future admin/tenant-initiated entry point. The on-demand RPC + cron-processor split is the industry-standard, most future-facing pattern (Isaac's stated preference).
+- *Don't record an HMAC on voluntary erasure* — rejected by Isaac: even voluntary deleters should feed the same weak abuse signal (delete-then-resignup correlation), so the pepper + key_version are shared with abandonment on purpose.
+
+**Implications:** Adds a second daily destructive cron (`CRON_SECRET`-guarded, fail-closed). Shares the abandonment pepper — rotating one rotates both; the source-split parking-lot item must be resolved before the abuse signal can distinguish abandonment from erasure. `translation_corrections` isn't built yet, so "anonymize corrections" is a logged no-op (`corrected_anonymized:0`) until it exists. Prod replay of 013 rides the Phase 2 cutover (after the Step 7 gate is green).
+
+**Revisit when:** `translation_corrections` ships (wire real anonymization into the snapshot); the source-split is resolved (separate abandonment vs. erasure HMAC sources); or an admin/tenant-initiated erasure path is built (extend `requested_by`).
+
+---
+
 ## 2026-06-10 — Step 6 abandonment + abuse monitoring (sweep design)
 
 **Decision:** A scheduled **Vercel cron** (`/api/v1/jobs/abandonment`, daily 08:00 UTC) runs a Node sweep that finds `profiles` rows still `status='pending'` and older than 30 days, **hard-deletes** the underlying `auth.users` row via the Supabase admin API (cascade removes profile/identifiers/settings), and — *before* deleting — records a versioned **HMAC-SHA256 hash of the canonical email** in `email_hash_abuse` (incrementing `abandon_count` on repeat). Two `SECURITY DEFINER` SQL helpers, granted to `service_role` only, back the sweep: `list_abandoned_pending_accounts(interval)` (encapsulates the "abandoned" definition) and `record_abandoned_email_hash(uuid, text, smallint)` (atomic insert-or-increment). Migration 012. Re-prompt emails (day 3 / day 14) are **parked** (see parking-lot.md).

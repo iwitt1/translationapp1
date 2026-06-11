@@ -13,7 +13,7 @@
 > **Audit cadence:** review at the start of each phase, and at minimum quarterly. Each review
 > updates "Last reviewed" and logs material changes in `decisions.md`.
 
-**Last reviewed:** 2026-06-10 (§6 Abandonment resolved at Step 6 build — hash-over-plaintext confirmed; HMAC pepper in env not Postgres, `key_version=1`; username release is automatic via FK cascade, no release function; re-prompt emails parked to a future CRM. Prior: 2026-06-09 initial draft — Phase 2 identity/discovery/lifecycle design.)
+**Last reviewed:** 2026-06-11 (§6 added "Data deletion / Right to Erasure (GDPR Art. 17)" subsection at Step 7 build — two-phase 30-day grace; content de-identified via `messages.sender_id` ON DELETE SET NULL not deleted; audit row survives via `data_deletion_requests.user_id` ON DELETE SET NULL; abuse HMAC recorded on voluntary erasure too, source split parked. Written, gate pending on staging. See decisions.md 2026-06-11. Prior 2026-06-10: §6 Abandonment resolved at Step 6 build — hash-over-plaintext confirmed; HMAC pepper in env not Postgres, `key_version=1`; username release is automatic via FK cascade, no release function; re-prompt emails parked to a future CRM. Prior: 2026-06-09 initial draft — Phase 2 identity/discovery/lifecycle design.)
 
 ---
 
@@ -158,3 +158,25 @@ language are required to flip to `active`.
   built server-side (no sending domain yet; lifecycle email belongs in a CRM). Intended cadence
   when built: day-3 and day-14 nudge before the day-30 delete. See parking-lot.md
   "Pending-account re-prompt UX".
+
+### Data deletion / Right to Erasure (GDPR Art. 17)
+*Built in Step 7 (migration 013, `server/lib/deletion.js`, Vercel cron `/api/v1/jobs/deletion`, daily 09:00 UTC — an hour after abandonment so the two destructive jobs don't overlap). **Written, gate PENDING on staging.** See decisions.md 2026-06-11 "Step 7 data deletion".*
+- **Two-phase, 30-day grace.** A user calls `request_account_deletion()`, which soft-deletes
+  (`profiles.status='deactivated'`) and enqueues a row in `data_deletion_requests` (`status='pending'`,
+  `grace_until = now() + 30 days`). `cancel_account_deletion()` reverses it any time before the sweep
+  picks it up. This protects against accidental or coerced deletion.
+- **Hard delete after grace.** The daily sweep claims each request past `grace_until` (pending→processing),
+  records the abuse HMAC, then deletes the underlying `auth.users` row via the admin API and stamps the
+  request `completed`. The FK cascade (007/008) removes PII (`profiles` / `account_identifiers` /
+  `account_settings` / `user_linguistic_profiles` / `user_profile_events`).
+- **Content is de-identified, not deleted.** `messages.sender_id` is **ON DELETE SET NULL**, so message
+  content survives with the author link severed — the other party's conversation and the translation
+  corpus aren't destroyed. (`translation_corrections` isn't built yet, so its anonymization is a logged
+  no-op until it exists.)
+- **Audit trail survives its own erasure.** `data_deletion_requests.user_id` is **ON DELETE SET NULL**
+  (not CASCADE), so the completed request row remains as proof the erasure happened (with `user_id` nulled
+  and a `deleted_fields` jsonb snapshot of what was removed).
+- **Abuse HMAC on voluntary erasure too.** The same keyed HMAC-SHA256 used for abandonment is recorded in
+  `email_hash_abuse` (shared pepper + `key_version`) *before* the delete — a delete-then-resignup is the
+  same weak signal regardless of why the prior account went away. The source split (abandonment vs.
+  erasure) is **parked** (parking-lot.md "`email_hash_abuse` source split").

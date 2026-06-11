@@ -2,7 +2,7 @@
 
 > Living technical document. Describes what the system is, the principles it's built on, and what we're migrating toward. Updated in the same commit as any architectural change.
 
-**Last updated:** 2026-06-11 (Phase 2 **Step 6** gate ✅ **PASSED on staging — 19/19 GREEN**; §7 status flipped. The sweep code (`server/lib/abandonment.js`) is unchanged in shape — a dry-run counter bug was fixed (the `summary.deleted`/`summary.hashed` increments moved inside the `if (!dryRun)` guards; no live-sweep behavior change). Prod replay of 012 pending the Phase 2 cutover (after Step 7). Prior 2026-06-10: §7/§8/§11/§13 reconciled to Phase 2 **Step 6** — migration 012 (abandonment support functions `list_abandoned_pending_accounts()` + `record_abandoned_email_hash()`, service_role-only) **written, pending gate on staging**; the sweep itself is Node — `server/lib/abandonment.js` run by a Vercel cron (`api/v1/jobs/abandonment.js` + `vercel.json`). Username release is automatic via the auth.users→profiles→identifiers FK cascade — no release RPC (decisions.md 2026-06-10 "Step 6 abandonment"). Prior 2026-06-10: §7/§10/§13 reconciled to Phase 2 **Step 5** — migration 011 (social graph + safety primitives) **gate PASSED on staging, 40/40 GREEN** (Step 4 discovery gate re-passed 22/22 after the block-filter amend): `relationships` adopts the **canonical-pair** model — `account_lo`/`account_hi`/`initiator_id` rather than the originally-sketched `requester_id`/`addressee_id` (decisions.md 2026-06-10 "Contact-graph representation"); adds `blocks`/`reports`/`invites`/`invite_redemptions`/`email_hash_abuse`, nine SECURITY DEFINER RPCs, and amends the two Step 4 discovery RPCs to filter active blocks. Prior 2026-06-10: §2, §7, §10, §13 reconciled to the Phase 2 build: migrations 007 (identity foundation) + 008 (identity cutover) are LIVE ON STAGING — `profiles`/`account_identifiers`/`account_settings` exist, `user_profiles` dropped, `messages.sender_id` + `user_linguistic_profiles`/`user_profile_events` cut over to uuid, RLS enabled on the Phase 2 tables, and `auth_tenant_id()`/`handle_new_user()`/`complete_onboarding()` added. Server-side profile inference shipped + verified on staging. **Prod is untouched** — it still runs the pre-auth no-RLS app; the cutover is a coordinated wipe-staging-then-prod event (see §10). Prior 2026-05-18: §7 vestigial-column reconciliation.)
+**Last updated:** 2026-06-11 (Phase 2 **Step 7 (data deletion / GDPR erasure) WRITTEN — gate PENDING on staging**. Migration 013 adds the net-new `data_deletion_requests` table + RLS + 6 RPCs (`request_account_deletion`/`cancel_account_deletion` user-facing; `list_due_deletion_requests`/`claim_deletion_request`/`complete_deletion_request` service_role); the Node sweep is `server/lib/deletion.js` + `api/v1/jobs/deletion.js` (daily 09:00 UTC cron) + a second `vercel.json` cron. **Two-phase** erasure: `request` soft-deletes (`status='deactivated'`) + enqueues with a 30-day `grace_until`; `cancel` reverses within grace; the sweep hard-deletes due requests via the admin API and the 007/008 FK chain anonymizes (profile/identifiers/settings/ULP/events cascade; `messages.sender_id`→NULL retains content). Audit row survives the cascade (`user_id` FK = SET NULL). Records the keyed email HMAC reusing `email_hash_abuse` (no schema change). Schema extends §7's sketch with `grace_until`/`requested_by`/`cancelled` (decisions.md 2026-06-11). §7 status + table, §10 retention, §13 file map, DB-functions list all reconciled. Prod replay of 013 pending the Phase 2 cutover. Earlier 2026-06-11: Phase 2 **Step 6** gate ✅ **PASSED on staging — 19/19 GREEN**; §7 status flipped. The sweep code (`server/lib/abandonment.js`) is unchanged in shape — a dry-run counter bug was fixed (the `summary.deleted`/`summary.hashed` increments moved inside the `if (!dryRun)` guards; no live-sweep behavior change). Prod replay of 012 pending the Phase 2 cutover (after Step 7). Prior 2026-06-10: §7/§8/§11/§13 reconciled to Phase 2 **Step 6** — migration 012 (abandonment support functions `list_abandoned_pending_accounts()` + `record_abandoned_email_hash()`, service_role-only) **written, pending gate on staging**; the sweep itself is Node — `server/lib/abandonment.js` run by a Vercel cron (`api/v1/jobs/abandonment.js` + `vercel.json`). Username release is automatic via the auth.users→profiles→identifiers FK cascade — no release RPC (decisions.md 2026-06-10 "Step 6 abandonment"). Prior 2026-06-10: §7/§10/§13 reconciled to Phase 2 **Step 5** — migration 011 (social graph + safety primitives) **gate PASSED on staging, 40/40 GREEN** (Step 4 discovery gate re-passed 22/22 after the block-filter amend): `relationships` adopts the **canonical-pair** model — `account_lo`/`account_hi`/`initiator_id` rather than the originally-sketched `requester_id`/`addressee_id` (decisions.md 2026-06-10 "Contact-graph representation"); adds `blocks`/`reports`/`invites`/`invite_redemptions`/`email_hash_abuse`, nine SECURITY DEFINER RPCs, and amends the two Step 4 discovery RPCs to filter active blocks. Prior 2026-06-10: §2, §7, §10, §13 reconciled to the Phase 2 build: migrations 007 (identity foundation) + 008 (identity cutover) are LIVE ON STAGING — `profiles`/`account_identifiers`/`account_settings` exist, `user_profiles` dropped, `messages.sender_id` + `user_linguistic_profiles`/`user_profile_events` cut over to uuid, RLS enabled on the Phase 2 tables, and `auth_tenant_id()`/`handle_new_user()`/`complete_onboarding()` added. Server-side profile inference shipped + verified on staging. **Prod is untouched** — it still runs the pre-auth no-RLS app; the cutover is a coordinated wipe-staging-then-prod event (see §10). Prior 2026-05-18: §7 vestigial-column reconciliation.)
 **Repo:** https://github.com/iwitt1/translationapp1
 **Owner:** Isaac (iwitt1)
 
@@ -215,7 +215,8 @@ The `_source` fields in `user_linguistic_profiles` (e.g., `dialect_source: 'expl
 > | `find_account_by_email()`, `search_accounts_by_username()`, `change_username()` discovery RPCs + username-prefix index | 010 | **gate PASSED on staging (22/22); re-passed after 011's block-filter amend** (Phase 2 Step 4; additive, no table changes). The two discovery RPCs are **amended by 011** to filter active blocks. |
 > | `relationships` (canonical-pair), `blocks`, `reports`, `invites`, `invite_redemptions`, `email_hash_abuse` + 9 RPCs (`active_block_exists`, `request_contact`, `respond_to_contact`, `block_account`, `unblock_account`, `report_account`, `create_invite`, `redeem_invite`, `revoke_invite`) | 011 | **gate PASSED on staging (40/40)** (Phase 2 Step 5; additive tables + RLS + RPCs, no destructive change). `tenants.dm_initiation_policy` already exists (007). |
 > | `list_abandoned_pending_accounts()`, `record_abandoned_email_hash()` support functions for the abandonment sweep | 012 | **gate PASSED on staging 2026-06-11 (19/19 GREEN)** (Phase 2 Step 6; additive functions only, `service_role`-only EXECUTE, no table changes — `email_hash_abuse` shipped in 011). The sweep itself is Node (Vercel cron): `server/lib/abandonment.js` + `api/v1/jobs/abandonment.js`. |
-> | `conversation_contexts`, `translation_corrections`, `translation_reviews`, `data_deletion_requests` | — | **not built yet** |
+> | `data_deletion_requests` table + `request_account_deletion()`, `cancel_account_deletion()` (user RPCs), `list_due_deletion_requests()`, `claim_deletion_request()`, `complete_deletion_request()` (service_role) | 013 | **WRITTEN — gate PENDING on staging** (Phase 2 Step 7; net-new table + RLS + 6 RPCs, additive, no table recreate). Two-phase erasure (deactivate → grace → hard-delete). The sweep is Node (Vercel cron): `server/lib/deletion.js` + `api/v1/jobs/deletion.js`. Reuses `email_hash_abuse` (no schema change). |
+> | `conversation_contexts`, `translation_corrections`, `translation_reviews` | — | **not built yet** |
 >
 > Prod still runs the pre-007 schema (no `profiles`, `sender_id` still text, no RLS). The column
 > definitions in the subsections below are the design of record; where 007/008 diverged from the
@@ -362,17 +363,26 @@ Snapshots are critical. Context drifts; you need to know what was true at the mo
 Both human reviewers and AI auditors write into the same table — no schema changes when humans get involved.
 
 #### `data_deletion_requests`
+> **Built by migration 013 (Phase 2 Step 7) — gate pending on staging.** RLS: SELECT own
+> (`ddr_select_own`); all writes via SECURITY DEFINER RPCs. The three columns marked † extend
+> the original §7 sketch to support the two-phase grace flow + a future admin path
+> (decisions.md 2026-06-11).
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid | Primary key |
-| `user_id` | uuid | FK to users |
+| `user_id` | uuid | FK → `profiles(id)` **ON DELETE SET NULL** — the audit row *survives* the hard delete; the null is itself anonymization. (NOT cascade: that would delete the audit record of its own erasure.) |
 | `tenant_id` | uuid | FK to tenants |
-| `requested_at` | timestamp | |
-| `completed_at` | timestamp | nullable |
-| `status` | enum | `'pending' \| 'processing' \| 'completed'` |
-| `deleted_fields` | jsonb | Log of what was removed |
+| `requested_at` | timestamptz | |
+| `grace_until` † | timestamptz | Hard-delete eligible once `now() > grace_until` (default request + 30 days) |
+| `completed_at` | timestamptz | nullable; set when the sweep finishes |
+| `status` | text + CHECK | `'pending' \| 'processing' \| 'completed' \| 'cancelled'` † (`cancelled` = grace-window reversal) |
+| `requested_by` † | text + CHECK | `'user' \| 'admin'` (default `'user'`) |
+| `deleted_fields` | jsonb | Log of what was removed (table → count/flag) |
+| `updated_at` | timestamptz | |
 
-The deletion job **anonymizes** corrections (strips user_id and PII, keeps translation pairs) rather than hard-deleting. Anonymized translation pairs remain legally usable for training. Hard-deletion destroys training data that is irreplaceable.
+Two-phase erasure: `request_account_deletion()` soft-deletes (`profiles.status='deactivated'`) and enqueues a `pending` row; `cancel_account_deletion()` reverses within grace; the daily Node sweep (`server/lib/deletion.js`) hard-deletes due requests via the admin API. The FK chain (007/008) does the anonymization — profile/identifiers/settings/linguistic-profile/events cascade away, `messages.sender_id` → NULL retains content. The deletion job will also **anonymize** corrections (strip user_id and PII, keep translation pairs) rather than hard-deleting — but `translation_corrections` is **not built yet**, so the sweep currently logs `corrections_anonymized: 0` (wire the strip-PII pass when that table lands). Anonymized translation pairs remain legally usable for training; hard-deletion destroys training data that is irreplaceable.
+
+On a voluntary erasure the sweep records the same keyed email HMAC as Step 6, reusing `email_hash_abuse` + `record_abandoned_email_hash()` (no schema change); `abandon_count` therefore counts "times an account on this email hash vanished" (abandonment **or** deletion). Splitting the two via a `source` column is parked (parking-lot.md).
 
 #### `user_profile_events` (append-only event source)
 > **Live on staging** — first added by migration 005 (+ `task_id` in 006), recreated by 008 with a
@@ -613,6 +623,23 @@ all ON DELETE CASCADE, 007) drops the username + email rows — with the rows go
 uniqueness + historical-non-reuse no longer block the handle, so it is released automatically
 (decisions.md 2026-06-10 "Step 6 abandonment").
 
+#### Phase 2 Step 7 data-deletion functions (migration 013; gate pending on staging)
+
+Two **user-facing** RPCs (caller-scoped via `auth.uid()`, so a user can only ever erase
+themselves) plus three **service_role-only** sweep helpers (mirroring the Step 6 list/record
+split). The hard delete itself runs in Node (`server/lib/deletion.js`) because `admin.deleteUser`
+is a Supabase auth-schema op and the abuse-hash pepper must never enter Postgres.
+
+- **`request_account_deletion(p_grace interval DEFAULT '30 days')`** → `data_deletion_requests` row — `VOLATILE SECURITY DEFINER`, `EXECUTE` to `authenticated`. Soft-deletes the caller (`profiles.status='deactivated'`) and enqueues a `pending` request with `grace_until = now()+p_grace`. **Idempotent** — returns an existing open request without resetting the grace clock.
+- **`cancel_account_deletion()`** → boolean — reverses a `pending` request within grace: marks it `cancelled` and restores the profile to `active` (or `pending` if onboarding never completed). `false` if nothing is pending. Cannot cancel once the sweep has claimed it (`processing`).
+- **`list_due_deletion_requests()`** → setof `(request_id, account_id, tenant_id, canonical_email)` — `STABLE SECURITY DEFINER`, `service_role` only. Pending requests past `grace_until`, with the canonical email to hash. Backed by `data_deletion_requests_due_idx`.
+- **`claim_deletion_request(p_id)`** → boolean — atomic `pending`→`processing`; true if this call won the claim (guards double-processing across overlapping runs).
+- **`complete_deletion_request(p_id, p_deleted_fields jsonb)`** → void — stamps `completed` + `completed_at` + the `deleted_fields` audit log, by PK (the row's `user_id` is already NULL from the cascade).
+
+**The audit row outlives the user by design:** `data_deletion_requests.user_id` is FK → `profiles`
+**ON DELETE SET NULL** (not CASCADE), so the request row survives its own erasure as proof-of-deletion
+(decisions.md 2026-06-11 "Step 7 data deletion").
+
 ---
 
 ## 8. How a translation moves through the system
@@ -724,10 +751,21 @@ True E2EE and AI translation are architecturally in conflict. The defensible pos
 
 ### Data retention & deletion
 
-`data_deletion_requests` table tracks GDPR Right to Erasure requests. The deletion job:
-- Anonymizes user-attributable rows (strips user_id and PII).
-- Preserves translation pairs in corrections (no longer linked to a person; legally usable for training).
-- Never hard-deletes corrections — that destroys irreplaceable training data.
+`data_deletion_requests` (migration 013, Phase 2 Step 7 — gate pending on staging) tracks GDPR
+Right-to-Erasure requests. The flow is **two-phase**: a user calls `request_account_deletion()`
+→ profile soft-deletes to `deactivated` (reversible) and a `pending` request is enqueued with a
+30-day `grace_until`; `cancel_account_deletion()` reverses within grace; a daily Node sweep
+(`server/lib/deletion.js`, Vercel cron) hard-deletes due requests. The deletion job:
+- Hard-deletes the `auth.users` row via the admin API → the FK chain (007/008) anonymizes:
+  profile + identifiers + settings + linguistic profile + events **cascade away**;
+  `messages.sender_id` → **NULL** (content + future translation pairs retained, author link severed).
+- Will anonymize corrections (strip user_id + PII, keep pairs) — but `translation_corrections`
+  is **not built yet**, so the sweep logs `corrections_anonymized: 0` for now.
+- Never hard-deletes corrections/translation pairs — that destroys irreplaceable training data.
+- Records the same keyed email HMAC as Step 6 (reuses `email_hash_abuse`) so delete-then-resignup
+  abuse stays detectable without retaining PII.
+- Leaves an **audit trail**: the request row survives the cascade (`user_id` FK is SET NULL), ending
+  as `status='completed'` with `completed_at` + a `deleted_fields` log.
 
 ---
 
@@ -788,7 +826,8 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │       ├── translate.js      Vercel serverless: translate/detect (versioned routes)
 │       ├── infer-profile.js  Vercel serverless: server-side profile inference
 │       └── jobs/
-│           └── abandonment.js  Vercel cron entry (Step 6 sweep; CRON_SECRET-guarded)
+│           ├── abandonment.js  Vercel cron entry (Step 6 sweep; CRON_SECRET-guarded)
+│           └── deletion.js     Vercel cron entry (Step 7 deletion sweep; CRON_SECRET-guarded)
 ├── lib/                       Shared (server + serverless) translation/policy logic
 │   ├── translatePrompt.js    System prompt + PROMPT_VERSION (semver, stamped on cache)
 │   └── policies.js           Machine source of truth for global identity/safety defaults
@@ -797,21 +836,24 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │   ├── lib/
 │   │   ├── inferProfile.js   Inference→profile update logic (explicit-wins, confidence gate)
 │   │   ├── events.js         user_profile_events writer
-│   │   └── abandonment.js    Step 6 abandonment sweep (delete aged-pending, release username, HMAC)
+│   │   ├── abandonment.js    Step 6 abandonment sweep (delete aged-pending, release username, HMAC)
+│   │   └── deletion.js       Step 7 deletion sweep (claim→hash→admin-delete→complete; SET-NULL retain)
 │   └── .env                  Local OPENAI_API_KEY (not committed)
-├── migrations/               Run in Supabase SQL editor, manually for now (000–012)
+├── migrations/               Run in Supabase SQL editor, manually for now (000–013)
 │   ├── 000_base_schema.sql … 006_user_profile_events_task_id.sql
 │   ├── 007_phase2_identity_foundation.sql   profiles/identifiers/settings, auth_tenant_id(), trigger
 │   ├── 008_phase2_step2_identity_cutover.sql  text→uuid cutover, RLS, complete_onboarding()
 │   ├── 009_restore_nonbinary_gender_signal.sql  restores nonbinary CHECK dropped by 008
 │   ├── 010_phase2_step4_discovery.sql       Step 4 discovery + change_username RPCs, username-prefix index
 │   ├── 011_phase2_step5_social_graph.sql    Step 5 relationships/blocks/reports/invites/email_hash_abuse + 9 RPCs; amends 010 discovery RPCs to filter blocks
-│   └── 012_phase2_step6_abandonment.sql     Step 6 list_abandoned_pending_accounts() + record_abandoned_email_hash() (service_role-only)
+│   ├── 012_phase2_step6_abandonment.sql     Step 6 list_abandoned_pending_accounts() + record_abandoned_email_hash() (service_role-only)
+│   └── 013_phase2_step7_data_deletion.sql   Step 7 data_deletion_requests table + RLS + 6 RPCs (request/cancel user-facing; list_due/claim/complete service_role)
 ├── scripts/
 │   ├── rls-adversarial-test.mjs   Phase 2 Step 3 RLS gate (run on staging)
 │   ├── discovery-gate-test.mjs    Phase 2 Step 4 discovery gate (run on staging)
 │   ├── social-graph-gate-test.mjs Phase 2 Step 5 social-graph + safety gate (run on staging)
-│   └── abandonment-gate-test.mjs  Phase 2 Step 6 abandonment + abuse-monitoring gate (run on staging)
+│   ├── abandonment-gate-test.mjs  Phase 2 Step 6 abandonment + abuse-monitoring gate (run on staging)
+│   └── deletion-gate-test.mjs     Phase 2 Step 7 data-deletion gate (run on staging)
 ├── src/
 │   ├── App.jsx               Frontend UI (login, chat, message bubble) — single file currently
 │   ├── main.jsx              React entry point

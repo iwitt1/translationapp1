@@ -10,7 +10,7 @@
 >
 > **When to revise a section:** when a failure mode is observed in the wild and the existing checklist would have missed it. Drift between this doc and reality is the failure mode this doc is designed against, same as the architecture doc.
 
-**Last updated:** 2026-06-11 (Phase 2 Step 6 abandonment gate ✅ **PASSED on staging — 19/19 GREEN**; first run was 18/19 — fixed a dry-run counter bug in `server/lib/abandonment.js` (the `summary.deleted`/`summary.hashed` increments were moved inside the `if (!dryRun)` guards, so a dry run now honestly reports `deleted=0/hashed=0`) and made the gate summary wording unambiguous. No live-sweep behavior change. **Prod replay of 012 pending the Phase 2 cutover.** Prior 2026-06-10: Phase 2 Step 6 abandonment + abuse-monitoring section added — ⏳ **WRITTEN, gate PENDING on staging** (migration 012 + `server/lib/abandonment.js` + Vercel cron + `scripts/abandonment-gate-test.mjs`, statically validated, not yet applied/run). Section documents the 4 assertion phases (dry-run deletes nothing, live sweep deletes+releases+records keyed-HMAC, repeat-record increments, anon EXECUTE denied), the record-then-delete ordering, the cron env/`CRON_SECRET` guard, and run instructions. Step 6 is the last build step before the prod cutover (after Step 7). Earlier same day: Phase 2 Step 5 social-graph + safety gate ✅ **PASSED on staging — 40/40 GREEN** via `scripts/social-graph-gate-test.mjs` after migration 011; the Step 4 discovery gate **re-passed 22/22** confirming the block-filter amend didn't regress discovery. Section documents the 7 assertion phases, the canonical-pair / block-override / atomic-report+block / invite-auto-accept behaviors verified, the discovery-RPC block-filter re-gate, run instructions, and the known max_uses-exhaustion coverage gap. Prod replay of 011 pending the Phase 2 cutover. Earlier same day: Phase 2 Step 4 discovery + username-change gate ✅ **PASSED on staging — 22/22 GREEN** via `scripts/discovery-gate-test.mjs` after migration 010; prod replay pending the Phase 2 cutover. New section documents the 10 assertion categories + the 3 SECURITY DEFINER RPCs + run instructions. Earlier same day: Phase 2 Step 3 RLS adversarial gate ✅ **PASSED on staging — 21/21 GREEN**; Step 4 unblocked. Section documents the harness `scripts/rls-adversarial-test.mjs` + tenant-2/user-C fixture + 7 assertion categories + run instructions. Earlier same day: "Server-side profile inference" gate marked ✅ PASSED on staging; prod enablement still deferred. Prior: Phase 2 Step 2 section — migration 008 schema checks + end-to-end signup→onboard→active flow.)
+**Last updated:** 2026-06-11 (Phase 2 Step 7 data-deletion / Right-to-Erasure section added — ⏳ **WRITTEN, gate PENDING on staging** (migration 013 `data_deletion_requests` + 6 RPCs + `server/lib/deletion.js` + second Vercel cron `/api/v1/jobs/deletion` 09:00 UTC + `scripts/deletion-gate-test.mjs`, `node --check`-clean, not yet applied/run). Section documents the two-phase soft-delete→30-day-grace→hard-delete flow, the **load-bearing** assertions (planted message survives with `sender_id=NULL`; audit row survives its own erasure via `user_id` ON DELETE SET NULL), keyed-HMAC reuse with abandonment, idempotent request + RPC-only writes, run instructions, and failure modes. Step 7 is the last build step before the prod cutover. Same-day prior: Phase 2 Step 6 abandonment gate ✅ **PASSED on staging — 19/19 GREEN**; first run was 18/19 — fixed a dry-run counter bug in `server/lib/abandonment.js` (the `summary.deleted`/`summary.hashed` increments were moved inside the `if (!dryRun)` guards, so a dry run now honestly reports `deleted=0/hashed=0`) and made the gate summary wording unambiguous. No live-sweep behavior change. **Prod replay of 012 pending the Phase 2 cutover.** Prior 2026-06-10: Phase 2 Step 6 abandonment + abuse-monitoring section added — ⏳ **WRITTEN, gate PENDING on staging** (migration 012 + `server/lib/abandonment.js` + Vercel cron + `scripts/abandonment-gate-test.mjs`, statically validated, not yet applied/run). Section documents the 4 assertion phases (dry-run deletes nothing, live sweep deletes+releases+records keyed-HMAC, repeat-record increments, anon EXECUTE denied), the record-then-delete ordering, the cron env/`CRON_SECRET` guard, and run instructions. Step 6 is the last build step before the prod cutover (after Step 7). Earlier same day: Phase 2 Step 5 social-graph + safety gate ✅ **PASSED on staging — 40/40 GREEN** via `scripts/social-graph-gate-test.mjs` after migration 011; the Step 4 discovery gate **re-passed 22/22** confirming the block-filter amend didn't regress discovery. Section documents the 7 assertion phases, the canonical-pair / block-override / atomic-report+block / invite-auto-accept behaviors verified, the discovery-RPC block-filter re-gate, run instructions, and the known max_uses-exhaustion coverage gap. Prod replay of 011 pending the Phase 2 cutover. Earlier same day: Phase 2 Step 4 discovery + username-change gate ✅ **PASSED on staging — 22/22 GREEN** via `scripts/discovery-gate-test.mjs` after migration 010; prod replay pending the Phase 2 cutover. New section documents the 10 assertion categories + the 3 SECURITY DEFINER RPCs + run instructions. Earlier same day: Phase 2 Step 3 RLS adversarial gate ✅ **PASSED on staging — 21/21 GREEN**; Step 4 unblocked. Section documents the harness `scripts/rls-adversarial-test.mjs` + tenant-2/user-C fixture + 7 assertion categories + run instructions. Earlier same day: "Server-side profile inference" gate marked ✅ PASSED on staging; prod enablement still deferred. Prior: Phase 2 Step 2 section — migration 008 schema checks + end-to-end signup→onboard→active flow.)
 
 ---
 
@@ -1101,6 +1101,98 @@ this run. It imports the **same** `runAbandonmentSweep` the cron uses.
 | Abuse row missing after delete | Record-then-delete order inverted, or RPC errored silently | Confirm `record_abandoned_email_hash` is called **before** `deleteUser` and its result is checked |
 | `abandon_count` stuck at 1 on repeat | `ON CONFLICT … DO UPDATE` missing or wrong conflict target | Confirm the conflict target is `(tenant_id, email_hash, key_version)` and the `+ 1` update |
 | Cron returns 500 / runs unauthenticated | `CRON_SECRET` unset (fails closed) or header mismatch | Set `CRON_SECRET` in Vercel; confirm Vercel sends `Authorization: Bearer $CRON_SECRET` |
+
+---
+
+## Phase 2 — Step 7: Data deletion / Right to Erasure (migration 013) (2026-06-11)
+
+**Status: ⏳ WRITTEN — gate PENDING on staging.** Migration 013 + `server/lib/deletion.js` +
+`api/v1/jobs/deletion.js` + `scripts/deletion-gate-test.mjs` are written and `node --check`-clean;
+the gate has **not** yet been run on `translationapp1-staging`. Run it before checking the Step 7
+roadmap items. This is the **last build step before the Phase 2 prod cutover** — the cutover lands
+after this gate is green.
+
+**What this step does:** Gives users a GDPR Art. 17 right-to-erasure path: a two-phase soft-delete →
+30-day grace → daily cron hard-delete that de-identifies content rather than destroying it, and leaves
+a surviving audit trail. Pieces:
+- `migrations/013_phase2_step7_data_deletion.sql` — **additive**: one net-new table
+  `data_deletion_requests` (RLS SELECT-own to `authenticated`; all writes RPC-only) + six functions.
+  - User-facing (`SECURITY DEFINER`, granted `authenticated`): `request_account_deletion(interval
+    default '30 days')` — flips `profiles.status='deactivated'` and enqueues a `pending` request,
+    **idempotent** (returns the existing open request if one exists); `cancel_account_deletion()` —
+    restores `active`, marks the request `cancelled`, returns boolean.
+  - System (granted `service_role` only, for the Node sweep): `list_due_deletion_requests()` (STABLE;
+    returns request/account/tenant/canonical_email for `pending` rows past `grace_until`),
+    `claim_deletion_request(uuid)` (pending→processing via `GET DIAGNOSTICS ROW_COUNT`),
+    `complete_deletion_request(uuid, jsonb)` (stamps `completed` + `completed_at` + `deleted_fields`).
+  - `data_deletion_requests.user_id` FK → `profiles(id)` is **ON DELETE SET NULL** — load-bearing so
+    the audit row survives the very erasure it records. Partial unique index enforces one open request
+    per user; selection index on `(status, grace_until) WHERE status='pending'`.
+- `server/lib/deletion.js` — `runDeletionSweep(config)`; identity/secret **injected via config** so
+  the cron handler and gate share one code path. Per due request: `claim_deletion_request` →
+  snapshot pre-delete counts → `record_abandoned_email_hash` (**same** keyed HMAC + shared pepper as
+  abandonment, recorded **before** delete) → `auth.admin.deleteUser(account_id)` (FK cascade removes
+  PII; `messages.sender_id` ON DELETE SET NULL keeps content de-identified) → `complete_deletion_request`.
+  Returns `{scanned, deleted, hashed, skipped, errors, dryRun, keyVersion}`. Dry run only increments
+  `scanned`.
+- `api/v1/jobs/deletion.js` — thin Vercel cron handler; **fails closed if `CRON_SECRET` unset**;
+  requires `Authorization: Bearer $CRON_SECRET`; supports `?dryRun=1`.
+- `vercel.json` — second cron `{path:"/api/v1/jobs/deletion", schedule:"0 9 * * *"}` (daily 09:00 UTC,
+  an hour after abandonment so the two destructive jobs don't overlap).
+
+**How it's verified:** `scripts/deletion-gate-test.mjs` — adversarial harness in the Step 3/4/5/6
+style. Needs `ANON_KEY` (the request/cancel flow runs as a **real authenticated user**, not
+service-role). Service-role for fixtures + sweep only; `RLS_TEST_CONFIRM_STAGING=yes` interlock;
+namespaced fixtures; FK-safe teardown that also removes the `email_hash_abuse` rows it created.
+Imports the **same** `runDeletionSweep` the cron uses.
+
+### Why the assertion shapes matter (don't loosen these)
+- A `request_account_deletion` call must **soft-delete only** (`status='deactivated'`, a `pending`
+  request) — no row is destroyed until the sweep. And it must be **idempotent** (second call returns
+  the same open request, doesn't stack).
+- A direct client INSERT/UPDATE/DELETE on `data_deletion_requests` must be **denied** (writes are
+  RPC-only); a client may **SELECT its own** rows but not others'.
+- `cancel_account_deletion` must reverse a pending request **and** return `false` as a no-op when
+  there's nothing to cancel.
+- A NOT-due request (grace not elapsed) must **survive** the sweep.
+- After the live sweep: the account + its PII cascade are **gone**, but the planted **message
+  survives with `sender_id = NULL`** (the load-bearing de-identification), and the audit row
+  **survives** (`status='completed'`, `user_id` NULL, `deleted_fields.messages_anonymized >= 1`).
+- The abuse hash must be a **keyed HMAC**, not plaintext/plain-SHA-256.
+- A `cancelled` request and a NOT-due request must be **untouched** by the sweep.
+- Service-role-only RPCs must be **denied to anon**; `request_account_deletion` must **reject an
+  unauthenticated caller**.
+
+### How to run (Isaac, on staging)
+1. Apply `migrations/013_phase2_step7_data_deletion.sql` in the staging SQL editor (idempotent —
+   `CREATE TABLE/INDEX IF NOT EXISTS`, `CREATE OR REPLACE`, `DROP POLICY IF EXISTS`; safe to replay).
+2. Same `.env.rls-test` as the Step 6 gate (staging URL + **anon** + service_role; the
+   `ABANDONMENT_EMAIL_HASH_PEPPER` + `ABANDONMENT_EMAIL_HASH_KEY_VERSION=1` are reused —
+   Step 7 shares them on purpose). `RLS_TEST_CONFIRM_STAGING=yes` (mutates the DB; **never point it
+   at prod**).
+3. `node scripts/deletion-gate-test.mjs` from the `V1/` root.
+4. Exit 0 + all PASS = gate GREEN. Then check the Step 7 roadmap items and proceed to the Phase 2
+   prod cutover.
+
+### Before prod
+- [ ] Replay migration 013 against prod **as part of the Phase 2 prod cutover** (after the gate is
+  green; depends on 007–012).
+- [ ] Confirm the **second** cron is registered (Vercel project → Cron Jobs shows `/api/v1/jobs/deletion`
+  daily 09:00 UTC) and that an unauthenticated hit returns 401. Reuses the same `CRON_SECRET`,
+  `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ABANDONMENT_EMAIL_HASH_PEPPER`,
+  `ABANDONMENT_EMAIL_HASH_KEY_VERSION` already set for the abandonment job — no new Vercel env.
+
+### Known failure modes and how to diagnose
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `ERROR: function request_account_deletion(...) does not exist` | Migration 013 not applied on this project | Run `013_phase2_step7_data_deletion.sql` in the staging SQL editor |
+| Planted message vanishes after the sweep | `messages.sender_id` FK is CASCADE, not SET NULL | Confirm `messages.sender_id ... ON DELETE SET NULL` (migration 008); this is the load-bearing de-identification |
+| Audit row vanishes after the sweep | `data_deletion_requests.user_id` FK is CASCADE, not SET NULL | Confirm `user_id ... REFERENCES profiles(id) ON DELETE SET NULL` |
+| `request_account_deletion` stacks duplicate rows | Idempotency / partial unique index missing | Confirm the `WHERE status IN ('pending','processing')` partial unique index and the return-existing branch |
+| Sweep deletes a NOT-due / cancelled request | Selection RPC dropped the `grace_until`/`status='pending'` predicate | Compare `list_due_deletion_requests` body to migration 013 |
+| Client can write `data_deletion_requests` directly | The REVOKE INSERT/UPDATE/DELETE didn't apply | Confirm writes are REVOKE'd from `anon`/`authenticated`; RPCs are the sole write path |
+| Cron returns 500 / runs unauthenticated | `CRON_SECRET` unset (fails closed) or header mismatch | Set `CRON_SECRET` in Vercel; confirm `Authorization: Bearer $CRON_SECRET` |
 
 ---
 
