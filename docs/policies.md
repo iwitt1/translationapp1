@@ -91,12 +91,17 @@
 
 ## 4. Blocking & reporting
 
-- **Block** is directional (`blocks` table). A block prevents contact/DM initiation in both
-  directions and hides the blocker from the blocked where applicable. `unblocked_at` (nullable;
-  null = currently blocked) preserves history rather than deleting the row.
+- **Block** is stored directionally (`blocks` table records who blocked whom) but **enforced
+  bidirectionally**: a block prevents contact/DM initiation in both directions and hides each party
+  from the other **symmetrically** — discovery (both the email and username RPCs) returns neither
+  account to the other while the block is active. Implemented as an **override layer**: the block
+  never mutates the `relationships` row; `active_block_exists(a, b)` is a bidirectional check applied
+  on every initiation path and both discovery RPCs (migration 011). `unblocked_at` (nullable; null =
+  currently blocked) preserves history rather than deleting the row, leaving room for a future
+  unblock surface. See decisions.md 2026-06-10 "Block is an override layer; symmetric hide".
 - **Report** (`reports` table): reasons spam / abuse / impersonation / other. Initial behavior:
-  records the report and auto-creates a block. No moderation queue UI yet; reports accumulate for
-  later review.
+  records the report and atomically creates a block in the same call (`report_account()` RPC, migration
+  011). No moderation queue UI yet; reports accumulate for later review.
 
 ## 5. Anti-abuse (layered defense — not handle-type alone)
 

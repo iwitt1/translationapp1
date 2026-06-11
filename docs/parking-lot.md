@@ -4,7 +4,7 @@
 >
 > Format: each item has a short description, a "why interesting" note, and (if relevant) a "trigger" — the condition under which it should be reconsidered for the roadmap.
 
-**Last updated:** 2026-06-10 (Phase 2 Step 4: added "Conversation switcher / inbox IA" under Product features — surfaced scoping the Step 4 app-layer wiring; deferred to the Phase 3 conversation model. Earlier same day: added "Per-tenant reserved-word seed automation" and "Original-case username display" deferrals under Identity, discovery & social graph. Earlier same day: Added then RESOLVED "`nonbinary` gender signal regressed out of the schema in migration 008" under Known technical debt — Isaac chose to restore; migration 009 re-adds it, run on staging, prod replay pending in the cutover. Earlier same day: Marked "Move profile inference to server-side" + its sibling "Dialect consistency guard" as BUILT — Option A shipped: `/api/v1/infer-profile` endpoint, raw-pg `FOR UPDATE`, message_id trust boundary, `PROFILE_INFERENCE_ENABLED` on. See decisions.md. Earlier same day: Added Option A build spec under "Move profile inference to server-side" — decided to build directly in Cowork; endpoint + service-role + trust-boundary decision + race fix + steps + estimate. Earlier 2026-06-10 Step 2 review: escalated "Move profile inference to server-side" — client-side path is now fully dead under Phase 2 RLS, flagged its flywheel weight; added "Phase 2 RLS / validation gaps" entry — cache poisoning, realtime RLS, display_name charset. Prior 2026-06-09: added "Identity, discovery & social graph (deferred)" section, consolidated "UI improvements", the Model A email-uniqueness tension, and "Onboarding funnel events".)
+**Last updated:** 2026-06-10 (Phase 2 Step 5: annotated the "Identity, discovery & social graph (deferred)" intro to note the contact-graph / invite-link / blocks / reports **structural prep shipped in migration 011** — the deferred items below are still deferred, only their substrate now exists. Added "Invite max-uses exhaustion gate coverage gap" under Known technical debt — the Step 5 gate can't exercise full max_uses exhaustion with only two tenant-1 users. Earlier same day — Phase 2 Step 4: added "Conversation switcher / inbox IA" under Product features — surfaced scoping the Step 4 app-layer wiring; deferred to the Phase 3 conversation model. Earlier same day: added "Per-tenant reserved-word seed automation" and "Original-case username display" deferrals under Identity, discovery & social graph. Earlier same day: Added then RESOLVED "`nonbinary` gender signal regressed out of the schema in migration 008" under Known technical debt — Isaac chose to restore; migration 009 re-adds it, run on staging, prod replay pending in the cutover. Earlier same day: Marked "Move profile inference to server-side" + its sibling "Dialect consistency guard" as BUILT — Option A shipped: `/api/v1/infer-profile` endpoint, raw-pg `FOR UPDATE`, message_id trust boundary, `PROFILE_INFERENCE_ENABLED` on. See decisions.md. Earlier same day: Added Option A build spec under "Move profile inference to server-side" — decided to build directly in Cowork; endpoint + service-role + trust-boundary decision + race fix + steps + estimate. Earlier 2026-06-10 Step 2 review: escalated "Move profile inference to server-side" — client-side path is now fully dead under Phase 2 RLS, flagged its flywheel weight; added "Phase 2 RLS / validation gaps" entry — cache poisoning, realtime RLS, display_name charset. Prior 2026-06-09: added "Identity, discovery & social graph (deferred)" section, consolidated "UI improvements", the Model A email-uniqueness tension, and "Onboarding funnel events".)
 
 ---
 
@@ -131,6 +131,37 @@ Three gaps spotted reviewing migration 008 + App.jsx. None block the Step 2 gate
 
 - **Surfaced:** 2026-06-10, Cowork review of Sonnet's Step 2 implementation.
 - **Trigger:** #1 and #2 at first real multi-tenant move (strategic Phase 2 / B2B API); #3 anytime we touch `complete_onboarding()` or build identity validation in Step 4.
+
+### Invite max-uses exhaustion gate coverage gap (Step 5)
+The Step 5 social-graph gate (`scripts/social-graph-gate-test.mjs`) exercises invite creation,
+redemption, re-redeem rejection, redeem-own rejection, revoked/expired/wrong-kind rejection — but
+**not** full `max_uses` exhaustion (create a `max_uses=N` invite, redeem it N times by N distinct
+accounts, then assert the N+1th redemption is rejected). Tenant 1 has only two real users (A, B), and
+A is the inviter, so at most one other account (B) can redeem — there's no way to drive a counter
+past 1. The `use_count >= max_uses` branch in `redeem_invite()` is therefore validated by code
+inspection only, not by the gate.
+- **Why interesting:** It's the one invite guard the gate can't prove behaviorally. Low risk (the
+  check is a simple counter compare), but it's an untested branch on a write path.
+- **Cheapest fix:** seed a third tenant-1 user (C is currently re-pointed into tenant 2 for the
+  cross-tenant checks; a fourth fixture user, or temporarily a second tenant-1 account, would let the
+  gate redeem a `max_uses=2` invite twice and assert the third redemption fails).
+- **Trigger:** when a third tenant-1 fixture user is added for any reason, or when invite abuse
+  (over-redemption) becomes a felt risk worth a behavioral test.
+- **Surfaced:** 2026-06-10, writing the Step 5 gate.
+
+### Live rate-limit enforcement on social-graph writes (Step 5 deferral)
+Step 5 ships the contact/block/report/invite write paths (SECURITY DEFINER RPCs) but **no rate
+limiting** on them — nothing caps how fast an account can fire `request_contact`, `create_invite`,
+`block_account`, or `report_account`. As noted in "Rate-limit counters" below, every one of these
+tables already carries actor + timestamp + tenant_id, so rates are computable retroactively with no
+schema change; the deferral is the *live enforcement* (reject the Nth action in a window), not the
+data to compute it.
+- **Why deferred:** single trusted-tester tenant; no abuse surface yet. Premature to build a limiter
+  before there's traffic to limit.
+- **Trigger:** the app is shared beyond trusted testers, or a spam/abuse pattern appears on any
+  social-graph write path. See also `email_hash_abuse` (migration 011) — the abandoned-signup spam
+  counterpart, which is structurally present but likewise not yet wired to enforcement.
+- **Surfaced:** 2026-06-10, Step 5 design.
 
 ### ~~`nonbinary` gender signal regressed out of the schema in migration 008~~ → RESOLVED 2026-06-10 (restored via migration 009)
 **Resolution:** Isaac chose to restore. `009_restore_nonbinary_gender_signal.sql` re-adds `nonbinary` to the `ulp_gender_check` CHECK, realigning with migration 003 + decisions.md 2026-05-12. Pending its staging run + prod replay in the cutover. Original write-up kept below for history.
@@ -399,6 +430,12 @@ Education (language-learning platforms), publishing (in-flow document translatio
 > Structural prep for these lands in Phase 2 (normalized discovery handles, contact graph,
 > invite primitive). The items below are features built on top of that structure, deferred
 > until later phases.
+>
+> **Substrate status (2026-06-10):** the structural pieces these features sit on have now shipped.
+> Migration 010 (Step 4) added the normalized discovery handles + discovery RPCs; migration 011
+> (Step 5) added the canonical-pair contact graph (`relationships`), the `invites` +
+> `invite_redemptions` deep-link primitive, and the `blocks` / `reports` safety tables. The items
+> below remain deferred — only their substrate exists now, not the user-facing features.
 
 ### Friend-code discovery handle
 A short, shareable, non-PII code (BattleTag / Snapchat-style) users can hand out in person or

@@ -2,7 +2,7 @@
 
 > Living technical document. Describes what the system is, the principles it's built on, and what we're migrating toward. Updated in the same commit as any architectural change.
 
-**Last updated:** 2026-06-10 (§2, §7, §10, §13 reconciled to the Phase 2 build: migrations 007 (identity foundation) + 008 (identity cutover) are LIVE ON STAGING — `profiles`/`account_identifiers`/`account_settings` exist, `user_profiles` dropped, `messages.sender_id` + `user_linguistic_profiles`/`user_profile_events` cut over to uuid, RLS enabled on the Phase 2 tables, and `auth_tenant_id()`/`handle_new_user()`/`complete_onboarding()` added. Server-side profile inference shipped + verified on staging. **Prod is untouched** — it still runs the pre-auth no-RLS app; the cutover is a coordinated wipe-staging-then-prod event (see §10). Prior 2026-05-18: §7 vestigial-column reconciliation.)
+**Last updated:** 2026-06-10 (§7/§10/§13 reconciled to Phase 2 **Step 5** — migration 011 (social graph + safety primitives) WRITTEN, pending staging gate: `relationships` adopts the **canonical-pair** model — `account_lo`/`account_hi`/`initiator_id` rather than the originally-sketched `requester_id`/`addressee_id` (decisions.md 2026-06-10 "Contact-graph representation"); adds `blocks`/`reports`/`invites`/`invite_redemptions`/`email_hash_abuse`, nine SECURITY DEFINER RPCs, and amends the two Step 4 discovery RPCs to filter active blocks. Prior 2026-06-10: §2, §7, §10, §13 reconciled to the Phase 2 build: migrations 007 (identity foundation) + 008 (identity cutover) are LIVE ON STAGING — `profiles`/`account_identifiers`/`account_settings` exist, `user_profiles` dropped, `messages.sender_id` + `user_linguistic_profiles`/`user_profile_events` cut over to uuid, RLS enabled on the Phase 2 tables, and `auth_tenant_id()`/`handle_new_user()`/`complete_onboarding()` added. Server-side profile inference shipped + verified on staging. **Prod is untouched** — it still runs the pre-auth no-RLS app; the cutover is a coordinated wipe-staging-then-prod event (see §10). Prior 2026-05-18: §7 vestigial-column reconciliation.)
 **Repo:** https://github.com/iwitt1/translationapp1
 **Owner:** Isaac (iwitt1)
 
@@ -212,8 +212,8 @@ The `_source` fields in `user_linguistic_profiles` (e.g., `dialect_source: 'expl
 > | `auth_tenant_id()`, `handle_new_user()` trigger | 007 | live on staging |
 > | `complete_onboarding(display_name, preferred_language)` RPC | 008 | live on staging |
 > | RLS on all Phase 2 tables + `messages`/`message_translations` | 007/008 | enabled on staging; verified by Step 3 gate |
-> | `find_account_by_email()`, `search_accounts_by_username()`, `change_username()` discovery RPCs + username-prefix index | 010 | **written; pending staging gate** (Phase 2 Step 4; additive, no table changes) |
-> | `relationships`, `blocks`, `reports`, `invites`, `invite_redemptions` | — | **not built yet** (Phase 2 Step 5+) |
+> | `find_account_by_email()`, `search_accounts_by_username()`, `change_username()` discovery RPCs + username-prefix index | 010 | **written; pending staging gate** (Phase 2 Step 4; additive, no table changes). The two discovery RPCs are **amended by 011** to filter active blocks. |
+> | `relationships` (canonical-pair), `blocks`, `reports`, `invites`, `invite_redemptions`, `email_hash_abuse` + 9 RPCs (`active_block_exists`, `request_contact`, `respond_to_contact`, `block_account`, `unblock_account`, `report_account`, `create_invite`, `redeem_invite`, `revoke_invite`) | 011 | **written; pending staging gate** (Phase 2 Step 5; additive tables + RLS + RPCs, no destructive change). `tenants.dm_initiation_policy` already exists (007). |
 > | `conversation_contexts`, `translation_corrections`, `translation_reviews`, `data_deletion_requests` | — | **not built yet** |
 >
 > Prod still runs the pre-007 schema (no `profiles`, `sender_id` still text, no RLS). The column
@@ -393,8 +393,9 @@ Lets you reconstruct what the system believed about a user at any point in time.
 ### Phase 2 tables (identity, discovery, social graph)
 
 > **Status:** `profiles`, `account_identifiers`, `account_settings` are **live on staging** (migration
-> 007). `relationships`, `blocks`, `reports`, `invites`/`invite_redemptions` are **not built yet**
-> (Phase 2 Step 5+). Design rationale and trade-offs in `decisions.md` (2026-06-09 entries). Policy *values* live in
+> 007). `relationships`, `blocks`, `reports`, `invites`/`invite_redemptions`, `email_hash_abuse` are
+> **written in migration 011, pending the staging gate** (Phase 2 Step 5). Design rationale and
+> trade-offs in `decisions.md` (2026-06-09 + 2026-06-10 entries). Policy *values* live in
 > `policies.md` + `lib/policies.js`. **Identity vs. discovery principle:** the stable identity is
 > the `auth.users` uuid; human-facing discovery handles are a separate normalized layer that
 > points at it and is never a key.
@@ -458,17 +459,29 @@ Usernames unique within tenant via `(tenant_id, type, value)` covering active+re
 | `updated_at` | timestamptz | |
 
 #### `relationships` (contact graph; conversations are independent of this)
+> **Canonical-pair model** (migration 011; decisions.md 2026-06-10 "Contact-graph representation").
+> ONE row per unordered pair `{account_lo, account_hi}` with `account_lo < account_hi` enforced by a
+> CHECK. This replaces the originally-sketched directional `requester_id`/`addressee_id` design.
+> Direction is carried by `initiator_id` (whoever asked first), not by column position. The single-row
+> invariant makes the **glare race** (both users hit "add" before either accepts) structurally
+> impossible — both adds resolve to the *same* pair row, and the reverse-pending case auto-accepts.
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid | PK |
-| `tenant_id` | uuid | FK to tenants |
-| `requester_id` | uuid | FK to `profiles(id)` |
-| `addressee_id` | uuid | FK to `profiles(id)` |
-| `state` | enum | `'pending' \| 'accepted' \| 'declined'` |
-| `via_identifier_type` | enum | `'email' \| 'username' \| 'phone' \| 'friend_code' \| 'invite_link'` — **provenance**, set at add-time, read by the DM-initiation policy |
+| `tenant_id` | uuid | NOT NULL, FK to tenants |
+| `account_lo` | uuid | FK to `profiles(id)` ON DELETE CASCADE. The lexically-smaller of the two uuids. |
+| `account_hi` | uuid | FK to `profiles(id)` ON DELETE CASCADE. The lexically-larger. CHECK `account_lo < account_hi`. |
+| `initiator_id` | uuid | FK to `profiles(id)`. Whoever sent the request. CHECK `initiator_id IN (account_lo, account_hi)`. Drives the DM-initiation policy's "initiator's handle type" rule + the incoming-vs-outgoing UI distinction. |
+| `state` | text+CHECK | `'pending' \| 'accepted' \| 'declined'`, default `'pending'` |
+| `via_identifier_type` | text+CHECK | `'email' \| 'username' \| 'phone' \| 'friend_code' \| 'invite_link'` — **provenance**, set at add-time, read by the DM-initiation policy. `invite_link` is set only by `redeem_invite()`. |
 | `created_at` / `updated_at` | timestamptz | |
 
-Unique `(tenant_id, requester_id, addressee_id)`.
+Unique `(tenant_id, account_lo, account_hi)` — the anti-glare guarantee. Second index
+`relationships_hi_idx (tenant_id, account_hi)` so "all of X's contacts" is index-backed in both
+positions. **RLS:** SELECT where the caller is `account_lo` or `account_hi` (either party sees the
+row); all writes go through `request_contact` / `respond_to_contact` / `redeem_invite` (SECURITY
+DEFINER). The state machine: new→`pending`, reverse-pending→`accepted` (mutual), `accepted`→error,
+`declined`→re-request `pending`.
 
 #### `blocks` (directional)
 | Column | Type | Notes |
@@ -480,7 +493,13 @@ Unique `(tenant_id, requester_id, addressee_id)`.
 | `unblocked_at` | timestamptz | nullable; null = currently blocked. Kept after unblock for history. |
 | `created_at` | timestamptz | |
 
-Partial unique index `(blocker_id, blocked_id) WHERE unblocked_at IS NULL` — no double-blocking.
+Partial unique index `blocks_active_unique (blocker_id, blocked_id) WHERE unblocked_at IS NULL` — no
+double-active-blocking, while historical (unblocked) rows coexist. Second partial index
+`blocks_blocked_active_idx (blocked_id) WHERE unblocked_at IS NULL` backs the reverse leg of
+`active_block_exists()`. **RLS:** SELECT the **blocker only** — the blocked party must never learn
+they were blocked by reading this table. A block is an **override layer**: it never mutates the
+`relationships` row; `active_block_exists()` (bidirectional) is checked first by every initiation
+path and both discovery RPCs (symmetric hide). Writes via `block_account` / `unblock_account`.
 
 #### `reports`
 | Column | Type | Notes |
@@ -491,18 +510,29 @@ Partial unique index `(blocker_id, blocked_id) WHERE unblocked_at IS NULL` — n
 | `reported_id` | uuid | FK to `profiles(id)` |
 | `reason` | enum | `'spam' \| 'abuse' \| 'impersonation' \| 'other'` |
 | `details` | text | nullable |
-| `status` | enum | `'open' \| 'reviewed' \| 'actioned' \| 'dismissed'`, default `'open'` |
+| `status` | text+CHECK | `'open' \| 'reviewed' \| 'actioned' \| 'dismissed'`, default `'open'` |
 | `created_at` | timestamptz | |
 
-Initial behavior: records the report and auto-creates a block. No moderation queue UI yet.
+Initial behavior: `report_account()` records the report **and** ensures an active block in **one
+transaction** (atomic — both or neither). Multiple reports of the same target are allowed (distinct
+incidents). No moderation-queue UI yet; rows accumulate at `status='open'` for later review. **RLS:**
+SELECT the reporter only (a future moderation tool reads via service role). `reports_no_self` CHECK.
 
 #### `invites` + `invite_redemptions` (deep-link / invite-link primitive)
 `invites`: `id`, `tenant_id`, `token` (globally unique, opaque), `kind` enum
 `'contact' \| 'conversation'`, `created_by` FK profiles, `target_conversation_id` uuid nullable
 (Phase 3), `max_uses` int nullable, `use_count` int default 0, `expires_at` timestamptz nullable,
 `revoked` boolean default false, `created_at`.
-`invite_redemptions`: `id`, `invite_id` FK, `redeemed_by` FK profiles, `redeemed_at`. Redeeming a
-`contact` invite creates a `relationships` row with `via_identifier_type='invite_link'`.
+`invite_redemptions`: `id`, `invite_id` FK, `redeemed_by` FK profiles, `redeemed_at`, UNIQUE
+`(invite_id, redeemed_by)` (a re-click is a no-op, not a re-add). Redeeming a `contact` invite
+**AUTO-ACCEPTS** the contact (decisions.md 2026-06-10) — it writes a `relationships` row directly at
+`state='accepted'`, `via_identifier_type='invite_link'`, `initiator_id = created_by`, with no
+separate accept handshake (minting the link is the creator's consent; clicking is the redeemer's).
+Block-checked first. `conversation`-kind invites are reserved for Phase 3 and rejected by
+`redeem_invite()` for now. **RLS:** `invites` SELECT the creator only (redemption is by token through
+the definer RPC, which also prevents token/invite enumeration via the table); `invite_redemptions`
+SELECT the redeemer only. Defaults at launch: multi-use, no expiry, revocable. Writes via
+`create_invite` / `redeem_invite` / `revoke_invite`.
 
 #### `tenants` — add column
 `dm_initiation_policy` jsonb — per-tenant overrides on top of `lib/policies.js` global defaults.
@@ -515,10 +545,26 @@ Sole tenant launches `'{}'` (no overrides → mutual-acceptance-only; policies.m
 
 Schema enforces *mechanism* (uniqueness, non-deletion, the partial index); layers 1–3 own *values*.
 
-#### Abuse-monitoring (signup spam)
-When an abandoned pending account is deleted (policies.md §6), a **hash** of its email is recorded
-in an abuse-monitoring table (`email_hash`, `tenant_id`, `first_seen`, `abandon_count`) — not the
-plaintext — so repeat-abandon / signup-spam is detectable without retaining deleted-user PII.
+#### `email_hash_abuse` (signup-spam monitor; table + RLS in 011, writes in Step 6)
+When an abandoned pending account is deleted (policies.md §6), a **keyed hash** of its canonical email
+is recorded here — never the plaintext — so repeat-abandon / signup-spam is detectable without
+retaining deleted-user PII.
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid | PK |
+| `tenant_id` | uuid | NOT NULL, FK to tenants |
+| `email_hash` | bytea | `HMAC-SHA256(canonical_email, pepper)` |
+| `key_version` | smallint | default 1; supports pepper rotation |
+| `first_seen` / `last_seen` | timestamptz | |
+| `abandon_count` | integer | default 1, CHECK `>= 1` |
+
+UNIQUE `(tenant_id, email_hash, key_version)`. The HMAC is computed in the **Step 6 abandonment job**
+(Node `crypto`), with the pepper read from an env secret — **the pepper never enters Postgres**, so
+even a full DB compromise does not expose the key (decisions.md 2026-06-10). `key_version` lets the
+pepper rotate forward without re-keying old rows; losing the pepper is low-stakes here (advisory-only
+table, nothing joins on it). **RLS:** enabled with **no policy** for `authenticated`/`anon` *and*
+`REVOKE ALL ... FROM anon, authenticated` — fully denied to clients; only the service role (Step 6
+job) touches it. The table + RLS land in 011; the writes wire in Step 6.
 
 ### Phase 2 DB functions (live on staging, 007/008)
 
@@ -527,9 +573,26 @@ These three server-side functions are load-bearing for identity + RLS; treat the
 - **`auth_tenant_id()`** (007, `SECURITY DEFINER`, SQL) — returns `tenant_id FROM profiles WHERE id = auth.uid()`. The linchpin of every tenant-scoped RLS policy. It's `SECURITY DEFINER` so it can read `profiles` without tripping the very RLS it feeds (avoids recursion); returns NULL for an unauthenticated caller → access denied by default.
 - **`handle_new_user()`** (007, `AFTER INSERT` trigger `on_auth_user_created` on `auth.users`) — creates the pending `profiles` row + `email` and `username` `account_identifiers` + default `account_settings`. System username = `'user_' + 8 hex chars` (needs pgcrypto). **Tenant hardcoded to the sole-tenant UUID `…001`** — every new signup lands in tenant 1. If it raises, the `auth.users` INSERT rolls back (no orphaned auth rows).
 - **`complete_onboarding(p_display_name, p_preferred_language)`** (008, `SECURITY DEFINER`, `GRANT EXECUTE … TO authenticated`) — the P1→P3 transition: sets `status='active'`, `display_name`, `onboarding_completed_at`, and creates the `user_linguistic_profiles` row with `preferred_language` written `_source='explicit'`. Routed through an RPC (not a direct table write) precisely because `authenticated` is *not* allowed to write `status` directly (see §10 column-grant note).
-- **`find_account_by_email(p_email)`** (010, `SECURITY DEFINER`, `GRANT EXECUTE … TO authenticated`) — Step 4 discovery. Exact-equality lookup on the canonical email; returns at most one `(account_id, display_name, username)`. Bypasses `account_identifiers`' own-rows-only RLS deliberately, but **handle-minimizes**: returns only public handles, never the target's email/phone/other identifiers. Tenant-scoped via `auth_tenant_id()`; only `status='active'` profiles; respects `discoverable_by_email`; excludes the caller. No prefix/enumeration.
-- **`search_accounts_by_username(p_prefix, p_limit)`** (010, `SECURITY DEFINER`, `GRANT … TO authenticated`) — Step 4 username autocomplete. Prefix match on the canonical username; returns `(account_id, display_name, username)` rows. Min prefix length 3, result cap 20, LIKE metacharacters escaped (no `%`/`_` injection). Tenant-scoped; only active profiles; respects `discoverable_by_username`; excludes the caller. Does **not** filter blocked users (blocks are Step 5).
+- **`find_account_by_email(p_email)`** (010, **amended 011**, `SECURITY DEFINER`, `GRANT EXECUTE … TO authenticated`) — Step 4 discovery. Exact-equality lookup on the canonical email; returns at most one `(account_id, display_name, username)`. Bypasses `account_identifiers`' own-rows-only RLS deliberately, but **handle-minimizes**: returns only public handles, never the target's email/phone/other identifiers. Tenant-scoped via `auth_tenant_id()`; only `status='active'` profiles; respects `discoverable_by_email`; excludes the caller; **011 adds `AND NOT active_block_exists(caller, target)`** (symmetric block hide). No prefix/enumeration.
+- **`search_accounts_by_username(p_prefix, p_limit)`** (010, **amended 011**, `SECURITY DEFINER`, `GRANT … TO authenticated`) — Step 4 username autocomplete. Prefix match on the canonical username; returns `(account_id, display_name, username)` rows. Min prefix length 3, result cap 20, LIKE metacharacters escaped (no `%`/`_` injection). Tenant-scoped; only active profiles; respects `discoverable_by_username`; excludes the caller; **011 adds the active-block filter** (both directions). Amending shipped functions is a behavior change → re-run the Step 4 gate after 011.
 - **`change_username(p_new_username)`** (010, `SECURITY DEFINER`, `GRANT … TO authenticated`) — the **sole** username-change path (`profiles.username` is REVOKEd from `authenticated`, §10). Validates charset/length/reserved/non-reuse and the 1/365-day cadence (first `system_generated`→`user_set` change is free and starts the clock), then atomically retires the old `account_identifiers` row (never deletes), inserts the new active row, and updates `profiles`. Returns the new canonical username; raises a client-parseable error on any rule violation.
+
+#### Phase 2 Step 5 social-graph RPCs (migration 011; written, pending staging gate)
+
+All nine are `SECURITY DEFINER`, `SET search_path = public`, `EXECUTE` granted to `authenticated`
+only (revoked from `public`/`anon`), and tenant-scoped via `auth_tenant_id()` (an unauthenticated
+caller matches nothing). They are the **sole write path** to the Step 5 tables — every social table
+is RLS SELECT-only (or no policy), so direct client writes are denied.
+
+- **`active_block_exists(p_a, p_b)`** — `STABLE` boolean helper. True iff an active block (`unblocked_at IS NULL`) exists in **either** direction between two accounts in the caller's tenant. `SECURITY DEFINER` so it reads `blocks` past the blocker-only RLS. Called first by `request_contact`, `respond_to_contact`, `redeem_invite`, and both discovery RPCs.
+- **`request_contact(p_target, p_via)`** → text — add-a-contact entry point on the canonical pair. new→`'pending'`; reverse-pending→`'accepted'` (mutual); already-pending-by-caller / already-accepted→error; `declined`→re-request `'pending'`. Block-checked; rejects self/cross-tenant/`invite_link` via. Locks the pair row `FOR UPDATE` so concurrent adds serialize.
+- **`respond_to_contact(p_other, p_accept)`** → text — accept/decline an incoming `pending` request (caller must be the addressee, i.e. not the initiator). Accept→`'accepted'` (block-checked); decline→`'declined'` (kept soft for a future re-request cooldown).
+- **`block_account(p_target)`** → text — create an active block (idempotent: `'blocked'` / `'already_blocked'`). Does **not** mutate `relationships`.
+- **`unblock_account(p_target)`** → text — stamp `unblocked_at` on the caller's active block (`'unblocked'` / `'not_blocked'`); history preserved.
+- **`report_account(p_target, p_reason, p_details)`** → uuid — record a report **and** ensure an active block in one transaction (atomic). Returns the report id.
+- **`create_invite(p_kind, p_max_uses, p_expires_at)`** → text — mint a `contact` invite with an opaque base64url token (16 random bytes; `extensions.gen_random_bytes`, schema-qualified). Defaults multi-use / no-expiry / revocable. `conversation` kind rejected (Phase 3).
+- **`redeem_invite(p_token)`** → text — validate token (revoked/expired/max-uses/cross-tenant/own-invite all rejected), record the redemption (one per user), and **auto-accept** the contact with the creator (`via='invite_link'`, `initiator=creator`). Block-checked.
+- **`revoke_invite(p_invite_id)`** → text — revoke an invite the caller created (`'revoked'` / `'noop'`); no further redemptions.
 
 ---
 
@@ -620,6 +683,7 @@ Fine-tuning takes a base model and trains it further on our corrections data. Be
 - **Staging: RLS built and verified.** Migrations 007/008 enable RLS on all identity/content tables; the Step 3 adversarial gate (`scripts/rls-adversarial-test.mjs`) proves cross-user and cross-tenant isolation as real authenticated users.
 - **Column-level write guard (007, OPUS-FIX #2).** RLS scopes *rows*, not *columns* — so even with a correct row policy, a `authenticated` user could PostgREST-PATCH `is_verified=true` on their own row to self-verify. Mitigation: `REVOKE UPDATE ON profiles FROM authenticated; GRANT UPDATE (display_name) ON profiles TO authenticated;`. Everything else on `profiles` (`status`, `username`, `is_verified`, …) is mutated only via `SECURITY DEFINER` RPCs (e.g. `complete_onboarding`, `change_username`). The Step 3 gate includes a self-write escalation negative test for exactly this.
 - **Discovery RPCs deliberately bypass RLS (010, Step 4).** `account_identifiers` SELECT is own-rows-only, so cross-user discovery is impossible as a client query — by design. The three Step 4 RPCs (`find_account_by_email`, `search_accounts_by_username`, `change_username`) are `SECURITY DEFINER` and bypass that RLS *on purpose*, re-imposing the safety rules in code: **handle minimization** (return only `id`/`display_name`/`username`, never other identifiers or retired handles), tenant scoping via `auth_tenant_id()`, active-profiles-only, discoverability settings honored, and anti-enumeration limits (email exact-equality only; username prefix min-length 3 / cap 20 / escaped LIKE). EXECUTE is granted to `authenticated`, revoked from `anon`/`public`. Their correctness must be proven as real authenticated users (the Step 4 gate), since the postgres role bypasses RLS and would mask a leak.
+- **Social-graph tables are RLS SELECT-only; writes are RPC-only (011, Step 5).** `relationships`, `blocks`, `reports`, `invites`, `invite_redemptions` each enable RLS with a narrow SELECT policy (party / blocker / reporter / creator / redeemer respectively) and **no** INSERT/UPDATE/DELETE policy — so `authenticated` cannot mutate the graph directly; the nine `SECURITY DEFINER` RPCs are the only write path and re-impose every rule in code (mutual-acceptance, block gating, atomic report+block, invite validity). `email_hash_abuse` is hardest: RLS-enabled with no client policy **and** `REVOKE ALL ... FROM anon, authenticated` → service-role only. Block privacy is deliberate: the blocker can SELECT their block row, the blocked cannot. The discovery RPCs are amended to filter active blocks (symmetric hide). Proven by the Step 5 gate (`scripts/social-graph-gate-test.mjs`) as real authenticated users, including a direct-client-write-denied negative test.
 
 ### Target (post-Phase 2)
 - Supabase Auth providing real user identity (stable `auth.users` uuid under the hood; `username` and `display_name` are separate handles, neither is the key — see §7 + decisions.md 2026-06-09).
@@ -706,15 +770,17 @@ The OpenAI API key never leaves the backend. Frontend never calls OpenAI directl
 │   │   ├── inferProfile.js   Inference→profile update logic (explicit-wins, confidence gate)
 │   │   └── events.js         user_profile_events writer
 │   └── .env                  Local OPENAI_API_KEY (not committed)
-├── migrations/               Run in Supabase SQL editor, manually for now (000–008)
+├── migrations/               Run in Supabase SQL editor, manually for now (000–011)
 │   ├── 000_base_schema.sql … 006_user_profile_events_task_id.sql
 │   ├── 007_phase2_identity_foundation.sql   profiles/identifiers/settings, auth_tenant_id(), trigger
 │   ├── 008_phase2_step2_identity_cutover.sql  text→uuid cutover, RLS, complete_onboarding()
 │   ├── 009_restore_nonbinary_gender_signal.sql  restores nonbinary CHECK dropped by 008
-│   └── 010_phase2_step4_discovery.sql       Step 4 discovery + change_username RPCs, username-prefix index
+│   ├── 010_phase2_step4_discovery.sql       Step 4 discovery + change_username RPCs, username-prefix index
+│   └── 011_phase2_step5_social_graph.sql    Step 5 relationships/blocks/reports/invites/email_hash_abuse + 9 RPCs; amends 010 discovery RPCs to filter blocks
 ├── scripts/
 │   ├── rls-adversarial-test.mjs   Phase 2 Step 3 RLS gate (run on staging)
-│   └── discovery-gate-test.mjs    Phase 2 Step 4 discovery gate (run on staging)
+│   ├── discovery-gate-test.mjs    Phase 2 Step 4 discovery gate (run on staging)
+│   └── social-graph-gate-test.mjs Phase 2 Step 5 social-graph + safety gate (run on staging)
 ├── src/
 │   ├── App.jsx               Frontend UI (login, chat, message bubble) — single file currently
 │   ├── main.jsx              React entry point

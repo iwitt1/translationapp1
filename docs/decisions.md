@@ -16,6 +16,74 @@
 
 ---
 
+## 2026-06-10 — Contact-graph representation: canonical ordered pair (not directional rows)
+
+**Decision:** `relationships` stores **one row per unordered pair** — `account_lo`/`account_hi` with a CHECK `account_lo < account_hi`, plus `initiator_id` (whoever asked first) — rather than the directional `requester_id`/`addressee_id` design sketched in architecture.md §7. Unique `(tenant_id, account_lo, account_hi)`. Shipped in migration 011.
+
+**Context:** Step 5 needs the contact graph to support request → accept/decline, a reverse-request "glare" case (both users add each other before either accepts), and blocks/reports composed on top. The §7 sketch used a directional single row. Before writing SQL we did a representation design pass; this deviates from a documented design, so it's logged as a decision rather than a silent change.
+
+**Alternatives considered:**
+- *Directional single row (`requester_id`, `addressee_id`), unique on the ordered pair* — the §7 sketch. Simple, but the glare race can insert **two** rows (A→B and B→A) that both mean "pending," and nothing structurally forbids it; you need app-level logic to detect and merge, and a uniqueness constraint on the *ordered* pair doesn't catch the reverse row. Rejected.
+- *Two-row adjacency (one row per direction, kept in sync)* — natural for follow-graphs, but a mutual contact is two rows you must keep consistent; doubles the write surface and the RLS surface for no benefit in a symmetric-relationship model. Rejected.
+- *Canonical ordered pair (chosen)* — one row, uniqueness on `(tenant_id, lo, hi)` makes "one relationship per pair" **structural**; the glare race collapses because both adds resolve to the same row (reverse-pending auto-accepts). Direction is preserved by `initiator_id`.
+
+**Reasoning:** Makes the core invariant a database guarantee instead of application discipline; eliminates the glare race by construction; keeps direction available (for the DM-initiation "initiator's handle type" rule and incoming-vs-outgoing UI) via `initiator_id` + a CHECK that the initiator is one of the pair. Costs a `least()/greatest()` at the call site (hidden inside the RPCs) and a second index for hi-side lookups.
+
+**Implications:** Writes go only through `request_contact` / `respond_to_contact` / `redeem_invite` (they compute the canonical order); a raw client can't insert (RLS SELECT-only). "All of X's contacts" is `WHERE account_lo = X OR account_hi = X` — covered by the unique index (lo) + `relationships_hi_idx` (hi). architecture.md §7 updated to match. Any future asymmetric relationship type (follow/subscribe) would NOT fit this table and should be modeled separately.
+
+**Revisit when:** we need a directional/asymmetric relationship (follower model), or contact volume makes the OR-query a measured hotspot (then consider a generated-column or materialized adjacency).
+
+## 2026-06-10 — Block is an override layer; symmetric hide; discovery RPCs amended
+
+**Decision:** A block never mutates the `relationships` row — it's a separate `blocks` row that overrides at query time. Hiding is **symmetric**: an active block in *either* direction removes each user from the other's discovery results and gates every initiation path. `unblocked_at` (nullable, null=active) preserves history. Migration 011 also `CREATE OR REPLACE`-amends the two Step 4 discovery RPCs (010) to add `AND NOT active_block_exists(caller, target)`.
+
+**Context:** Blocking an existing contact must not destroy the relationship state (so unblock restores it with no resurrection logic), and a blocked user must not be able to re-find or re-add the blocker. The Step 4 discovery RPCs predate `blocks` and currently return blocked users.
+
+**Alternatives considered:**
+- *Block mutates `relationships` (set state='blocked')* — conflates two axes (are-we-contacts vs is-there-a-block) into one column; unblocking would need to remember the prior state. Rejected.
+- *Directional hide only (blocked can still see blocker)* — leaks the blocker back into the blocked user's search and lets them re-initiate. Rejected; symmetric hide is the safer default. (`unblocked_at` is retained even though symmetric hide reduces its immediate need — keeps the door open for a future "blocks you've placed" management UI.)
+- *Symmetric override layer (chosen).*
+
+**Reasoning:** Override-layer keeps the two concerns orthogonal and makes unblock trivial (stamp `unblocked_at`). `active_block_exists()` is a single `SECURITY DEFINER` helper (bidirectional, tenant-scoped) reused by both discovery RPCs and all three initiation RPCs, so the rule lives in one place. Blocker-only RLS on `blocks` keeps the raw fact private from the blocked party.
+
+**Implications:** Amending shipped functions is a behavior change → the **Step 4 gate must be re-run** after 011, in addition to the new Step 5 gate. Block privacy is asymmetric by design (blocker sees the row, blocked does not). Rate-limiting block/unblock cycles is parked.
+
+**Revisit when:** a verification/trust feature changes who can see what; or product wants a one-directional "mute" distinct from a symmetric "block."
+
+## 2026-06-10 — Invite redemption auto-accepts the contact
+
+**Decision:** Redeeming a `contact` invite writes the `relationships` row **directly at `state='accepted'`** (`via_identifier_type='invite_link'`, `initiator_id = creator`), with no separate accept handshake. Block-checked first; one redemption per user per invite.
+
+**Context:** Step 5 introduces invite links. The question was whether redeeming creates a *pending request* the creator must then accept, or an accepted contact outright.
+
+**Alternatives considered:**
+- *Redeem → pending (creator must accept)* — symmetric with the email/username add flow, but the creator already consented by minting and sharing the link; making them re-accept every click is friction with no safety gain (the link is the consent). Rejected.
+- *Redeem → accepted (chosen)* — minting the link is the creator's consent, clicking is the redeemer's; mutual by construction.
+
+**Reasoning:** The trust model differs from search-based adds: an invite link is an explicit "add me" issued by the creator. Auto-accept matches user expectation (clicking an invite link should just connect you) while blocks + revocation + expiry + max-uses remain the safety levers.
+
+**Implications:** `redeem_invite` is the only RPC that writes `via_identifier_type='invite_link'` and that sets `initiator_id` to someone other than the caller. Revoked/expired/over-max-uses/cross-tenant/own-invite redemptions are all rejected before any write. `conversation`-kind invites are Phase 3 (rejected for now).
+
+**Revisit when:** invite-link spam becomes a vector (then consider redeem→pending for unverified creators, or rate limits on redemptions).
+
+## 2026-06-10 — `email_hash_abuse`: versioned HMAC computed in the job layer
+
+**Decision:** The abandoned-signup abuse monitor stores `HMAC-SHA256(canonical_email, pepper)` as `bytea` plus a `key_version smallint`. The HMAC is computed in the **Step 6 abandonment job** (Node `crypto`); the pepper lives in an env secret and **never enters Postgres**. Migration 011 creates the table + RLS (service-role-only); the writes wire in Step 6.
+
+**Context:** policies.md §6 requires detecting repeat-abandon / signup-spam without retaining deleted-user PII. Isaac asked how hard later key rotation / key loss would be, and what's standard.
+
+**Alternatives considered:**
+- *Plaintext email* — simplest correlation, but retains PII of deleted users (defeats the GDPR-clean purpose). Rejected.
+- *Unkeyed hash (SHA-256 of the email)* — emails are low-entropy and enumerable, so a plain hash is reversible by dictionary; not meaningfully de-identifying. Rejected.
+- *Keyed HMAC computed **in Postgres** (pgcrypto, pepper in a DB setting)* — puts the pepper in the DB, so a DB compromise exposes it. Rejected.
+- *Keyed HMAC computed in the job layer, pepper in env, `key_version` column (chosen)* — industry-standard for de-identified-but-correlatable tokens; pepper never touches the DB.
+
+**Reasoning:** Keyed HMAC defeats dictionary reversal; computing it outside the DB means even a full DB dump doesn't leak the key. `key_version` makes rotation a non-event (bump the version, key forward; old rows stay readable within their version). Key **loss** is low-stakes here specifically because the table is advisory-only — nothing joins on it, so the worst case is the spam-correlation window resets. (This is *not* true of any future table where the hash is a join key — there, loss would orphan rows.)
+
+**Implications:** Step 6 must read the pepper from env and tag each write with the current `key_version`; deploy/rotation runbooks own the pepper. Until Step 6, the table is empty and inert. RLS is enabled with no client policy **and** `REVOKE ALL FROM anon, authenticated` (belt-and-suspenders, service-role only).
+
+**Revisit when:** Step 6 builds the job (pick the initial pepper + storage); or a future feature wants to join on the hash (then key-loss stops being low-stakes — reassess).
+
 ## 2026-06-10 — Phase 2 Step 4 discovery: search-only scope, SECURITY DEFINER RPCs, email-match returns username
 
 **Decision:** Step 4 (Discovery) is **search-only** and ships as migration 010 — three `SECURITY DEFINER` RPCs (`find_account_by_email`, `search_accounts_by_username`, `change_username`) plus a prefix index — with **no table or column changes**. The *add* action (which writes a `relationships` row) is deferred to **Step 5**, where `blocks` exists to gate it. On an exact email match the discovery RPC returns the found user's **username** in addition to `id` + `display_name`.

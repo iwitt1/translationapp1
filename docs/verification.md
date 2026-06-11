@@ -10,7 +10,7 @@
 >
 > **When to revise a section:** when a failure mode is observed in the wild and the existing checklist would have missed it. Drift between this doc and reality is the failure mode this doc is designed against, same as the architecture doc.
 
-**Last updated:** 2026-06-10 (Phase 2 Step 4 discovery + username-change gate ✅ **PASSED on staging — 22/22 GREEN** via `scripts/discovery-gate-test.mjs` after migration 010; prod replay pending the Phase 2 cutover. New section documents the 10 assertion categories + the 3 SECURITY DEFINER RPCs + run instructions. Earlier same day: Phase 2 Step 3 RLS adversarial gate ✅ **PASSED on staging — 21/21 GREEN**; Step 4 unblocked. Section documents the harness `scripts/rls-adversarial-test.mjs` + tenant-2/user-C fixture + 7 assertion categories + run instructions. Earlier same day: "Server-side profile inference" gate marked ✅ PASSED on staging; prod enablement still deferred. Prior: Phase 2 Step 2 section — migration 008 schema checks + end-to-end signup→onboard→active flow.)
+**Last updated:** 2026-06-10 (Phase 2 Step 5 social-graph + safety section added — gate `scripts/social-graph-gate-test.mjs` and migration 011 **written + validated (pglast clean, 73 statements; `node --check` clean), NOT yet run on staging**; section documents the 7 assertion phases, the canonical-pair / block-override / atomic-report+block / invite-auto-accept behaviors under test, the discovery-RPC block-filter re-gate, run instructions, and the known max_uses-exhaustion coverage gap. Earlier same day: Phase 2 Step 4 discovery + username-change gate ✅ **PASSED on staging — 22/22 GREEN** via `scripts/discovery-gate-test.mjs` after migration 010; prod replay pending the Phase 2 cutover. New section documents the 10 assertion categories + the 3 SECURITY DEFINER RPCs + run instructions. Earlier same day: Phase 2 Step 3 RLS adversarial gate ✅ **PASSED on staging — 21/21 GREEN**; Step 4 unblocked. Section documents the harness `scripts/rls-adversarial-test.mjs` + tenant-2/user-C fixture + 7 assertion categories + run instructions. Earlier same day: "Server-side profile inference" gate marked ✅ PASSED on staging; prod enablement still deferred. Prior: Phase 2 Step 2 section — migration 008 schema checks + end-to-end signup→onboard→active flow.)
 
 ---
 
@@ -864,6 +864,126 @@ the same failure mode as a too-broad RLS policy:
 | `%`/`_` in a prefix returns extra rows | LIKE metacharacters not escaped | Confirm the `replace(... '\\' ... '%' ... '_')` + `ESCAPE '\'` in `search_accounts_by_username` |
 | `change_username` succeeds when it should reject (cadence) | Gate fixture didn't reset, or cadence check uses wrong column | Confirm the script's service-role reset ran; check `username_source='user_set'` + `username_last_changed_at` logic |
 | Cross-tenant target leaks | RPC missing the `auth_tenant_id()` scope | Confirm every RPC filters `p.tenant_id = auth_tenant_id()` |
+
+---
+
+## Phase 2 — Step 5: Social graph + safety primitives (migration 011) (2026-06-10)
+
+**Status: ⏳ WRITTEN + VALIDATED, gate NOT yet run on staging.** Migration
+`011_phase2_step5_social_graph.sql` parses clean (pglast, 73 statements) and the gate
+`scripts/social-graph-gate-test.mjs` passes `node --check`. Neither has touched staging yet, and
+nothing is on `main`. **This gate is a hard stop for Step 6** — do not build the abandoned-signup
+job (Step 6) or any DM UI on an unverified social-graph base. Flip this section to ✅ PASSED only
+after `node scripts/social-graph-gate-test.mjs` exits 0 on staging.
+
+**What this step does:** Migration 011 adds the social graph + safety substrate, all with RLS from
+day one and SECURITY DEFINER RPCs as the **sole** write path (RLS is SELECT-only; direct writes are
+REVOKE'd from `authenticated`):
+- `relationships` — the contact graph as a **canonical ordered pair** (`account_lo < account_hi`
+  + `initiator_id`, one row per unordered pair, `UNIQUE(tenant_id, account_lo, account_hi)`). This
+  representation makes the simultaneous-add "glare race" structurally impossible — both directions
+  collapse to the same row.
+- `blocks` — modeled as an **override layer**: a block never mutates the `relationships` row; it's a
+  separate symmetric hide checked by `active_block_exists()` (bidirectional) on every initiation path
+  and both discovery RPCs. `unblocked_at IS NULL` = active; partial unique index enforces one active
+  block per ordered pair.
+- `reports` — `report_account()` is **atomic report + block** (inserts the report and the block in
+  one call, `ON CONFLICT DO NOTHING` on the block).
+- `invites` + `invite_redemptions` — base64url-token deep-link primitive; `redeem_invite()`
+  **auto-accepts** the contact (`state='accepted'`, `via='invite_link'`, `initiator=created_by`).
+- `email_hash_abuse` — abandoned-signup spam monitoring; versioned **HMAC-SHA256** (`key_version`
+  smallint), pepper computed in the Node job layer and **never stored in the DB**; RLS-enabled with
+  **no policy** + `REVOKE ALL FROM anon, authenticated` = service-role-only.
+
+Migration 011 also **amends** the Step 4 discovery RPCs (`find_account_by_email`,
+`search_accounts_by_username`) to add `AND NOT public.active_block_exists(auth.uid(), p.id)` — a
+behavior change, so **the Step 4 discovery gate must be re-run after 011** (a blocked account must
+disappear from discovery).
+
+**How it's verified:** A checked-in, re-runnable harness — `scripts/social-graph-gate-test.mjs` —
+mirroring the Step 3/4 gates. It signs in as real authenticated users (own JWTs, anon key); the
+service-role key is used ONLY for fixture setup and the FK-safe `resetGraph()` teardown, never for
+the assertions (it bypasses RLS, so asserting with it proves nothing). Exits 0 (gate GREEN) or 1
+(HARD STOP).
+
+**Gate:** `node scripts/social-graph-gate-test.mjs` exits 0 with every phase PASS, on staging.
+
+### Why the assertion shapes matter (don't loosen these)
+The write path is RPC-only, so each assertion checks a specific shape:
+- A successful contact/accept/block/report/redeem → the RPC returns and the **canonical row** lands
+  in exactly the expected state; "exactly one row per pair" is asserted explicitly (the glare-race
+  guard).
+- A rejected RPC (re-request own pending, accept a non-existent request, re-redeem, redeem own,
+  redeem revoked/expired/wrong-kind) → **error** with a specific message.
+- A blocked target → **empty result** from both discovery RPCs (NO error) — same shape as an RLS
+  SELECT denial.
+- A direct client write to `relationships` or `email_hash_abuse` (bypassing the RPCs) → **error**
+  (RLS / REVOKE denial) — the "RPCs are the sole write path" guarantee.
+
+### Fixture (set up idempotently by the script, service-role)
+- Reuses the Step 3/4 `.env.rls-test` and users **A**/**B** (tenant 1) + **user C** (tenant 2).
+- `resetGraph()` clears `invite_redemptions → invites → reports → blocks → relationships` in FK-safe
+  order before/after each run so re-runs are deterministic.
+- A/B set active + discoverable in tenant 1; C re-pointed into tenant 2 for the cross-tenant phase.
+
+### Assertion phases (all must PASS)
+1. **Mutual-accept happy path** — A `request_contact(B)` → `pending`; B sees the incoming pending row
+   via RLS; B `respond_to_contact(A, accept)` → `accepted`; **exactly one** canonical row exists.
+2. **Reverse-request glare** — A requests B, then B requests A before responding → collapses to the
+   **same** row, auto-accepted; still **exactly one** row (the canonical-pair guarantee).
+3. **Blocks** — a block gates both `request_contact` and `respond_to_contact` in both directions; the
+   blocker sees the block row (RLS), the blocked party does not; discovery hides the target
+   **symmetrically** (both RPCs, both directions); `unblock_account` restores discoverability +
+   initiation.
+4. **Report = atomic report + block** — `report_account(B, reason)` creates a report **and** an
+   active block in one call; a second identical report does not duplicate the block.
+5. **Invites** — `create_invite` returns a base64url token; `redeem_invite` auto-accepts the contact
+   (`via='invite_link'`, `initiator=A`); re-redeem → error; redeem-own → error; revoked / expired /
+   `conversation`-kind invite → rejected. *(Full `max_uses` exhaustion is NOT exercised — see the
+   coverage gap below.)*
+6. **Cross-tenant isolation** — C (tenant 2) cannot request/redeem against tenant-1 accounts; tenant
+   boundary holds on every social RPC.
+7. **RLS hardening** — a direct client INSERT into `relationships` is denied (writes are RPC-only);
+   a direct client read/write of `email_hash_abuse` is denied (service-role-only).
+
+### Known coverage gap (don't mistake for a pass)
+- **`max_uses` exhaustion is validated by code inspection only, not behaviorally.** With two
+  tenant-1 users (A inviter, B redeemer), the gate can't drive a redemption counter past 1, so the
+  `use_count >= max_uses` branch in `redeem_invite()` isn't exercised. Tracked in
+  `parking-lot.md` "Invite max-uses exhaustion gate coverage gap"; cheapest fix is a third tenant-1
+  fixture user.
+
+### How to run (Isaac, on staging)
+1. Apply `migrations/011_phase2_step5_social_graph.sql` in the staging SQL editor (idempotent DDL —
+   `CREATE … IF NOT EXISTS`, `CREATE OR REPLACE`, `DROP POLICY IF EXISTS`; safe to replay).
+2. Same `.env.rls-test` as the Step 3/4 gates (staging URL + anon + service_role; A/B/C emails;
+   throwaway password), `RLS_TEST_CONFIRM_STAGING=yes` (the script refuses to run otherwise — it
+   mutates the DB; **never point it at prod**).
+3. `node scripts/social-graph-gate-test.mjs` from the `V1/` root.
+4. **Re-run the Step 4 discovery gate** (`node scripts/discovery-gate-test.mjs`) after 011 — the
+   block-filter amend to the discovery RPCs is a behavior change; confirm a blocked account
+   disappears from discovery and an unblocked one reappears.
+5. Exit 0 + all PASS on both = gate GREEN, Step 6 unblocked. Any FAIL = hard stop; fix, re-run.
+
+### Before prod
+- [ ] Replay migration 011 against prod **as part of the Phase 2 prod cutover** (depends on
+  007/008/009/010 existing first — prod is pre-007 today). Re-run the gate only against a
+  non-prod target; **never point the mutating gate at production.**
+- [ ] Wire the `email_hash_abuse` HMAC pepper into the Step 6 abandoned-signup job's environment
+  (job layer, never the DB); confirm `key_version` is set and the pepper is recoverable/rotatable
+  per the decisions.md 2026-06-10 entry.
+
+### Known failure modes and how to diagnose
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `ERROR: function request_contact(...) does not exist` | Migration 011 not applied on this project | Run `011_phase2_step5_social_graph.sql` in the staging SQL editor |
+| Two rows for one pair after a glare test | `relationships` missing the `UNIQUE(tenant_id, account_lo, account_hi)` or the RPC isn't normalizing `lo`/`hi` | Confirm the unique constraint and the `account_lo < account_hi` canonicalization in `request_contact()` |
+| Blocked account still appears in discovery | The 011 amend to the discovery RPCs didn't apply | Confirm `find_account_by_email` / `search_accounts_by_username` carry `AND NOT public.active_block_exists(auth.uid(), p.id)`; re-apply 011 |
+| Direct client INSERT into `relationships` succeeds | The REVOKE/SELECT-only RLS didn't apply | Confirm direct writes are REVOKE'd from `authenticated` and only SELECT policies exist; the RPCs are the sole write path |
+| `report_account` creates a report but no block (or vice-versa) | The atomic report+block isn't in one transaction | Confirm both inserts are in the one RPC body with `ON CONFLICT DO NOTHING` on the block |
+| `redeem_invite` lets the creator redeem their own invite | Missing the redeem-own guard | Confirm the `created_by = auth.uid()` rejection branch in `redeem_invite()` |
+| Client can read `email_hash_abuse` | RLS enabled but a policy was added, or REVOKE missing | Confirm RLS is on with **no** policy + `REVOKE ALL ON public.email_hash_abuse FROM anon, authenticated` |
 
 ---
 
