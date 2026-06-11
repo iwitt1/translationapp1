@@ -132,8 +132,8 @@ export async function runAbandonmentSweep(config = {}) {
           if (hashErr) {
             throw new Error(`record_abandoned_email_hash failed: ${hashErr.message}`);
           }
+          summary.hashed += 1;
         }
-        summary.hashed += 1;
       } else {
         logger.warn(`[abandonment] ${account_id}: no active email identifier — deleting without hash`);
       }
@@ -144,8 +144,8 @@ export async function runAbandonmentSweep(config = {}) {
         if (delErr) {
           throw new Error(`admin.deleteUser failed: ${delErr.message}`);
         }
+        summary.deleted += 1;
       }
-      summary.deleted += 1;
     } catch (err) {
       summary.errors += 1;
       logger.error(`[abandonment] error processing ${account_id}: ${err.message}`);

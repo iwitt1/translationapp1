@@ -288,6 +288,10 @@ main()
     }
     const total = results.length;
     const green = pass === total;
-    console.log(`\n${green ? '✅' : '❌'} ${pass}/${total} assertions ${green ? 'GREEN' : 'FAILED'}\n`);
+    console.log(
+      `\n${green ? '✅' : '❌'} ${pass}/${total} PASSED` +
+        (green ? ' — GREEN' : ` — ${total - pass} FAILED`) +
+        '\n',
+    );
     process.exit(green ? 0 : 1);
   });
