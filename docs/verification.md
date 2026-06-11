@@ -10,7 +10,7 @@
 >
 > **When to revise a section:** when a failure mode is observed in the wild and the existing checklist would have missed it. Drift between this doc and reality is the failure mode this doc is designed against, same as the architecture doc.
 
-**Last updated:** 2026-06-10 (Phase 2 Step 6 abandonment + abuse-monitoring section added — ⏳ **WRITTEN, gate PENDING on staging** (migration 012 + `server/lib/abandonment.js` + Vercel cron + `scripts/abandonment-gate-test.mjs`, statically validated, not yet applied/run). Section documents the 4 assertion phases (dry-run deletes nothing, live sweep deletes+releases+records keyed-HMAC, repeat-record increments, anon EXECUTE denied), the record-then-delete ordering, the cron env/`CRON_SECRET` guard, and run instructions. Step 6 is the last build step before the prod cutover (after Step 7). Earlier same day: Phase 2 Step 5 social-graph + safety gate ✅ **PASSED on staging — 40/40 GREEN** via `scripts/social-graph-gate-test.mjs` after migration 011; the Step 4 discovery gate **re-passed 22/22** confirming the block-filter amend didn't regress discovery. Section documents the 7 assertion phases, the canonical-pair / block-override / atomic-report+block / invite-auto-accept behaviors verified, the discovery-RPC block-filter re-gate, run instructions, and the known max_uses-exhaustion coverage gap. Prod replay of 011 pending the Phase 2 cutover. Earlier same day: Phase 2 Step 4 discovery + username-change gate ✅ **PASSED on staging — 22/22 GREEN** via `scripts/discovery-gate-test.mjs` after migration 010; prod replay pending the Phase 2 cutover. New section documents the 10 assertion categories + the 3 SECURITY DEFINER RPCs + run instructions. Earlier same day: Phase 2 Step 3 RLS adversarial gate ✅ **PASSED on staging — 21/21 GREEN**; Step 4 unblocked. Section documents the harness `scripts/rls-adversarial-test.mjs` + tenant-2/user-C fixture + 7 assertion categories + run instructions. Earlier same day: "Server-side profile inference" gate marked ✅ PASSED on staging; prod enablement still deferred. Prior: Phase 2 Step 2 section — migration 008 schema checks + end-to-end signup→onboard→active flow.)
+**Last updated:** 2026-06-11 (Phase 2 Step 6 abandonment gate ✅ **PASSED on staging — 19/19 GREEN**; first run was 18/19 — fixed a dry-run counter bug in `server/lib/abandonment.js` (the `summary.deleted`/`summary.hashed` increments were moved inside the `if (!dryRun)` guards, so a dry run now honestly reports `deleted=0/hashed=0`) and made the gate summary wording unambiguous. No live-sweep behavior change. **Prod replay of 012 pending the Phase 2 cutover.** Prior 2026-06-10: Phase 2 Step 6 abandonment + abuse-monitoring section added — ⏳ **WRITTEN, gate PENDING on staging** (migration 012 + `server/lib/abandonment.js` + Vercel cron + `scripts/abandonment-gate-test.mjs`, statically validated, not yet applied/run). Section documents the 4 assertion phases (dry-run deletes nothing, live sweep deletes+releases+records keyed-HMAC, repeat-record increments, anon EXECUTE denied), the record-then-delete ordering, the cron env/`CRON_SECRET` guard, and run instructions. Step 6 is the last build step before the prod cutover (after Step 7). Earlier same day: Phase 2 Step 5 social-graph + safety gate ✅ **PASSED on staging — 40/40 GREEN** via `scripts/social-graph-gate-test.mjs` after migration 011; the Step 4 discovery gate **re-passed 22/22** confirming the block-filter amend didn't regress discovery. Section documents the 7 assertion phases, the canonical-pair / block-override / atomic-report+block / invite-auto-accept behaviors verified, the discovery-RPC block-filter re-gate, run instructions, and the known max_uses-exhaustion coverage gap. Prod replay of 011 pending the Phase 2 cutover. Earlier same day: Phase 2 Step 4 discovery + username-change gate ✅ **PASSED on staging — 22/22 GREEN** via `scripts/discovery-gate-test.mjs` after migration 010; prod replay pending the Phase 2 cutover. New section documents the 10 assertion categories + the 3 SECURITY DEFINER RPCs + run instructions. Earlier same day: Phase 2 Step 3 RLS adversarial gate ✅ **PASSED on staging — 21/21 GREEN**; Step 4 unblocked. Section documents the harness `scripts/rls-adversarial-test.mjs` + tenant-2/user-C fixture + 7 assertion categories + run instructions. Earlier same day: "Server-side profile inference" gate marked ✅ PASSED on staging; prod enablement still deferred. Prior: Phase 2 Step 2 section — migration 008 schema checks + end-to-end signup→onboard→active flow.)
 
 ---
 
@@ -997,12 +997,24 @@ The write path is RPC-only, so each assertion checks a specific shape:
 
 ## Phase 2 — Step 6: Abandonment + abuse monitoring (migration 012) (2026-06-10)
 
-**Status: ⏳ WRITTEN — gate PENDING on staging.** Migration 012 + the sweep code + the gate are
-written and statically validated (migration SQL via `pglast`; JS via `node --check`; gate helpers
-exercised offline). **Not yet applied or run on staging.** This step is the **last build step before
-the Phase 2 prod cutover** — the cutover lands after Step 7, per the 2026-06-10 sequencing decision.
-Do **not** check the roadmap items until `scripts/abandonment-gate-test.mjs` exits 0 on
-`translationapp1-staging`.
+**Status: ✅ PASSED on staging — 19/19 GREEN (2026-06-11).** Migration 012 applied on
+`translationapp1-staging`; `scripts/abandonment-gate-test.mjs` exits 0 with all 19 assertions
+passing (dry-run deletes nothing, live sweep deletes + cascades + releases the system username +
+records the keyed HMAC, fresh/active controls untouched, repeat-record increments `abandon_count`,
+anon EXECUTE denied on both helpers).
+
+**Counter-bug fix (2026-06-11).** The first run was 18/19 — the lone failure was
+`dry-run sweep deletes nothing — deleted=1`. Root cause: in `server/lib/abandonment.js` the
+`summary.deleted += 1` and `summary.hashed += 1` increments sat *outside* their `if (!dryRun)`
+guards, so a dry run skipped the real `deleteUser`/`record_abandoned_email_hash` calls (no data
+touched — the DB-level "aged pending survives a dry run" and "no abuse row on a dry run" assertions
+both PASSED) but still counted them. Fixed by moving both increments inside the `if (!dryRun)`
+blocks; a dry run now honestly reports `deleted=0/hashed=0`, and `scanned` carries the would-sweep
+count. The gate's summary line was also made unambiguous (`N/total PASSED — GREEN` /
+`— N FAILED`) so a near-pass no longer reads as a total failure. No behavior change to live sweeps.
+
+This step is the **last build step before the Phase 2 prod cutover** — the cutover lands after
+Step 7, per the 2026-06-10 sequencing decision. **Prod replay of 012 is still pending that cutover.**
 
 **What this step does:** A scheduled sweep reclaims abandoned pending accounts and records a privacy-
 preserving abuse signal. Pieces:

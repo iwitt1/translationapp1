@@ -35,6 +35,8 @@
 
 **Revisit when:** usernames become user-chosen/shareable (then soft-delete, not hard-delete); we stand up a CRM/sending domain (then unpark re-prompt emails); abandonment volume grows enough to need batching or a partial-progress cursor; or we want the abuse signal to feed an actual rate-limit/denylist (today it's only recorded).
 
+**Gate result (2026-06-11):** `scripts/abandonment-gate-test.mjs` PASSED on staging — 19/19 GREEN. First run was 18/19; the single failure was a dry-run counter bug in `server/lib/abandonment.js` — `summary.deleted`/`summary.hashed` were incremented *outside* their `if (!dryRun)` guards, so a dry run skipped the real `deleteUser`/`record_abandoned_email_hash` calls (no data touched) but still counted them. Fixed by moving the increments inside the guard (`scanned` carries the would-sweep count); the gate's summary line was also made unambiguous. No behavior change to live sweeps, so no separate decision — recorded here for history. Prod replay of 012 pending the Phase 2 cutover (after Step 7).
+
 ## 2026-06-10 — Contact-graph representation: canonical ordered pair (not directional rows)
 
 **Decision:** `relationships` stores **one row per unordered pair** — `account_lo`/`account_hi` with a CHECK `account_lo < account_hi`, plus `initiator_id` (whoever asked first) — rather than the directional `requester_id`/`addressee_id` design sketched in architecture.md §7. Unique `(tenant_id, account_lo, account_hi)`. Shipped in migration 011.

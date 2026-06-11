@@ -16,15 +16,19 @@
 
 ---
 
-## Progress (updated 2026-06-10)
+## Progress (updated 2026-06-11)
 
 - **Step 0 — Pre-flight:** done. `lib/policies.js` scaffolded; config audit captured; branch→Preview→staging wiring confirmed.
 - **Step 1 — Identity foundation:** done. Migration `007` shipped (profiles, account_identifiers, account_settings, `auth_tenant_id()`, `handle_new_user()` trigger, RLS). Gate passed on staging.
-- **Step 2 — Auth + onboarding:** done. Migration `008` shipped (text→uuid identity cutover, `complete_onboarding()` RPC, RLS on messages/message_translations/ulp/upe). Magic-link auth + onboarding app layer in `App.jsx`. **Gate PASSED on staging 2026-06-10** (full signup→onboard→active flow for two users).
+- **Step 2 — Auth + onboarding:** done. Migration `008` (text→uuid identity cutover, `complete_onboarding()` RPC, RLS on messages/message_translations/ulp/upe) + magic-link auth + onboarding in `App.jsx`. **Gate PASSED on staging 2026-06-10** (full signup→onboard→active flow for two users). Migration `009` restores the `nonbinary` gender signal 008 dropped.
+- **Step 3 — RLS adversarial gate:** done. **PASSED on staging 2026-06-10 — 21/21 GREEN** via `scripts/rls-adversarial-test.mjs` (cross-user read/write denial, self-write escalation denial, cross-tenant isolation).
+- **Step 4 — Discovery:** done. Migration `010` (3 SECURITY DEFINER RPCs — `find_account_by_email`, `search_accounts_by_username`, `change_username` — + username-prefix index). **Gate PASSED on staging 2026-06-10 — 22/22 GREEN** (re-passed after 011's block-filter amend).
+- **Step 5 — Social graph + safety:** done. Migration `011` (canonical-pair `relationships`, `blocks`, `reports`, `invites`, `invite_redemptions`, `email_hash_abuse` + 9 SECURITY DEFINER RPCs). **Gate PASSED on staging 2026-06-10 — 40/40 GREEN.**
+- **Step 6 — Abandonment + abuse monitoring:** done. Migration `012` (two service_role-only helpers) + `server/lib/abandonment.js` sweep + `api/v1/jobs/abandonment.js` Vercel cron + `vercel.json` + `scripts/abandonment-gate-test.mjs`. **Gate PASSED on staging 2026-06-11 — 19/19 GREEN** (a dry-run counter bug was fixed first). Re-prompt emails **parked → future CRM**.
 - **Separable workstream — server-side profile inference:** done. `POST /api/v1/infer-profile` + `server/lib/inferProfile.js`. **Gate PASSED on staging 2026-06-10.** See decisions.md / verification.md.
-- **→ NEXT: Step 3 — RLS adversarial gate.** Hard-stop security gate. Note OPUS-FIX #2 in migration 007: the gate must also include a **self-write escalation** test (PATCH own `is_verified`/`status`/`username` → expect denied), not just cross-user reads.
+- **→ NEXT: Step 7 — Data deletion.** `data_deletion_requests` table + an anonymizing job (strip user_id/PII, keep translation pairs). GATE: a test deletion anonymizes corrections while the translation pairs survive. After Step 7's gate is green, the **Phase 2 prod cutover** (replay 007–012(+) against prod in order, set the Vercel Production env vars the crons need, verify) is the next milestone — a deliberate, coordinated event, not implicit.
 
-**Migrations shipped so far: 007, 008, 009 (009 restores the `nonbinary` gender signal that 008 accidentally dropped). Next migration prefix is `010_`.**
+**Migrations shipped so far: 007–012 — all staging-only; prod has run none of them (prod replay is the Phase 2 cutover, which lands after Step 7). Next migration prefix is `013_`.**
 
 ---
 
