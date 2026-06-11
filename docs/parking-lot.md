@@ -240,17 +240,20 @@ The guard preventing cross-language dialect contamination (e.g. `es-AR` being wr
 
 - **Trigger:** Server-side inference migration. Resolve both issues at once.
 
-### Vestigial columns on `messages` + `architecture.md` §7 doc drift
-The prod `messages` table has columns that predate the `/migrations/` folder and aren't used by the live code: `room_id` (uuid), `translated_text` (text), `target_language` (text), `tone` (text), `context_id` (text), `model_version` (text, default `'V1'`), `latency_ms` (numeric). All nullable; all ignored by `App.jsx` and the translation pipeline. They survived because removing them was unrelated cleanup work that was never the highest priority.
+### ~~Vestigial columns on `messages` + `architecture.md` §7 doc drift~~ → RESOLVED 2026-06-11 (dropped via migration 014)
+The 7 vestigial `messages` columns (`room_id`, `translated_text`, `target_language`, `tone`, `context_id`, `model_version`, `latency_ms`) are **dropped by migration 014** (forward-schema prep), and `architecture.md` §7 now documents the cleaned-up schema. Resolution chose option 1 (drop, not just document) because the pre-cutover empty-prod window made it cheap and an `ALTER … DROP COLUMN` keeps staging + prod matched. Pre-flight confirmed all 7 are superseded elsewhere (telemetry → `translation_events`; cache → `message_translations`; conversation mapping → `conversation_id` + `conversation_contexts`) and unread by live code. See decisions.md 2026-06-11 "Forward-schema prep before prod cutover".
 
-`architecture.md` §7 documents the *intended* `messages` schema (`id`, `sender_id`, `original_text`, `source_language`, `created_at`) and doesn't mention these extras — so the doc and the actual database disagree. Two reasonable resolutions:
+### Per-user IANA timezone (separate from `timestamptz`)
+Migration 014 standardized timestamps on `timestamptz` — but `timestamptz` stores only the UTC instant; it does **not** retain the user's local timezone. If we ever want to know "what local time was it for this user" (time-of-day greetings, localized display, time-aware register inference), that needs a separate explicit datum: a nullable IANA string (e.g. `"America/Argentina/Buenos_Aires"`) on the user record (`account_settings` or `profiles`).
+- **Why deferred:** No near-term use, and it's a purely additive nullable column — non-destructive to add anytime. Not worth folding into the cutover speculatively.
+- **Trigger:** A concrete feature that needs the user's local clock. Add the column then.
+- **Surfaced:** 2026-06-11, forward-looking schema review.
 
-1. **Drop the columns** via a migration. Cleanest end state. Requires a careful pre-flight that nothing reads them (grep confirms no, but a deliberate review before dropping anything is warranted).
-2. **Update `architecture.md` §7** to describe the actual schema and explicitly mark these columns as vestigial / unused.
-
-- **Why interesting:** Doc/DB drift is a category of bug that hides until someone (Hermes, a new collaborator, or future you) reads `architecture.md`, trusts it, and is surprised. Either resolution collapses the gap.
-- **Surfaced:** 2026-05-18, during staging setup when migration 001 couldn't be run against an empty DB because the base tables it `ALTER`s weren't represented anywhere in the migrations folder. Resolved short-term by writing `000_base_schema.sql` to mirror prod (vestigial columns included), but that codifies the debt rather than removing it.
-- **Trigger:** Phase 2 schema work, or anytime we're already doing migrations against `messages`. Strong candidate for an early Hermes task once the agent is online — small, well-bounded, requires careful verification.
+### ULID / uuid v7 for high-volume tables (id strategy)
+All PKs use `gen_random_uuid()` (uuid v4, random). Random v4 PKs fragment btree indexes and hurt insert locality at scale; time-ordered ids (uuid v7 or ULID) give better locality and let you sort by id. Fine at current scale (hundreds of testers); a PK-type change on a *populated* table is a full rewrite (every FK too), so this is a "decide before the table gets big" call — most relevant for the future high-volume tables (`translation_corrections`, `translation_events`, usage/metering).
+- **Why deferred:** v4 is genuinely fine until meaningful volume; the migration cost only bites at scale; and the decision can be made per-table when the high-volume ones are built rather than retrofitting existing low-volume tables.
+- **Trigger:** A meaningful number of users or messages, OR building any of the high-volume tables above — pick a time-ordered id strategy for *those* at creation.
+- **Surfaced:** 2026-06-11, forward-looking schema review.
 
 ### Other config state lives outside `/migrations/` and isn't captured
 The `messages`-on-realtime-publication item was originally configured via the Supabase Studio UI. Migration `004_enable_realtime_publication.sql` (2026-05-18) backfilled it. But the broader category of risk remains: other Supabase configuration may exist in prod via UI clicks and not in the migrations folder. Candidate suspects (need an audit pass):

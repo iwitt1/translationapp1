@@ -9,10 +9,13 @@
  *   2. Concurrent viewers translating the same message fired simultaneous client
  *      writes to the same profile row with no coordination (last-write-wins race).
  *
- * This module fixes both: it runs with a privileged Postgres connection that
- * bypasses RLS, and it serialises the read+write with SELECT ... FOR UPDATE inside
- * a single transaction so concurrent inferences for the same sender can't clobber
- * each other.
+ * This module fixes both: it connects as the dedicated least-privilege `profile_writer`
+ * role (migration 015), which does NOT bypass RLS — instead it holds column-scoped grants
+ * plus RLS policies targeted `TO profile_writer` that permit exactly the three operations
+ * below (USING/ WITH CHECK true). The DB authorizes the *operation*; this module authorizes
+ * the *row* via the trust boundary above. It also serialises the read+write with
+ * SELECT ... FOR UPDATE inside a single transaction so concurrent inferences for the same
+ * sender can't clobber each other.
  *
  * TRUST BOUNDARY (decisions.md 2026-06-10): the caller sends `message_id`, NOT a
  * sender id. We look up the message row ourselves and derive the authoritative

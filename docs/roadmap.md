@@ -198,11 +198,13 @@
 
 **Goal:** Move from "one global room" to "users have many conversations with many participants." This is where the data model gets deliberately re-evaluated for future efficiencies before changes are committed.
 
+> **Forward-prep done (migration 014, 2026-06-11).** `messages.conversation_id` already exists — nullable, defaulted to the global-conversation sentinel `00000000-0000-0000-0000-000000000002`, and indexed — so this phase adds the conversations tables and *promotes* the existing column rather than backfilling. See decisions.md 2026-06-11 "Forward-schema prep before prod cutover".
+
 ### Schema
-- [ ] `conversations` table
+- [ ] `conversations` table — insert the `…0002` global-conversation row so every pre-existing message already FK-resolves
 - [ ] `conversation_members` table
-- [ ] `messages.conversation_id` foreign key
-- [ ] `conversation_contexts` rows scoped per conversation (already in place from Phase 1)
+- [ ] `messages.conversation_id`: add the FK (→ `conversations`), `SET NOT NULL`, then **drop the migration-014 default** so real conversation ids take over. **No backfill** — every row already carries the sentinel.
+- [ ] `conversation_contexts` rows scoped per conversation (table in place from Phase 1) — **add its RLS policy here** (SELECT same-tenant / write-via-RPC); it shipped without RLS and must not serve real traffic until the policy lands (architecture.md §7)
 - [ ] **Deliberate planning step:** before implementing, do a focused review of the data model with future efficiencies in mind — translation deduplication across conversations, caching strategies, multi-tenant scoping. Document conclusions in `decisions.md`.
 
 ### UI

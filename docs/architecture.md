@@ -2,7 +2,7 @@
 
 > Living technical document. Describes what the system is, the principles it's built on, and what we're migrating toward. Updated in the same commit as any architectural change.
 
-**Last updated:** 2026-06-11 (Phase 2 **Step 7 (data deletion / GDPR erasure) gate PASSED on staging — 37/37 GREEN** (first run 5/15 before migration 013 was applied — PostgREST "function not found in schema cache"). Migration 013 adds the net-new `data_deletion_requests` table + RLS + 6 RPCs (`request_account_deletion`/`cancel_account_deletion` user-facing; `list_due_deletion_requests`/`claim_deletion_request`/`complete_deletion_request` service_role); the Node sweep is `server/lib/deletion.js` + `api/v1/jobs/deletion.js` (daily 09:00 UTC cron) + a second `vercel.json` cron. **Two-phase** erasure: `request` soft-deletes (`status='deactivated'`) + enqueues with a 30-day `grace_until`; `cancel` reverses within grace; the sweep hard-deletes due requests via the admin API and the 007/008 FK chain anonymizes (profile/identifiers/settings/ULP/events cascade; `messages.sender_id`→NULL retains content). Audit row survives the cascade (`user_id` FK = SET NULL). Records the keyed email HMAC reusing `email_hash_abuse` (no schema change). Schema extends §7's sketch with `grace_until`/`requested_by`/`cancelled` (decisions.md 2026-06-11). §7 status + table, §10 retention, §13 file map, DB-functions list all reconciled. Prod replay of 013 pending the Phase 2 cutover. Earlier 2026-06-11: Phase 2 **Step 6** gate ✅ **PASSED on staging — 19/19 GREEN**; §7 status flipped. The sweep code (`server/lib/abandonment.js`) is unchanged in shape — a dry-run counter bug was fixed (the `summary.deleted`/`summary.hashed` increments moved inside the `if (!dryRun)` guards; no live-sweep behavior change). Prod replay of 012 pending the Phase 2 cutover (after Step 7). Prior 2026-06-10: §7/§8/§11/§13 reconciled to Phase 2 **Step 6** — migration 012 (abandonment support functions `list_abandoned_pending_accounts()` + `record_abandoned_email_hash()`, service_role-only) **written, pending gate on staging**; the sweep itself is Node — `server/lib/abandonment.js` run by a Vercel cron (`api/v1/jobs/abandonment.js` + `vercel.json`). Username release is automatic via the auth.users→profiles→identifiers FK cascade — no release RPC (decisions.md 2026-06-10 "Step 6 abandonment"). Prior 2026-06-10: §7/§10/§13 reconciled to Phase 2 **Step 5** — migration 011 (social graph + safety primitives) **gate PASSED on staging, 40/40 GREEN** (Step 4 discovery gate re-passed 22/22 after the block-filter amend): `relationships` adopts the **canonical-pair** model — `account_lo`/`account_hi`/`initiator_id` rather than the originally-sketched `requester_id`/`addressee_id` (decisions.md 2026-06-10 "Contact-graph representation"); adds `blocks`/`reports`/`invites`/`invite_redemptions`/`email_hash_abuse`, nine SECURITY DEFINER RPCs, and amends the two Step 4 discovery RPCs to filter active blocks. Prior 2026-06-10: §2, §7, §10, §13 reconciled to the Phase 2 build: migrations 007 (identity foundation) + 008 (identity cutover) are LIVE ON STAGING — `profiles`/`account_identifiers`/`account_settings` exist, `user_profiles` dropped, `messages.sender_id` + `user_linguistic_profiles`/`user_profile_events` cut over to uuid, RLS enabled on the Phase 2 tables, and `auth_tenant_id()`/`handle_new_user()`/`complete_onboarding()` added. Server-side profile inference shipped + verified on staging. **Prod is untouched** — it still runs the pre-auth no-RLS app; the cutover is a coordinated wipe-staging-then-prod event (see §10). Prior 2026-05-18: §7 vestigial-column reconciliation.)
+**Last updated:** 2026-06-11 (**Pre-cutover schema + role hardening.** Migration **014 `forward_schema_prep`** verified on staging (4/4 GREEN): adds `messages.conversation_id` (nullable, default global-conversation sentinel `…0002`, no FK — Phase 3 adds the FK + NOT NULL with zero backfill), drops the 7 vestigial `messages` columns (all superseded — see §7), converts four naive `timestamp` columns → `timestamptz` (interpreted AS UTC), and adds the missing FK indexes. Migration **015 `profile_writer_role`** (pglast-validated, not yet applied) adds a least-privilege `profile_writer` Postgres role for `server/lib/inferProfile.js` — **scoped GRANTs + RLS policies `TO profile_writer`, not BYPASSRLS** (the DB authorizes the operation, app code authorizes the row via the message-derived trust boundary; deny-by-default everywhere else); role is `NOLOGIN` so the migration carries no secret — operator enables login + sets `DATABASE_URL_PROFILE_WRITER` out of band before the inference gate (#12). §7 (messages/conversation_id + vestigial drop + timestamptz notes), §10 (profile_writer role posture), §13 file map all reconciled; decisions.md 2026-06-11 ×2 ("Forward-schema prep before prod cutover", "profile_writer role: scoped RLS, not BYPASSRLS"). Prod replay sequence is now 007→015. Prior 2026-06-11: Phase 2 **Step 7 (data deletion / GDPR erasure) gate PASSED on staging — 37/37 GREEN** (first run 5/15 before migration 013 was applied — PostgREST "function not found in schema cache"). Migration 013 adds the net-new `data_deletion_requests` table + RLS + 6 RPCs (`request_account_deletion`/`cancel_account_deletion` user-facing; `list_due_deletion_requests`/`claim_deletion_request`/`complete_deletion_request` service_role); the Node sweep is `server/lib/deletion.js` + `api/v1/jobs/deletion.js` (daily 09:00 UTC cron) + a second `vercel.json` cron. **Two-phase** erasure: `request` soft-deletes (`status='deactivated'`) + enqueues with a 30-day `grace_until`; `cancel` reverses within grace; the sweep hard-deletes due requests via the admin API and the 007/008 FK chain anonymizes (profile/identifiers/settings/ULP/events cascade; `messages.sender_id`→NULL retains content). Audit row survives the cascade (`user_id` FK = SET NULL). Records the keyed email HMAC reusing `email_hash_abuse` (no schema change). Schema extends §7's sketch with `grace_until`/`requested_by`/`cancelled` (decisions.md 2026-06-11). §7 status + table, §10 retention, §13 file map, DB-functions list all reconciled. Prod replay of 013 pending the Phase 2 cutover. Earlier 2026-06-11: Phase 2 **Step 6** gate ✅ **PASSED on staging — 19/19 GREEN**; §7 status flipped. The sweep code (`server/lib/abandonment.js`) is unchanged in shape — a dry-run counter bug was fixed (the `summary.deleted`/`summary.hashed` increments moved inside the `if (!dryRun)` guards; no live-sweep behavior change). Prod replay of 012 pending the Phase 2 cutover (after Step 7). Prior 2026-06-10: §7/§8/§11/§13 reconciled to Phase 2 **Step 6** — migration 012 (abandonment support functions `list_abandoned_pending_accounts()` + `record_abandoned_email_hash()`, service_role-only) **written, pending gate on staging**; the sweep itself is Node — `server/lib/abandonment.js` run by a Vercel cron (`api/v1/jobs/abandonment.js` + `vercel.json`). Username release is automatic via the auth.users→profiles→identifiers FK cascade — no release RPC (decisions.md 2026-06-10 "Step 6 abandonment"). Prior 2026-06-10: §7/§10/§13 reconciled to Phase 2 **Step 5** — migration 011 (social graph + safety primitives) **gate PASSED on staging, 40/40 GREEN** (Step 4 discovery gate re-passed 22/22 after the block-filter amend): `relationships` adopts the **canonical-pair** model — `account_lo`/`account_hi`/`initiator_id` rather than the originally-sketched `requester_id`/`addressee_id` (decisions.md 2026-06-10 "Contact-graph representation"); adds `blocks`/`reports`/`invites`/`invite_redemptions`/`email_hash_abuse`, nine SECURITY DEFINER RPCs, and amends the two Step 4 discovery RPCs to filter active blocks. Prior 2026-06-10: §2, §7, §10, §13 reconciled to the Phase 2 build: migrations 007 (identity foundation) + 008 (identity cutover) are LIVE ON STAGING — `profiles`/`account_identifiers`/`account_settings` exist, `user_profiles` dropped, `messages.sender_id` + `user_linguistic_profiles`/`user_profile_events` cut over to uuid, RLS enabled on the Phase 2 tables, and `auth_tenant_id()`/`handle_new_user()`/`complete_onboarding()` added. Server-side profile inference shipped + verified on staging. **Prod is untouched** — it still runs the pre-auth no-RLS app; the cutover is a coordinated wipe-staging-then-prod event (see §10). Prior 2026-05-18: §7 vestigial-column reconciliation.)
 **Repo:** https://github.com/iwitt1/translationapp1
 **Owner:** Isaac (iwitt1)
 
@@ -232,16 +232,10 @@ The `_source` fields in `user_linguistic_profiles` (e.g., `dialect_source: 'expl
 | `sender_id` | text → **uuid** | Was the typed username string. **Staging (008):** now `uuid`, FK `auth.users(id)` ON DELETE SET NULL. Prod still `text`. |
 | `original_text` | text | The message as typed |
 | `source_language` | text | BCP 47 language code, detected by AI at send |
-| `tenant_id` | uuid | NOT NULL, FK to `tenants(id)`. Added by migration `001`. |
-| `room_id` | uuid | **Vestigial** — predates the single-global-room model; unused by current code |
-| `translated_text` | text | **Vestigial** — predates the `message_translations` cache; unused |
-| `target_language` | text | **Vestigial** — same era as above |
-| `tone` | text | **Vestigial** — predecessor to the `context_type` parameter |
-| `context_id` | text | **Vestigial** — same era |
-| `model_version` | text | **Vestigial** — old per-message model tag, default `'V1'` |
-| `latency_ms` | numeric | **Vestigial** — old telemetry hook, currently not written |
+| `tenant_id` | uuid | NOT NULL, FK to `tenants(id)`. Added by migration `001`. Indexed (014). |
+| `conversation_id` | uuid | **Forward-prep for Phase 3 (migration 014).** Nullable now, `DEFAULT` the global-conversation sentinel `00000000-0000-0000-0000-000000000002` (mirrors the tenant sentinel `…0001`). No FK yet — the `conversations` table doesn't exist until Phase 3, which then adds the FK, `SET NOT NULL`, and drops the default. Pre-staging it now means **zero backfill** when Phase 3 lands. Indexed (014). |
 
-The vestigial columns are present in both prod and staging (and captured in `migrations/000_base_schema.sql`) so the two environments match exactly. Cleanup is parked: `/docs/parking-lot.md` → "Vestigial columns on `messages` + architecture.md §7 doc drift."
+**Vestigial columns dropped by migration 014.** `room_id`, `translated_text`, `target_language`, `tone`, `context_id`, `model_version`, `latency_ms` were all superseded and are removed: `room_id`/`context_id` → `conversation_id` + `conversation_contexts`; `translated_text` → `message_translations.translated_text`; `target_language` → `message_translations.language`; `tone` → per-call `context_type` + `conversation_contexts.detected_register`; `model_version` → `translation_events.model_used`; `latency_ms` → `translation_events.latency_ms`. They lived in `000_base_schema.sql`; 014 is an `ALTER … DROP COLUMN` (not a recreate) run on staging then in the prod replay, so both environments stay matched. (decisions.md 2026-06-11 "Forward-schema prep".)
 
 #### `message_translations`
 | Column | Type | Notes |
@@ -250,8 +244,8 @@ The vestigial columns are present in both prod and staging (and captured in `mig
 | `message_id` | uuid | FK to `messages(id)`. Nullable in schema; the cache contract assumes a real link. |
 | `language` | text | NOT NULL. Target language code (BCP 47). |
 | `translated_text` | text | NOT NULL. The cached translation. |
-| `created_at` | timestamp without time zone | Default `now()` |
-| `tenant_id` | uuid | NOT NULL, FK to `tenants(id)`. Added by migration `001`. |
+| `created_at` | timestamptz | Default `now()`. **Migration 014** converted this from `timestamp without time zone` (naive values interpreted AS UTC) to standardize on tz-aware timestamps across the schema. |
+| `tenant_id` | uuid | NOT NULL, FK to `tenants(id)`. Added by migration `001`. Indexed (014). |
 | `prompt_version` | text | Semver of the prompt that produced this translation. Nullable; null = pre-versioning (pre-migration `003`). |
 
 Unique: `(message_id, language)` — one cached translation per message per target.
@@ -278,9 +272,9 @@ identity is now the `auth.users` uuid (via `profiles`) and language lives in
 |---|---|---|
 | `id` | uuid | Primary key |
 | `name` | text | |
-| `default_correction_ownership` | enum | `'platform' \| 'tenant' \| 'shared'`, default `'platform'` |
+| `default_correction_ownership` | text + CHECK | `'platform' \| 'tenant' \| 'shared'`, default `'platform'`. (Migration 001 already implements this as text + CHECK, not a Postgres enum — matches the project-wide anti-enum convention; spec corrected 2026-06-11.) |
 | `training_data_agreement` | boolean | default false |
-| `created_at` | timestamp | |
+| `created_at` | timestamptz | Standardized by migration 014 (was naive `timestamp`). |
 
 Seeded with one row representing the chat app itself. Every other table gets a `tenant_id` FK pointing at this row. When Phase 2 opens the API to external customers, new tenants get new rows and RLS scopes them.
 
@@ -308,17 +302,23 @@ Seeded with one row representing the chat app itself. Every other table gets a `
 | `updated_at` | timestamptz | default `now()` |
 
 #### `conversation_contexts`
+> **RLS outstanding.** This table is live on staging (migration 002) but does **not** yet
+> have row-level security. Per the project rule that *every* table carries RLS from the
+> Phase 2 cutover forward, a SELECT-same-tenant / write-via-RPC policy must land before it
+> serves real traffic. Deferred for now (no meaningful traffic until Phase 3); tracked in
+> roadmap.md Phase 3. The `conversation_id` PK here is the same id pre-staged on
+> `messages.conversation_id` (migration 014) and seeded as the global-conversation sentinel.
 | Column | Type | Notes |
 |---|---|---|
 | `conversation_id` | uuid | Primary key |
 | `tenant_id` | uuid | FK to tenants |
 | `participant_ids` | uuid[] | |
-| `detected_register` | enum | `'professional' \| 'casual' \| 'romantic' \| 'family' \| 'support'` |
+| `detected_register` | text + CHECK | `'professional' \| 'casual' \| 'romantic' \| 'family' \| 'support'`. (text + CHECK, not a Postgres enum — anti-enum convention; spec corrected 2026-06-11.) |
 | `register_confidence` | float | 0.0–1.0 |
-| `relationship_closeness` | enum | `'new' \| 'acquainted' \| 'close'` |
+| `relationship_closeness` | text + CHECK | `'new' \| 'acquainted' \| 'close'`. (text + CHECK, not enum; spec corrected 2026-06-11.) |
 | `closeness_signals` | jsonb | `{message_count, days_active, avg_response_time}` |
 | `dominant_topics` | text[] | e.g. `["medical", "legal"]` for domain routing |
-| `updated_at` | timestamp | |
+| `updated_at` | timestamptz | Standardized by migration 014 (was naive `timestamp`). |
 
 Updated by a background job every N messages or when a significant shift is detected. NOT updated on every message.
 
@@ -397,7 +397,7 @@ On a voluntary erasure the sweep records the same keyed email HMAC as Step 6, re
 | `previous_value` | jsonb | |
 | `new_value` | jsonb | |
 | `source` | enum | `'explicit' \| 'inference' \| 'correction_analysis'` |
-| `created_at` | timestamp | |
+| `created_at` | timestamptz | Standardized by migration 014 (was naive `timestamp`). |
 
 Lets you reconstruct what the system believed about a user at any point in time. Critical for debugging bad translations and for quality control on training data.
 
@@ -730,6 +730,7 @@ Fine-tuning takes a base model and trains it further on our corrections data. Be
 - **Column-level write guard (007, OPUS-FIX #2).** RLS scopes *rows*, not *columns* — so even with a correct row policy, a `authenticated` user could PostgREST-PATCH `is_verified=true` on their own row to self-verify. Mitigation: `REVOKE UPDATE ON profiles FROM authenticated; GRANT UPDATE (display_name) ON profiles TO authenticated;`. Everything else on `profiles` (`status`, `username`, `is_verified`, …) is mutated only via `SECURITY DEFINER` RPCs (e.g. `complete_onboarding`, `change_username`). The Step 3 gate includes a self-write escalation negative test for exactly this.
 - **Discovery RPCs deliberately bypass RLS (010, Step 4).** `account_identifiers` SELECT is own-rows-only, so cross-user discovery is impossible as a client query — by design. The three Step 4 RPCs (`find_account_by_email`, `search_accounts_by_username`, `change_username`) are `SECURITY DEFINER` and bypass that RLS *on purpose*, re-imposing the safety rules in code: **handle minimization** (return only `id`/`display_name`/`username`, never other identifiers or retired handles), tenant scoping via `auth_tenant_id()`, active-profiles-only, discoverability settings honored, and anti-enumeration limits (email exact-equality only; username prefix min-length 3 / cap 20 / escaped LIKE). EXECUTE is granted to `authenticated`, revoked from `anon`/`public`. Their correctness must be proven as real authenticated users (the Step 4 gate), since the postgres role bypasses RLS and would mask a leak.
 - **Social-graph tables are RLS SELECT-only; writes are RPC-only (011, Step 5).** `relationships`, `blocks`, `reports`, `invites`, `invite_redemptions` each enable RLS with a narrow SELECT policy (party / blocker / reporter / creator / redeemer respectively) and **no** INSERT/UPDATE/DELETE policy — so `authenticated` cannot mutate the graph directly; the nine `SECURITY DEFINER` RPCs are the only write path and re-impose every rule in code (mutual-acceptance, block gating, atomic report+block, invite validity). `email_hash_abuse` is hardest: RLS-enabled with no client policy **and** `REVOKE ALL ... FROM anon, authenticated` → service-role only. Block privacy is deliberate: the blocker can SELECT their block row, the blocked cannot. The discovery RPCs are amended to filter active blocks (symmetric hide). Proven by the Step 5 gate (`scripts/social-graph-gate-test.mjs`) as real authenticated users, including a direct-client-write-denied negative test.
+- **Server-side inference runs as a dedicated least-privilege role, NOT BYPASSRLS (015).** `server/lib/inferProfile.js` connects (via `DATABASE_URL_PROFILE_WRITER`, backend-only, never `VITE_`-prefixed) as the `profile_writer` role. It deliberately does **not** use `BYPASSRLS` (which Supabase now permits on PG 16+, but which is coarse — it skips RLS on *every* table). Instead the role holds **column-scoped grants** for exactly what inference touches (`SELECT (id, sender_id, tenant_id, source_language)` on `messages`; `SELECT` + `UPDATE (7 allowlisted cols + updated_at)` on `user_linguistic_profiles`; `INSERT (6 cols)` on `user_profile_events`) plus **RLS policies targeted `TO profile_writer`** that permit only those ops (`USING/WITH CHECK true`). Net: the DB authorizes the *operation*, the app authorizes the *row* (via the message-derived trust boundary, decisions.md 2026-06-10), and the role is **deny-by-default on every other table** — even an errant future grant is still blocked by RLS where no `profile_writer` policy exists. The role is created `NOLOGIN`; an operator enables `LOGIN` + a secret out of band (never committed). Column-level `UPDATE` also satisfies the `SELECT … FOR UPDATE` row lock (verified 2026-06-11). Proven by the inference gate on staging. (decisions.md 2026-06-11 "profile_writer role: scoped RLS, not BYPASSRLS".)
 
 ### Target (post-Phase 2)
 - Supabase Auth providing real user identity (stable `auth.users` uuid under the hood; `username` and `display_name` are separate handles, neither is the key — see §7 + decisions.md 2026-06-09).
@@ -839,7 +840,7 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │   │   ├── abandonment.js    Step 6 abandonment sweep (delete aged-pending, release username, HMAC)
 │   │   └── deletion.js       Step 7 deletion sweep (claim→hash→admin-delete→complete; SET-NULL retain)
 │   └── .env                  Local OPENAI_API_KEY (not committed)
-├── migrations/               Run in Supabase SQL editor, manually for now (000–013)
+├── migrations/               Run in Supabase SQL editor, manually for now (000–015)
 │   ├── 000_base_schema.sql … 006_user_profile_events_task_id.sql
 │   ├── 007_phase2_identity_foundation.sql   profiles/identifiers/settings, auth_tenant_id(), trigger
 │   ├── 008_phase2_step2_identity_cutover.sql  text→uuid cutover, RLS, complete_onboarding()
@@ -847,7 +848,9 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │   ├── 010_phase2_step4_discovery.sql       Step 4 discovery + change_username RPCs, username-prefix index
 │   ├── 011_phase2_step5_social_graph.sql    Step 5 relationships/blocks/reports/invites/email_hash_abuse + 9 RPCs; amends 010 discovery RPCs to filter blocks
 │   ├── 012_phase2_step6_abandonment.sql     Step 6 list_abandoned_pending_accounts() + record_abandoned_email_hash() (service_role-only)
-│   └── 013_phase2_step7_data_deletion.sql   Step 7 data_deletion_requests table + RLS + 6 RPCs (request/cancel user-facing; list_due/claim/complete service_role)
+│   ├── 013_phase2_step7_data_deletion.sql   Step 7 data_deletion_requests table + RLS + 6 RPCs (request/cancel user-facing; list_due/claim/complete service_role)
+│   ├── 014_forward_schema_prep.sql          Pre-cutover: messages.conversation_id (Phase 3 forward-prep) + drop 7 vestigial cols + timestamp→timestamptz + FK indexes
+│   └── 015_profile_writer_role.sql          Least-privilege profile_writer role for inferProfile.js — scoped GRANTs + TO-role RLS (not BYPASSRLS); NOLOGIN (operator sets secret out of band)
 ├── scripts/
 │   ├── rls-adversarial-test.mjs   Phase 2 Step 3 RLS gate (run on staging)
 │   ├── discovery-gate-test.mjs    Phase 2 Step 4 discovery gate (run on staging)
