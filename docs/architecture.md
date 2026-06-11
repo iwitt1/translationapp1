@@ -2,7 +2,7 @@
 
 > Living technical document. Describes what the system is, the principles it's built on, and what we're migrating toward. Updated in the same commit as any architectural change.
 
-**Last updated:** 2026-06-10 (§7/§10/§13 reconciled to Phase 2 **Step 5** — migration 011 (social graph + safety primitives) WRITTEN, pending staging gate: `relationships` adopts the **canonical-pair** model — `account_lo`/`account_hi`/`initiator_id` rather than the originally-sketched `requester_id`/`addressee_id` (decisions.md 2026-06-10 "Contact-graph representation"); adds `blocks`/`reports`/`invites`/`invite_redemptions`/`email_hash_abuse`, nine SECURITY DEFINER RPCs, and amends the two Step 4 discovery RPCs to filter active blocks. Prior 2026-06-10: §2, §7, §10, §13 reconciled to the Phase 2 build: migrations 007 (identity foundation) + 008 (identity cutover) are LIVE ON STAGING — `profiles`/`account_identifiers`/`account_settings` exist, `user_profiles` dropped, `messages.sender_id` + `user_linguistic_profiles`/`user_profile_events` cut over to uuid, RLS enabled on the Phase 2 tables, and `auth_tenant_id()`/`handle_new_user()`/`complete_onboarding()` added. Server-side profile inference shipped + verified on staging. **Prod is untouched** — it still runs the pre-auth no-RLS app; the cutover is a coordinated wipe-staging-then-prod event (see §10). Prior 2026-05-18: §7 vestigial-column reconciliation.)
+**Last updated:** 2026-06-10 (§7/§10/§13 reconciled to Phase 2 **Step 5** — migration 011 (social graph + safety primitives) **gate PASSED on staging, 40/40 GREEN** (Step 4 discovery gate re-passed 22/22 after the block-filter amend): `relationships` adopts the **canonical-pair** model — `account_lo`/`account_hi`/`initiator_id` rather than the originally-sketched `requester_id`/`addressee_id` (decisions.md 2026-06-10 "Contact-graph representation"); adds `blocks`/`reports`/`invites`/`invite_redemptions`/`email_hash_abuse`, nine SECURITY DEFINER RPCs, and amends the two Step 4 discovery RPCs to filter active blocks. Prior 2026-06-10: §2, §7, §10, §13 reconciled to the Phase 2 build: migrations 007 (identity foundation) + 008 (identity cutover) are LIVE ON STAGING — `profiles`/`account_identifiers`/`account_settings` exist, `user_profiles` dropped, `messages.sender_id` + `user_linguistic_profiles`/`user_profile_events` cut over to uuid, RLS enabled on the Phase 2 tables, and `auth_tenant_id()`/`handle_new_user()`/`complete_onboarding()` added. Server-side profile inference shipped + verified on staging. **Prod is untouched** — it still runs the pre-auth no-RLS app; the cutover is a coordinated wipe-staging-then-prod event (see §10). Prior 2026-05-18: §7 vestigial-column reconciliation.)
 **Repo:** https://github.com/iwitt1/translationapp1
 **Owner:** Isaac (iwitt1)
 
@@ -212,8 +212,8 @@ The `_source` fields in `user_linguistic_profiles` (e.g., `dialect_source: 'expl
 > | `auth_tenant_id()`, `handle_new_user()` trigger | 007 | live on staging |
 > | `complete_onboarding(display_name, preferred_language)` RPC | 008 | live on staging |
 > | RLS on all Phase 2 tables + `messages`/`message_translations` | 007/008 | enabled on staging; verified by Step 3 gate |
-> | `find_account_by_email()`, `search_accounts_by_username()`, `change_username()` discovery RPCs + username-prefix index | 010 | **written; pending staging gate** (Phase 2 Step 4; additive, no table changes). The two discovery RPCs are **amended by 011** to filter active blocks. |
-> | `relationships` (canonical-pair), `blocks`, `reports`, `invites`, `invite_redemptions`, `email_hash_abuse` + 9 RPCs (`active_block_exists`, `request_contact`, `respond_to_contact`, `block_account`, `unblock_account`, `report_account`, `create_invite`, `redeem_invite`, `revoke_invite`) | 011 | **written; pending staging gate** (Phase 2 Step 5; additive tables + RLS + RPCs, no destructive change). `tenants.dm_initiation_policy` already exists (007). |
+> | `find_account_by_email()`, `search_accounts_by_username()`, `change_username()` discovery RPCs + username-prefix index | 010 | **gate PASSED on staging (22/22); re-passed after 011's block-filter amend** (Phase 2 Step 4; additive, no table changes). The two discovery RPCs are **amended by 011** to filter active blocks. |
+> | `relationships` (canonical-pair), `blocks`, `reports`, `invites`, `invite_redemptions`, `email_hash_abuse` + 9 RPCs (`active_block_exists`, `request_contact`, `respond_to_contact`, `block_account`, `unblock_account`, `report_account`, `create_invite`, `redeem_invite`, `revoke_invite`) | 011 | **gate PASSED on staging (40/40)** (Phase 2 Step 5; additive tables + RLS + RPCs, no destructive change). `tenants.dm_initiation_policy` already exists (007). |
 > | `conversation_contexts`, `translation_corrections`, `translation_reviews`, `data_deletion_requests` | — | **not built yet** |
 >
 > Prod still runs the pre-007 schema (no `profiles`, `sender_id` still text, no RLS). The column
@@ -394,7 +394,7 @@ Lets you reconstruct what the system believed about a user at any point in time.
 
 > **Status:** `profiles`, `account_identifiers`, `account_settings` are **live on staging** (migration
 > 007). `relationships`, `blocks`, `reports`, `invites`/`invite_redemptions`, `email_hash_abuse` are
-> **written in migration 011, pending the staging gate** (Phase 2 Step 5). Design rationale and
+> **live on staging via migration 011 — gate PASSED 40/40** (Phase 2 Step 5). Design rationale and
 > trade-offs in `decisions.md` (2026-06-09 + 2026-06-10 entries). Policy *values* live in
 > `policies.md` + `lib/policies.js`. **Identity vs. discovery principle:** the stable identity is
 > the `auth.users` uuid; human-facing discovery handles are a separate normalized layer that
@@ -577,7 +577,7 @@ These three server-side functions are load-bearing for identity + RLS; treat the
 - **`search_accounts_by_username(p_prefix, p_limit)`** (010, **amended 011**, `SECURITY DEFINER`, `GRANT … TO authenticated`) — Step 4 username autocomplete. Prefix match on the canonical username; returns `(account_id, display_name, username)` rows. Min prefix length 3, result cap 20, LIKE metacharacters escaped (no `%`/`_` injection). Tenant-scoped; only active profiles; respects `discoverable_by_username`; excludes the caller; **011 adds the active-block filter** (both directions). Amending shipped functions is a behavior change → re-run the Step 4 gate after 011.
 - **`change_username(p_new_username)`** (010, `SECURITY DEFINER`, `GRANT … TO authenticated`) — the **sole** username-change path (`profiles.username` is REVOKEd from `authenticated`, §10). Validates charset/length/reserved/non-reuse and the 1/365-day cadence (first `system_generated`→`user_set` change is free and starts the clock), then atomically retires the old `account_identifiers` row (never deletes), inserts the new active row, and updates `profiles`. Returns the new canonical username; raises a client-parseable error on any rule violation.
 
-#### Phase 2 Step 5 social-graph RPCs (migration 011; written, pending staging gate)
+#### Phase 2 Step 5 social-graph RPCs (migration 011; gate PASSED on staging 40/40)
 
 All nine are `SECURITY DEFINER`, `SET search_path = public`, `EXECUTE` granted to `authenticated`
 only (revoked from `public`/`anon`), and tenant-scoped via `auth_tenant_id()` (an unauthenticated

@@ -10,7 +10,7 @@
 >
 > **When to revise a section:** when a failure mode is observed in the wild and the existing checklist would have missed it. Drift between this doc and reality is the failure mode this doc is designed against, same as the architecture doc.
 
-**Last updated:** 2026-06-10 (Phase 2 Step 5 social-graph + safety section added — gate `scripts/social-graph-gate-test.mjs` and migration 011 **written + validated (pglast clean, 73 statements; `node --check` clean), NOT yet run on staging**; section documents the 7 assertion phases, the canonical-pair / block-override / atomic-report+block / invite-auto-accept behaviors under test, the discovery-RPC block-filter re-gate, run instructions, and the known max_uses-exhaustion coverage gap. Earlier same day: Phase 2 Step 4 discovery + username-change gate ✅ **PASSED on staging — 22/22 GREEN** via `scripts/discovery-gate-test.mjs` after migration 010; prod replay pending the Phase 2 cutover. New section documents the 10 assertion categories + the 3 SECURITY DEFINER RPCs + run instructions. Earlier same day: Phase 2 Step 3 RLS adversarial gate ✅ **PASSED on staging — 21/21 GREEN**; Step 4 unblocked. Section documents the harness `scripts/rls-adversarial-test.mjs` + tenant-2/user-C fixture + 7 assertion categories + run instructions. Earlier same day: "Server-side profile inference" gate marked ✅ PASSED on staging; prod enablement still deferred. Prior: Phase 2 Step 2 section — migration 008 schema checks + end-to-end signup→onboard→active flow.)
+**Last updated:** 2026-06-10 (Phase 2 Step 5 social-graph + safety gate ✅ **PASSED on staging — 40/40 GREEN** via `scripts/social-graph-gate-test.mjs` after migration 011; the Step 4 discovery gate **re-passed 22/22** confirming the block-filter amend didn't regress discovery. Section documents the 7 assertion phases, the canonical-pair / block-override / atomic-report+block / invite-auto-accept behaviors verified, the discovery-RPC block-filter re-gate, run instructions, and the known max_uses-exhaustion coverage gap. Prod replay of 011 pending the Phase 2 cutover. Earlier same day: Phase 2 Step 4 discovery + username-change gate ✅ **PASSED on staging — 22/22 GREEN** via `scripts/discovery-gate-test.mjs` after migration 010; prod replay pending the Phase 2 cutover. New section documents the 10 assertion categories + the 3 SECURITY DEFINER RPCs + run instructions. Earlier same day: Phase 2 Step 3 RLS adversarial gate ✅ **PASSED on staging — 21/21 GREEN**; Step 4 unblocked. Section documents the harness `scripts/rls-adversarial-test.mjs` + tenant-2/user-C fixture + 7 assertion categories + run instructions. Earlier same day: "Server-side profile inference" gate marked ✅ PASSED on staging; prod enablement still deferred. Prior: Phase 2 Step 2 section — migration 008 schema checks + end-to-end signup→onboard→active flow.)
 
 ---
 
@@ -869,12 +869,20 @@ the same failure mode as a too-broad RLS policy:
 
 ## Phase 2 — Step 5: Social graph + safety primitives (migration 011) (2026-06-10)
 
-**Status: ⏳ WRITTEN + VALIDATED, gate NOT yet run on staging.** Migration
-`011_phase2_step5_social_graph.sql` parses clean (pglast, 73 statements) and the gate
-`scripts/social-graph-gate-test.mjs` passes `node --check`. Neither has touched staging yet, and
-nothing is on `main`. **This gate is a hard stop for Step 6** — do not build the abandoned-signup
-job (Step 6) or any DM UI on an unverified social-graph base. Flip this section to ✅ PASSED only
-after `node scripts/social-graph-gate-test.mjs` exits 0 on staging.
+**Status: ✅ PASSED on staging 2026-06-10 — 40/40 assertions GREEN** via
+`scripts/social-graph-gate-test.mjs`, run against `translationapp1-staging` after migration 011 was
+applied in the staging SQL editor. The Step 4 discovery gate **re-passed 22/22** in the same session,
+confirming the block-filter amend to the discovery RPCs didn't regress Step 4. Confirmed: mutual-accept
+happy path (B sees the incoming pending row via RLS; re-request rejected; exactly one canonical row);
+reverse-request glare collapses to the same accepted row (no dup); blocks gate `request_contact` +
+`respond_to_contact` both directions, blocker sees the block row / blocked party doesn't, discovery hides
+both parties symmetrically (email + username), unblock restores; report = atomic report + active block;
+invites auto-accept (`via=invite_link`, `initiator=A`), with redeem-own / re-redeem / revoked / expired /
+`conversation`-kind all rejected; cross-tenant requests + redemptions denied (opaque not-found); RPC-only
+writes enforced (direct client INSERT into `relationships` → RLS violation; `email_hash_abuse` → permission
+denied). **This gate is a hard stop for Step 6 — and it cleared.** **Prod replay of 011 still pending the
+Phase 2 cutover** (depends on 007–010). Re-run after any migration that adds/edits these tables, RPCs, or
+the discovery RPCs they amend.
 
 **What this step does:** Migration 011 adds the social graph + safety substrate, all with RLS from
 day one and SECURITY DEFINER RPCs as the **sole** write path (RLS is SELECT-only; direct writes are
