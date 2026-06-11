@@ -146,8 +146,8 @@
 - [x] `profiles` table, `id = auth.users.id` (Model A — one tenant per user); migrate `user_id`/`sender_id` text → uuid *(profiles done Step 1; text→uuid cutover in migration 008 Step 2 — gate PASSED on staging 2026-06-10)*
 - [x] `account_identifiers` (normalized handles, non-reusable usernames via never-deleted rows + reserved seeds) *(migration 007, Step 1 — verified)*
 - [x] `account_settings` (per-user discoverability + `allow_dms_from`) *(migration 007, Step 1 — verified)*
-- [ ] Username policy mechanism: within-tenant uniqueness, `username_source`, `username_last_changed_at`; values in `lib/policies.js` + policies.md §1 *(Step 4)*
-- [ ] Discovery: exact-match add by email/username only (no email search), autocomplete on username, **handle minimization** enforced in the query/API *(Step 4)*
+- [x] Username policy mechanism: within-tenant uniqueness, `username_source`, `username_last_changed_at`; values in `lib/policies.js` + policies.md §1 *(Step 4 — `change_username()` RPC in migration 010 enforces charset/length/reserved/non-reuse + 1/365-day cadence; **gate PASSED on staging 2026-06-10, 22/22 GREEN** via `scripts/discovery-gate-test.mjs`. Prod replay pending.)*
+- [x] Discovery: exact-match add by email/username only (no email search), autocomplete on username, **handle minimization** enforced in the query/API *(Step 4 — `find_account_by_email()` + `search_accounts_by_username()` RPCs in migration 010, SECURITY DEFINER, handle-minimized; **gate PASSED on staging 2026-06-10, 22/22 GREEN**. The *add* itself — writing `relationships` — is deferred to Step 5 per decisions.md 2026-06-10. Prod replay pending.)*
 
 ### Social graph primitives (schema + safety; DM *policy values* and DM *UI* are Phase 3)
 - [ ] `relationships` (contacts, with `via_identifier_type` provenance), `blocks` (with `unblocked_at` + partial unique index), `reports` (auto-creates a block)

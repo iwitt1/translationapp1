@@ -212,6 +212,7 @@ The `_source` fields in `user_linguistic_profiles` (e.g., `dialect_source: 'expl
 > | `auth_tenant_id()`, `handle_new_user()` trigger | 007 | live on staging |
 > | `complete_onboarding(display_name, preferred_language)` RPC | 008 | live on staging |
 > | RLS on all Phase 2 tables + `messages`/`message_translations` | 007/008 | enabled on staging; verified by Step 3 gate |
+> | `find_account_by_email()`, `search_accounts_by_username()`, `change_username()` discovery RPCs + username-prefix index | 010 | **written; pending staging gate** (Phase 2 Step 4; additive, no table changes) |
 > | `relationships`, `blocks`, `reports`, `invites`, `invite_redemptions` | — | **not built yet** (Phase 2 Step 5+) |
 > | `conversation_contexts`, `translation_corrections`, `translation_reviews`, `data_deletion_requests` | — | **not built yet** |
 >
@@ -526,6 +527,9 @@ These three server-side functions are load-bearing for identity + RLS; treat the
 - **`auth_tenant_id()`** (007, `SECURITY DEFINER`, SQL) — returns `tenant_id FROM profiles WHERE id = auth.uid()`. The linchpin of every tenant-scoped RLS policy. It's `SECURITY DEFINER` so it can read `profiles` without tripping the very RLS it feeds (avoids recursion); returns NULL for an unauthenticated caller → access denied by default.
 - **`handle_new_user()`** (007, `AFTER INSERT` trigger `on_auth_user_created` on `auth.users`) — creates the pending `profiles` row + `email` and `username` `account_identifiers` + default `account_settings`. System username = `'user_' + 8 hex chars` (needs pgcrypto). **Tenant hardcoded to the sole-tenant UUID `…001`** — every new signup lands in tenant 1. If it raises, the `auth.users` INSERT rolls back (no orphaned auth rows).
 - **`complete_onboarding(p_display_name, p_preferred_language)`** (008, `SECURITY DEFINER`, `GRANT EXECUTE … TO authenticated`) — the P1→P3 transition: sets `status='active'`, `display_name`, `onboarding_completed_at`, and creates the `user_linguistic_profiles` row with `preferred_language` written `_source='explicit'`. Routed through an RPC (not a direct table write) precisely because `authenticated` is *not* allowed to write `status` directly (see §10 column-grant note).
+- **`find_account_by_email(p_email)`** (010, `SECURITY DEFINER`, `GRANT EXECUTE … TO authenticated`) — Step 4 discovery. Exact-equality lookup on the canonical email; returns at most one `(account_id, display_name, username)`. Bypasses `account_identifiers`' own-rows-only RLS deliberately, but **handle-minimizes**: returns only public handles, never the target's email/phone/other identifiers. Tenant-scoped via `auth_tenant_id()`; only `status='active'` profiles; respects `discoverable_by_email`; excludes the caller. No prefix/enumeration.
+- **`search_accounts_by_username(p_prefix, p_limit)`** (010, `SECURITY DEFINER`, `GRANT … TO authenticated`) — Step 4 username autocomplete. Prefix match on the canonical username; returns `(account_id, display_name, username)` rows. Min prefix length 3, result cap 20, LIKE metacharacters escaped (no `%`/`_` injection). Tenant-scoped; only active profiles; respects `discoverable_by_username`; excludes the caller. Does **not** filter blocked users (blocks are Step 5).
+- **`change_username(p_new_username)`** (010, `SECURITY DEFINER`, `GRANT … TO authenticated`) — the **sole** username-change path (`profiles.username` is REVOKEd from `authenticated`, §10). Validates charset/length/reserved/non-reuse and the 1/365-day cadence (first `system_generated`→`user_set` change is free and starts the clock), then atomically retires the old `account_identifiers` row (never deletes), inserts the new active row, and updates `profiles`. Returns the new canonical username; raises a client-parseable error on any rule violation.
 
 ---
 
@@ -614,7 +618,8 @@ Fine-tuning takes a base model and trains it further on our corrections data. Be
 - Supabase anon key is in the frontend bundle (by design — that's how a browser app talks to Supabase).
 - **Prod: still no RLS.** Anon key + no RLS = anyone with the URL can read every message in the prod database. This is the single biggest reason the Phase 2 cutover matters.
 - **Staging: RLS built and verified.** Migrations 007/008 enable RLS on all identity/content tables; the Step 3 adversarial gate (`scripts/rls-adversarial-test.mjs`) proves cross-user and cross-tenant isolation as real authenticated users.
-- **Column-level write guard (007, OPUS-FIX #2).** RLS scopes *rows*, not *columns* — so even with a correct row policy, a `authenticated` user could PostgREST-PATCH `is_verified=true` on their own row to self-verify. Mitigation: `REVOKE UPDATE ON profiles FROM authenticated; GRANT UPDATE (display_name) ON profiles TO authenticated;`. Everything else on `profiles` (`status`, `username`, `is_verified`, …) is mutated only via `SECURITY DEFINER` RPCs (e.g. `complete_onboarding`). The Step 3 gate includes a self-write escalation negative test for exactly this.
+- **Column-level write guard (007, OPUS-FIX #2).** RLS scopes *rows*, not *columns* — so even with a correct row policy, a `authenticated` user could PostgREST-PATCH `is_verified=true` on their own row to self-verify. Mitigation: `REVOKE UPDATE ON profiles FROM authenticated; GRANT UPDATE (display_name) ON profiles TO authenticated;`. Everything else on `profiles` (`status`, `username`, `is_verified`, …) is mutated only via `SECURITY DEFINER` RPCs (e.g. `complete_onboarding`, `change_username`). The Step 3 gate includes a self-write escalation negative test for exactly this.
+- **Discovery RPCs deliberately bypass RLS (010, Step 4).** `account_identifiers` SELECT is own-rows-only, so cross-user discovery is impossible as a client query — by design. The three Step 4 RPCs (`find_account_by_email`, `search_accounts_by_username`, `change_username`) are `SECURITY DEFINER` and bypass that RLS *on purpose*, re-imposing the safety rules in code: **handle minimization** (return only `id`/`display_name`/`username`, never other identifiers or retired handles), tenant scoping via `auth_tenant_id()`, active-profiles-only, discoverability settings honored, and anti-enumeration limits (email exact-equality only; username prefix min-length 3 / cap 20 / escaped LIKE). EXECUTE is granted to `authenticated`, revoked from `anon`/`public`. Their correctness must be proven as real authenticated users (the Step 4 gate), since the postgres role bypasses RLS and would mask a leak.
 
 ### Target (post-Phase 2)
 - Supabase Auth providing real user identity (stable `auth.users` uuid under the hood; `username` and `display_name` are separate handles, neither is the key — see §7 + decisions.md 2026-06-09).
@@ -704,9 +709,12 @@ The OpenAI API key never leaves the backend. Frontend never calls OpenAI directl
 ├── migrations/               Run in Supabase SQL editor, manually for now (000–008)
 │   ├── 000_base_schema.sql … 006_user_profile_events_task_id.sql
 │   ├── 007_phase2_identity_foundation.sql   profiles/identifiers/settings, auth_tenant_id(), trigger
-│   └── 008_phase2_step2_identity_cutover.sql  text→uuid cutover, RLS, complete_onboarding()
+│   ├── 008_phase2_step2_identity_cutover.sql  text→uuid cutover, RLS, complete_onboarding()
+│   ├── 009_restore_nonbinary_gender_signal.sql  restores nonbinary CHECK dropped by 008
+│   └── 010_phase2_step4_discovery.sql       Step 4 discovery + change_username RPCs, username-prefix index
 ├── scripts/
-│   └── rls-adversarial-test.mjs   Phase 2 Step 3 RLS gate (run on staging)
+│   ├── rls-adversarial-test.mjs   Phase 2 Step 3 RLS gate (run on staging)
+│   └── discovery-gate-test.mjs    Phase 2 Step 4 discovery gate (run on staging)
 ├── src/
 │   ├── App.jsx               Frontend UI (login, chat, message bubble) — single file currently
 │   ├── main.jsx              React entry point

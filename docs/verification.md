@@ -10,7 +10,7 @@
 >
 > **When to revise a section:** when a failure mode is observed in the wild and the existing checklist would have missed it. Drift between this doc and reality is the failure mode this doc is designed against, same as the architecture doc.
 
-**Last updated:** 2026-06-10 (Phase 2 Step 3 RLS adversarial gate ✅ **PASSED on staging — 21/21 GREEN**; Step 4 unblocked. Section documents the harness `scripts/rls-adversarial-test.mjs` + tenant-2/user-C fixture + 7 assertion categories + run instructions. Earlier same day: "Server-side profile inference" gate marked ✅ PASSED on staging; prod enablement still deferred. Prior: Phase 2 Step 2 section — migration 008 schema checks + end-to-end signup→onboard→active flow.)
+**Last updated:** 2026-06-10 (Phase 2 Step 4 discovery + username-change gate ✅ **PASSED on staging — 22/22 GREEN** via `scripts/discovery-gate-test.mjs` after migration 010; prod replay pending the Phase 2 cutover. New section documents the 10 assertion categories + the 3 SECURITY DEFINER RPCs + run instructions. Earlier same day: Phase 2 Step 3 RLS adversarial gate ✅ **PASSED on staging — 21/21 GREEN**; Step 4 unblocked. Section documents the harness `scripts/rls-adversarial-test.mjs` + tenant-2/user-C fixture + 7 assertion categories + run instructions. Earlier same day: "Server-side profile inference" gate marked ✅ PASSED on staging; prod enablement still deferred. Prior: Phase 2 Step 2 section — migration 008 schema checks + end-to-end signup→onboard→active flow.)
 
 ---
 
@@ -771,6 +771,99 @@ tenant-1 profiles (allowed) but **zero** of B's `account_identifiers`/`account_s
 **Why a checked-in script (not a console snippet):** it's deterministic, re-runnable after any
 future migration that touches these tables, and self-documenting. RLS regressions are silent
 (a too-broad policy just quietly returns more rows) — this is the tripwire.
+
+---
+
+## Phase 2 — Step 4: Discovery + username change (migration 010) (2026-06-10)
+
+**Status: ✅ PASSED on staging 2026-06-10 — 22/22 assertions GREEN** via
+`scripts/discovery-gate-test.mjs`, run against `translationapp1-staging` after migration 010 was
+applied in the staging SQL editor. Confirmed: email exact-match add returns a handle-minimized
+result (`account_id`/`display_name`/`username` only — no email/phone), email is non-enumerable
+(partial address returns nothing; UPPERCASE still matches canonically), `discoverable_by_email`
+/`discoverable_by_username` opt-outs hide the target, username autocomplete works at ≥3 chars with
+`%` treated as a literal (no wildcard enumeration), self is excluded, `change_username` rejects
+reserved/taken/too-short/bad-charset and accepts a free first change (old handle retired not
+deleted, new one active, `username_source='user_set'`, clock stamped), the 1/365-day cadence blocks
+a second change, and cross-tenant isolation holds (user C in tenant 2 finds neither A's email nor
+username). **Step 4 backend is complete on staging; prod replay of 010 is still pending** (prod is
+pre-007 with no RLS — 010 reaches prod only on a deliberate push-to-main cutover).
+
+**What this step does:** Migration 010 is **additive only** (no table/column changes) — one partial
+prefix index on `account_identifiers(tenant_id, value)` for username autocomplete, plus three
+SECURITY DEFINER RPCs that re-impose the discovery + policy rules in code (because
+`account_identifiers` SELECT is own-rows-only, discovery cannot be a client query):
+- `find_account_by_email(text)` — canonical exact match (`lower(btrim())`), honors
+  `discoverable_by_email`, excludes self, active-only, tenant-scoped, returns the public handle.
+- `search_accounts_by_username(text, int)` — ≥3-char prefix, LIKE metacharacters escaped, capped at
+  20, honors `discoverable_by_username`, excludes self, active-only.
+- `change_username(text)` — auth guard, `[a-z0-9_]` charset + 3–20 length, 365-day cadence (first
+  system→user change free), reserved/non-reuse check against any existing row, atomic retire-old +
+  insert-new swap. See `decisions.md` 2026-06-10 "Phase 2 Step 4 discovery".
+
+**Scope note:** Step 4 is **search-only**. A discovery result is look-up data; the contact *add*
+(writing a `relationships` row) is Step 5. So the discovery-*search* UI is best bundled with Step 5
+when an "Add" can actually persist; `change_username` is self-contained and wireable now (App.jsx /
+settings) ahead of that.
+
+**Gate:** `node scripts/discovery-gate-test.mjs` exits 0 with every category PASS, on staging.
+
+### Why the assertion shapes matter (don't loosen these)
+The discovery RPCs bypass RLS, so each one re-checks a rule the database would otherwise enforce.
+The gate asserts the *specific* shape of each guard — an over-broad RPC silently returns more rows,
+the same failure mode as a too-broad RLS policy:
+- Discovery of an opted-out / cross-tenant / self target → **empty result, NO error**.
+- `change_username` policy rejection (reserved/taken/short/bad-charset/cadence) → **error** with a
+  specific message; the profile row must be **unchanged** after a rejected attempt.
+- A `%` in a username prefix must match **literally** (escaped), not act as a wildcard — the
+  injection guard.
+
+### Fixture (set up idempotently by the script, service-role)
+- Reuses the Step 3 `.env.rls-test` and users A/B (tenant 1) + user C (tenant 2).
+- Each run **resets A's username state** (deletes A's username identifier rows, restores the
+  `system_generated` handle, nulls the change clock) so the cadence guard doesn't block re-runs.
+- Sets A/B active + discoverable; points C into tenant 2 for the cross-tenant checks.
+
+### Assertion categories (all must PASS)
+1. **Email add (allow)** — A finds B by exact email; result is handle-minimized; carries no other
+   identifier.
+2. **Email enumeration (deny)** — partial email returns nothing; UPPERCASE still matches (canonical).
+3. **`discoverable_by_email`** — B opted out → not found by email.
+4. **Username autocomplete** — prefix match works; sub-3-char returns nothing; `%` is literal.
+5. **`discoverable_by_username`** — B opted out → absent from autocomplete.
+6. **Self excluded** — A never surfaces itself.
+7. **`change_username` (deny)** — reserved (`Admin`, case-folded), taken, too-short, bad-charset all
+   rejected.
+8. **`change_username` (allow)** — A claims a free first username; profile updated
+   (username/source/clock); old handle retired (not deleted); new handle active.
+9. **Cadence (deny)** — a second change within 365 days is rejected.
+10. **Cross-tenant (deny)** — C cannot find A by email or username.
+
+### How to run (Isaac, on staging)
+1. Apply `migrations/010_phase2_step4_discovery.sql` in the staging SQL editor (idempotent;
+   additive — safe to replay).
+2. Same `.env.rls-test` as the Step 3 gate (staging URL + anon + service_role; A/B/C emails;
+   throwaway password), `RLS_TEST_CONFIRM_STAGING=yes` (the script refuses to run otherwise — it
+   mutates the DB; never point it at prod).
+3. `node scripts/discovery-gate-test.mjs` from the `V1/` root.
+4. Exit 0 + all PASS = gate GREEN. Re-run after any migration that adds/edits these RPCs, the
+   prefix index, or the discovery/identity RLS policies they sit behind.
+
+### Before prod
+- [ ] Replay migration 010 against prod **as part of the Phase 2 prod cutover** (prod is pre-007
+  today — 010 depends on the 007/008/009 identity tables existing first). Then re-run the gate
+  pointed at a prod-equivalent only if a non-prod gate target exists; never point the mutating gate
+  at production.
+
+### Known failure modes and how to diagnose
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `ERROR: function find_account_by_email(text) does not exist` | Migration 010 not applied on this project | Run `010_phase2_step4_discovery.sql` in the staging SQL editor |
+| Discovery returns a target that opted out | RPC dropped the `discoverable_by_*` predicate | Compare the RPC body to migration 010; the `account_settings` join + flag check must be present |
+| `%`/`_` in a prefix returns extra rows | LIKE metacharacters not escaped | Confirm the `replace(... '\\' ... '%' ... '_')` + `ESCAPE '\'` in `search_accounts_by_username` |
+| `change_username` succeeds when it should reject (cadence) | Gate fixture didn't reset, or cadence check uses wrong column | Confirm the script's service-role reset ran; check `username_source='user_set'` + `username_last_changed_at` logic |
+| Cross-tenant target leaks | RPC missing the `auth_tenant_id()` scope | Confirm every RPC filters `p.tenant_id = auth_tenant_id()` |
 
 ---
 

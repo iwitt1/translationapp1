@@ -16,6 +16,30 @@
 
 ---
 
+## 2026-06-10 — Phase 2 Step 4 discovery: search-only scope, SECURITY DEFINER RPCs, email-match returns username
+
+**Decision:** Step 4 (Discovery) is **search-only** and ships as migration 010 — three `SECURITY DEFINER` RPCs (`find_account_by_email`, `search_accounts_by_username`, `change_username`) plus a prefix index — with **no table or column changes**. The *add* action (which writes a `relationships` row) is deferred to **Step 5**, where `blocks` exists to gate it. On an exact email match the discovery RPC returns the found user's **username** in addition to `id` + `display_name`.
+
+**Context:** The roadmap listed "exact-match add by email/username" under Step 4, but an add writes `relationships`, which doesn't exist until Step 5. And `account_identifiers` SELECT is own-rows-only (007), so cross-user discovery can't be a client query — it has to be a definer-rights function. Both the scope seam and the RPC return shape needed an explicit call before building.
+
+**Alternatives considered:**
+- *Pull `relationships` forward into Step 4* so the add works now — rejected: ships an add path that can't honor blocks (Step 5), and bloats an otherwise table-free migration.
+- *Return `id` + `display_name` only on email match (strict handle minimization)* — cleaner privacy literalism, but the username is already a public, searchable handle, so hiding it on the email path buys no real privacy while making the add UI less recognizable. Rejected.
+- *Views instead of RPCs* — can't express handle minimization (a view would expose other identifier rows) and can't safely bypass RLS with per-call logic. Rejected.
+
+**Reasoning:** Keeping Step 4 search-only preserves the gate-before-advance discipline (autocomplete with no way to act on a blocked user is acceptable; an add with no block check is not). Definer-rights RPCs are the intended mechanism (007 explicitly deferred discovery to them). Returning the username on email match treats "minimization" as "never expose a handle the adder *didn't* use" — email/phone/friend_code and retired usernames stay hidden; the one public handle (username) is shown.
+
+**Implications:**
+- Migration 010 is additive only → no ALTER-vs-recreate risk; idempotent; safe to replay on prod after the staging gate.
+- All three RPCs return exactly `(account_id, display_name, username)`; never email/phone/other or retired handles. Discovery surfaces only `status='active'` profiles and respects `account_settings` discoverability. Anti-enumeration: email is exact-equality only; username prefix has min length 3, cap 20, escaped LIKE.
+- `change_username` is the sole username-change path (profiles.username is REVOKEd from `authenticated`); it enforces charset/length/reserved/non-reuse and the 1/365-day cadence (first system→user change free), retiring the old identifier row rather than deleting it.
+- Reserved-word seeding was already done for the sole tenant in 007 — 010 only enforces against it. Per-tenant seed automation stays parked until tenant #2.
+- **Known limitation (resolved by Step 5):** username autocomplete cannot filter blocked users until `blocks` ships.
+
+**Revisit when:** Step 5 adds the add/block path (autocomplete should then filter blocks); discovery rate limits are built; or a second tenant forces per-tenant reserved seeding.
+
+---
+
 ## 2026-06-10 — Restore `nonbinary` to `gender_signal` (migration 009), don't ratify the 008 drop
 
 **Decision:** Re-add `nonbinary` to the `user_linguistic_profiles.gender_signal` CHECK via migration `009_restore_nonbinary_gender_signal.sql`, rather than accept its removal.

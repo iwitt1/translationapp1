@@ -61,6 +61,15 @@
   `discoverable_by_username` (default true), extensible to friend_code/phone later.
 - **Tenant-scoped:** discovery, adds, and invites happen *within a tenant ecosystem* (Slack-ish).
   Search never crosses a tenant boundary.
+- **Email matching is canonical exact equality** — `lower(trim(email))`, no other normalization
+  (no Gmail dot-stripping / plus-addressing collapse). Surprising normalization is worse than a
+  near-miss. Username matching is canonical-lowercase prefix (autocomplete), min 3 chars.
+- **What a discovery result returns** (Step 4 RPCs, migration 010): only the target's public
+  handles — `account_id`, `display_name`, and `username`. Never their email/phone/friend_code or
+  any *retired* username. On an exact **email** add we still return the username (it's itself a
+  public, searchable handle — decisions.md 2026-06-10); handle minimization means "never expose a
+  handle the adder didn't use," not "hide the public username." Only `status='active'` profiles are
+  discoverable (pending/abandoned signups are invisible).
 
 ## 3. DM-initiation policy (tenant-level, swappable)
 

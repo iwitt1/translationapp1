@@ -4,7 +4,7 @@
 >
 > Format: each item has a short description, a "why interesting" note, and (if relevant) a "trigger" — the condition under which it should be reconsidered for the roadmap.
 
-**Last updated:** 2026-06-10 (Added "`nonbinary` gender signal regressed out of the schema in migration 008" under Known technical debt — needs Isaac's call: restore it in a 009 migration before the prod cutover, or ratify the drop and sync docs. Earlier same day: Marked "Move profile inference to server-side" + its sibling "Dialect consistency guard" as BUILT — Option A shipped: `/api/v1/infer-profile` endpoint, raw-pg `FOR UPDATE`, message_id trust boundary, `PROFILE_INFERENCE_ENABLED` on. See decisions.md. Earlier same day: Added Option A build spec under "Move profile inference to server-side" — decided to build directly in Cowork; endpoint + service-role + trust-boundary decision + race fix + steps + estimate. Earlier 2026-06-10 Step 2 review: escalated "Move profile inference to server-side" — client-side path is now fully dead under Phase 2 RLS, flagged its flywheel weight; added "Phase 2 RLS / validation gaps" entry — cache poisoning, realtime RLS, display_name charset. Prior 2026-06-09: added "Identity, discovery & social graph (deferred)" section, consolidated "UI improvements", the Model A email-uniqueness tension, and "Onboarding funnel events".)
+**Last updated:** 2026-06-10 (Phase 2 Step 4: added "Conversation switcher / inbox IA" under Product features — surfaced scoping the Step 4 app-layer wiring; deferred to the Phase 3 conversation model. Earlier same day: added "Per-tenant reserved-word seed automation" and "Original-case username display" deferrals under Identity, discovery & social graph. Earlier same day: Added then RESOLVED "`nonbinary` gender signal regressed out of the schema in migration 008" under Known technical debt — Isaac chose to restore; migration 009 re-adds it, run on staging, prod replay pending in the cutover. Earlier same day: Marked "Move profile inference to server-side" + its sibling "Dialect consistency guard" as BUILT — Option A shipped: `/api/v1/infer-profile` endpoint, raw-pg `FOR UPDATE`, message_id trust boundary, `PROFILE_INFERENCE_ENABLED` on. See decisions.md. Earlier same day: Added Option A build spec under "Move profile inference to server-side" — decided to build directly in Cowork; endpoint + service-role + trust-boundary decision + race fix + steps + estimate. Earlier 2026-06-10 Step 2 review: escalated "Move profile inference to server-side" — client-side path is now fully dead under Phase 2 RLS, flagged its flywheel weight; added "Phase 2 RLS / validation gaps" entry — cache poisoning, realtime RLS, display_name charset. Prior 2026-06-09: added "Identity, discovery & social graph (deferred)" section, consolidated "UI improvements", the Model A email-uniqueness tension, and "Onboarding funnel events".)
 
 ---
 
@@ -81,6 +81,24 @@ A single holding pen for UI/UX adjustments surfaced while designing Phase 2 iden
 - **Why interesting:** Keeps Phase 2 scoped to schema + policy + enforcement without scope-creeping into UI design, while not losing the UX threads.
 - **Surfaced:** 2026-06-09 during Phase 2 identity/discovery design.
 - **Trigger:** Phase 2 schema + auth land; UI build is the natural next pass.
+
+### Conversation switcher / inbox IA (multi-conversation navigation)
+The app currently has no interface to list, search, or switch between conversations — it shows a
+single chat. Once discovery (Step 4) and contacts (Step 5) let a user have multiple counterparties,
+the app needs the standard chat-client information architecture: an inbox/thread list, switching
+between conversations, unread state, and eventually message-history search. **Distinct from
+discovery search** — discovery finds *people to add*; this navigates *conversations you're already
+in*. The two share the word "search" but are different surfaces with different backends.
+- **Why interesting:** It's the navigational backbone every multi-conversation chat app needs; once
+  there's more than one conversation per user, its absence is immediately felt.
+- **Why deferred:** It's information-architecture over the conversation/membership model, which isn't
+  fleshed out yet (conversations are membership-based and independent of the contact graph —
+  policies.md §3). Designing a switcher before that model is settled is premature. It's also its own
+  design session, not presentation-layer polish — bigger than the "UI improvements" holding pen
+  above.
+- **Trigger:** The conversation/membership model lands (Phase 3 conversation work), or contacts
+  (Step 5) make multi-conversation real. Open it as a dedicated design conversation at that point.
+- **Surfaced:** 2026-06-10, while scoping how/when to wire the Step 4 discovery RPCs to the app layer.
 
 ### Onboarding funnel events
 Explicit event logging for the signup funnel beyond what account state already captures. Today (policies.md §6) the lifecycle distinguishes only the states that matter for the *account*: `pending` vs `active`, with P2 (clicked-but-not-onboarded) inferred for free from the Supabase Auth sign-in timestamps. This item is the *analytics* layer on top: deliberate events for where people drop off — link clicked → onboarding page loaded → started typing → submitted — so we can measure funnel conversion, not just final state.
@@ -402,6 +420,25 @@ A client-side feature that encodes an invite link or friend-code as a QR image f
 - **Why interesting:** Pure presentation layer over the invite-link / friend-code primitives —
   no schema cost.
 - **Trigger:** In-person sharing flows or mobile.
+
+### Per-tenant reserved-word seed automation
+Reserved usernames (role/system terms, brand, profanity) are seeded as `reserved` rows in
+`account_identifiers` per tenant. Migration 007 seeded them for the **sole tenant** by a hardcoded
+INSERT; migration 010's `change_username` only enforces against existing rows. A second tenant
+would currently get **no** reserved set. Deferred: a reusable seeding routine (a function called at
+tenant-create, or a trigger) that stamps the `lib/policies.js RESERVED_WORDS` list into any new
+tenant.
+- **Why deferred:** Single tenant today; no second-tenant create path exists yet.
+- **Trigger:** Tenant #2 (the same event that forces the Model-A vs Model-B and email-uniqueness calls).
+
+### Original-case username display
+`profiles.username` and the `account_identifiers` value store the **canonical lowercase** form
+only; uniqueness is case-insensitive. policies.md §1 allows display to preserve original case
+("DjangoFan" shown, `djangofan` enforced), but we don't persist the original casing anywhere.
+Deferred: a `username_display` column (or storing the as-entered form on the identifier row) if
+preserved capitalization becomes a wanted nicety.
+- **Why deferred:** Cosmetic; lowercase handles are fine at this stage and avoid an extra column.
+- **Trigger:** Users ask for cased handles, or a vanity-handle / verification feature makes casing matter.
 
 ### Username timed-release / contact-the-holder reclaim
 Usernames are non-reusable by default. A future mechanism could release a retired/squatted
