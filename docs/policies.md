@@ -13,7 +13,7 @@
 > **Audit cadence:** review at the start of each phase, and at minimum quarterly. Each review
 > updates "Last reviewed" and logs material changes in `decisions.md`.
 
-**Last reviewed:** 2026-06-09 (initial draft — Phase 2 identity/discovery/lifecycle design)
+**Last reviewed:** 2026-06-10 (§6 Abandonment resolved at Step 6 build — hash-over-plaintext confirmed; HMAC pepper in env not Postgres, `key_version=1`; username release is automatic via FK cascade, no release function; re-prompt emails parked to a future CRM. Prior: 2026-06-09 initial draft — Phase 2 identity/discovery/lifecycle design.)
 
 ---
 
@@ -140,10 +140,21 @@ uuid (mandatory) · email identifier (mandatory) · `tenant_id` (mandatory) · r
 language are required to flip to `active`.
 
 ### Abandonment
-- A pending account with no completed onboarding is **deleted after 30 days**.
-- Its `system_generated` username is **released** (never user-chosen or shared).
-- To monitor repeat-abandon / signup-spam **without retaining deleted-user PII**, a **hash** of
-  the email (not plaintext) is recorded in an abuse-monitoring table with first-seen and
-  abandon-count. *(Hash over plaintext chosen for GDPR cleanliness — confirm at build.)*
-- Re-prompt cadence for pending accounts before deletion: TBD at build (e.g. a reminder email at
-  day 3 and day 14).
+*Built in Step 6 (migration 012, `server/lib/abandonment.js`, Vercel cron `/api/v1/jobs/abandonment`, daily 08:00 UTC). See decisions.md 2026-06-10 "Step 6 abandonment + abuse monitoring".*
+- A pending account with no completed onboarding is **hard-deleted after 30 days**. The sweep
+  deletes the underlying `auth.users` row via the Supabase admin API; the FK cascade (007) removes
+  the `profiles` / `account_identifiers` / `account_settings` rows.
+- Its `system_generated` username is **released automatically by the cascade** — the username rows
+  simply vanish, unblocking reuse. There is **no** dedicated release function (it would be
+  redundant). Safe to hard-delete because the username is never user-chosen or shared.
+- To monitor repeat-abandon / signup-spam **without retaining deleted-user PII**, a keyed
+  **HMAC-SHA256** of the canonical email (never plaintext) is recorded in `email_hash_abuse` with
+  first-seen, last-seen, and `abandon_count` (atomic insert-or-increment). **Resolved: hash over
+  plaintext, confirmed.** The HMAC **pepper lives only in env** (Vercel + gitignored
+  `.env.rls-test`), **never in Postgres**, and carries a `key_version` (currently **1**) so it can
+  be rotated by bumping the version rather than editing in place. The hash is recorded *before* the
+  delete (record-then-delete) so the abuse signal survives a partial failure.
+- Re-prompt emails before deletion are **parked — deliberately decoupled to a future CRM**, not
+  built server-side (no sending domain yet; lifecycle email belongs in a CRM). Intended cadence
+  when built: day-3 and day-14 nudge before the day-30 delete. See parking-lot.md
+  "Pending-account re-prompt UX".

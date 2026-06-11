@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/v1/jobs/abandonment",
+      "schedule": "0 8 * * *"
+    }
+  ]
+}

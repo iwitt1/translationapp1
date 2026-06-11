@@ -16,6 +16,25 @@
 
 ---
 
+## 2026-06-10 — Step 6 abandonment + abuse monitoring (sweep design)
+
+**Decision:** A scheduled **Vercel cron** (`/api/v1/jobs/abandonment`, daily 08:00 UTC) runs a Node sweep that finds `profiles` rows still `status='pending'` and older than 30 days, **hard-deletes** the underlying `auth.users` row via the Supabase admin API (cascade removes profile/identifiers/settings), and — *before* deleting — records a versioned **HMAC-SHA256 hash of the canonical email** in `email_hash_abuse` (incrementing `abandon_count` on repeat). Two `SECURITY DEFINER` SQL helpers, granted to `service_role` only, back the sweep: `list_abandoned_pending_accounts(interval)` (encapsulates the "abandoned" definition) and `record_abandoned_email_hash(uuid, text, smallint)` (atomic insert-or-increment). Migration 012. Re-prompt emails (day 3 / day 14) are **parked** (see parking-lot.md).
+
+**Context:** Step 6 of the Phase 2 spec (policies.md §6). Pending accounts that never complete onboarding hold a system-generated username and an email indefinitely; we need to reclaim handles and track repeat abandoners (a weak abuse signal) without storing plaintext emails of deleted users.
+
+**Alternatives considered:**
+- *Soft-delete / tombstone the profile* — keeps a row to "hold" the username and mark it abandoned. Rejected: Isaac confirmed the system username is never user-chosen or shared, so there's nothing to preserve; a hard delete is cleaner and the FK cascade does the work. (Revisit only if usernames ever become user-chosen.)
+- *A dedicated `release_username` RPC* — planned originally, then eliminated: deleting `auth.users` cascades (007 FKs) through `profiles` → `account_identifiers`/`account_settings`, so the handle's rows simply vanish and reuse is unblocked. No release function needed; surfaced as a refinement rather than built silently.
+- *Store plaintext email (or a plain unsalted SHA-256) for the abuse signal* — rejected. Plaintext re-introduces PII for users we just deleted; an unkeyed hash is trivially reversible by dictionary over the email space. We use HMAC with a **pepper that lives only in env (Vercel + gitignored `.env.rls-test`), never in Postgres**, with `key_version` for rotation.
+- *Re-prompt emails server-side now* — parked. No sending domain set up (limited to ~2/hour), and lifecycle email belongs in a CRM, not the server. Captured in parking-lot.md with the day-3/day-14 cadence.
+- *Supabase scheduled function (pg_cron) instead of Vercel cron* — would keep the job in-DB, but the sweep needs the admin API (delete auth users) and the pepper (compute HMAC in Node), neither of which belongs in Postgres. Vercel cron co-locates with the existing API layer and the secret.
+
+**Reasoning:** Record-then-delete ordering guarantees we never lose the abuse signal if the delete fails mid-way (worst case: a hash with no delete, retried next run — idempotent via `ON CONFLICT`). Keeping the pepper out of the DB means a Postgres compromise can't reverse the hashes. The two helpers keep the "what counts as abandoned" rule and the atomic increment in SQL while the privileged actions (delete, HMAC) stay in the Node job. The sweep deletes **all** aged-pending accounts each run by design — there is no partial/batch cap, because volume is negligible pre-launch.
+
+**Implications:** The cron handler fails closed if `CRON_SECRET` is unset and requires the `Authorization: Bearer $CRON_SECRET` header Vercel sends. Vercel Preview/Prod env must carry `ABANDONMENT_EMAIL_HASH_PEPPER` (same value as `.env.rls-test`), `ABANDONMENT_EMAIL_HASH_KEY_VERSION` (1), `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`. Identity/config is injected into `runAbandonmentSweep()` so the gate and the handler share one code path. Rotating the pepper means **bumping `key_version`, not editing in place** (old hashes stay valid under their version). The helpers are service_role-only and don't use `auth.uid()` — they are explicitly *not* tenant-RLS user RPCs.
+
+**Revisit when:** usernames become user-chosen/shareable (then soft-delete, not hard-delete); we stand up a CRM/sending domain (then unpark re-prompt emails); abandonment volume grows enough to need batching or a partial-progress cursor; or we want the abuse signal to feed an actual rate-limit/denylist (today it's only recorded).
+
 ## 2026-06-10 — Contact-graph representation: canonical ordered pair (not directional rows)
 
 **Decision:** `relationships` stores **one row per unordered pair** — `account_lo`/`account_hi` with a CHECK `account_lo < account_hi`, plus `initiator_id` (whoever asked first) — rather than the directional `requester_id`/`addressee_id` design sketched in architecture.md §7. Unique `(tenant_id, account_lo, account_hi)`. Shipped in migration 011.

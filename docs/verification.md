@@ -10,7 +10,7 @@
 >
 > **When to revise a section:** when a failure mode is observed in the wild and the existing checklist would have missed it. Drift between this doc and reality is the failure mode this doc is designed against, same as the architecture doc.
 
-**Last updated:** 2026-06-10 (Phase 2 Step 5 social-graph + safety gate ✅ **PASSED on staging — 40/40 GREEN** via `scripts/social-graph-gate-test.mjs` after migration 011; the Step 4 discovery gate **re-passed 22/22** confirming the block-filter amend didn't regress discovery. Section documents the 7 assertion phases, the canonical-pair / block-override / atomic-report+block / invite-auto-accept behaviors verified, the discovery-RPC block-filter re-gate, run instructions, and the known max_uses-exhaustion coverage gap. Prod replay of 011 pending the Phase 2 cutover. Earlier same day: Phase 2 Step 4 discovery + username-change gate ✅ **PASSED on staging — 22/22 GREEN** via `scripts/discovery-gate-test.mjs` after migration 010; prod replay pending the Phase 2 cutover. New section documents the 10 assertion categories + the 3 SECURITY DEFINER RPCs + run instructions. Earlier same day: Phase 2 Step 3 RLS adversarial gate ✅ **PASSED on staging — 21/21 GREEN**; Step 4 unblocked. Section documents the harness `scripts/rls-adversarial-test.mjs` + tenant-2/user-C fixture + 7 assertion categories + run instructions. Earlier same day: "Server-side profile inference" gate marked ✅ PASSED on staging; prod enablement still deferred. Prior: Phase 2 Step 2 section — migration 008 schema checks + end-to-end signup→onboard→active flow.)
+**Last updated:** 2026-06-10 (Phase 2 Step 6 abandonment + abuse-monitoring section added — ⏳ **WRITTEN, gate PENDING on staging** (migration 012 + `server/lib/abandonment.js` + Vercel cron + `scripts/abandonment-gate-test.mjs`, statically validated, not yet applied/run). Section documents the 4 assertion phases (dry-run deletes nothing, live sweep deletes+releases+records keyed-HMAC, repeat-record increments, anon EXECUTE denied), the record-then-delete ordering, the cron env/`CRON_SECRET` guard, and run instructions. Step 6 is the last build step before the prod cutover (after Step 7). Earlier same day: Phase 2 Step 5 social-graph + safety gate ✅ **PASSED on staging — 40/40 GREEN** via `scripts/social-graph-gate-test.mjs` after migration 011; the Step 4 discovery gate **re-passed 22/22** confirming the block-filter amend didn't regress discovery. Section documents the 7 assertion phases, the canonical-pair / block-override / atomic-report+block / invite-auto-accept behaviors verified, the discovery-RPC block-filter re-gate, run instructions, and the known max_uses-exhaustion coverage gap. Prod replay of 011 pending the Phase 2 cutover. Earlier same day: Phase 2 Step 4 discovery + username-change gate ✅ **PASSED on staging — 22/22 GREEN** via `scripts/discovery-gate-test.mjs` after migration 010; prod replay pending the Phase 2 cutover. New section documents the 10 assertion categories + the 3 SECURITY DEFINER RPCs + run instructions. Earlier same day: Phase 2 Step 3 RLS adversarial gate ✅ **PASSED on staging — 21/21 GREEN**; Step 4 unblocked. Section documents the harness `scripts/rls-adversarial-test.mjs` + tenant-2/user-C fixture + 7 assertion categories + run instructions. Earlier same day: "Server-side profile inference" gate marked ✅ PASSED on staging; prod enablement still deferred. Prior: Phase 2 Step 2 section — migration 008 schema checks + end-to-end signup→onboard→active flow.)
 
 ---
 
@@ -992,6 +992,103 @@ The write path is RPC-only, so each assertion checks a specific shape:
 | `report_account` creates a report but no block (or vice-versa) | The atomic report+block isn't in one transaction | Confirm both inserts are in the one RPC body with `ON CONFLICT DO NOTHING` on the block |
 | `redeem_invite` lets the creator redeem their own invite | Missing the redeem-own guard | Confirm the `created_by = auth.uid()` rejection branch in `redeem_invite()` |
 | Client can read `email_hash_abuse` | RLS enabled but a policy was added, or REVOKE missing | Confirm RLS is on with **no** policy + `REVOKE ALL ON public.email_hash_abuse FROM anon, authenticated` |
+
+---
+
+## Phase 2 — Step 6: Abandonment + abuse monitoring (migration 012) (2026-06-10)
+
+**Status: ⏳ WRITTEN — gate PENDING on staging.** Migration 012 + the sweep code + the gate are
+written and statically validated (migration SQL via `pglast`; JS via `node --check`; gate helpers
+exercised offline). **Not yet applied or run on staging.** This step is the **last build step before
+the Phase 2 prod cutover** — the cutover lands after Step 7, per the 2026-06-10 sequencing decision.
+Do **not** check the roadmap items until `scripts/abandonment-gate-test.mjs` exits 0 on
+`translationapp1-staging`.
+
+**What this step does:** A scheduled sweep reclaims abandoned pending accounts and records a privacy-
+preserving abuse signal. Pieces:
+- `migrations/012_phase2_step6_abandonment.sql` — **additive, functions only** (no tables; the
+  `email_hash_abuse` table shipped in 011). Two `SECURITY DEFINER` helpers, **granted to
+  `service_role` only** (REVOKE'd from `public`/`anon`/`authenticated`):
+  - `list_abandoned_pending_accounts(interval default '30 days')` — returns `(account_id, tenant_id,
+    canonical_email, username_source)` for `profiles` rows `status='pending'` and
+    `created_at < now() - interval`. Encapsulates the "abandoned" definition.
+  - `record_abandoned_email_hash(uuid, text, smallint default 1)` — atomic insert-or-increment into
+    `email_hash_abuse` (`ON CONFLICT … DO UPDATE SET abandon_count = abandon_count + 1, last_seen =
+    now()`); takes the hash as a hex string and `decode(...,'hex')`s it to bytea.
+- `server/lib/abandonment.js` — `runAbandonmentSweep(config)`; identity/secret **injected via
+  config** (not module env) so the cron handler and the gate share one code path. Per account:
+  guard `username_source='system_generated'` (else skip + warn); compute
+  `HMAC-SHA256(canonical_email, pepper)` and call `record_abandoned_email_hash` **before** the
+  delete (record-then-delete); then `auth.admin.deleteUser(account_id)` — the FK cascade (007)
+  removes the profile/identifiers/settings and **releases the username**. Returns
+  `{scanned, deleted, hashed, skipped, errors, dryRun, maxAgeDays, keyVersion}`. Throws if no pepper
+  unless `dryRun`.
+- `api/v1/jobs/abandonment.js` — thin Vercel cron handler; **fails closed if `CRON_SECRET` unset**;
+  requires `Authorization: Bearer $CRON_SECRET`; supports `?dryRun=1`.
+- `vercel.json` — `crons: [{path:"/api/v1/jobs/abandonment", schedule:"0 8 * * *"}]` (daily 08:00 UTC).
+
+**How it's verified:** `scripts/abandonment-gate-test.mjs` — a checked-in adversarial harness in the
+Step 3/4/5 style. Service-role for fixtures only; `RLS_TEST_CONFIRM_STAGING=yes` interlock; namespaced
+`abandon-gate-*` fixtures; FK-safe teardown that also removes the `email_hash_abuse` rows it created
+this run. It imports the **same** `runAbandonmentSweep` the cron uses.
+
+### Why the assertion shapes matter (don't loosen these)
+- A dry run must delete **nothing** (the `dryRun` guard) — proves the cron's `?dryRun=1` is safe.
+- The recorded hash must be a **keyed HMAC**, not a plain SHA-256 — the gate computes both and asserts
+  the stored bytea equals the HMAC and **not** the bare digest. (A plain hash is dictionary-reversible
+  over the email space; the whole point is the pepper.)
+- Record-then-delete: the abuse row must exist **after** the account is gone — proves the signal
+  survives the delete.
+- Fresh / active accounts must be **untouched** — the sweep only takes `pending` older than the age.
+- Anon/authenticated must be **denied EXECUTE** on both helpers — service-role-only.
+
+### Fixture (set up idempotently by the script, service-role)
+- Namespaced `abandon-gate-<runId>` emails so runs don't collide and teardown is exact.
+- Creates: an **aged-pending** account (back-dated `created_at` > 30 days, `status='pending'`); a
+  **fresh-pending** account (recent); an **active** account — the last two are the "must-not-touch"
+  controls. A separate fixture verifies the dry-run path deletes nothing.
+- Teardown deletes any surviving fixture users + the `email_hash_abuse` rows whose `first_seen >=`
+  the run's start timestamp.
+
+### Assertion phases (all must PASS)
+1. **Dry run** — `runAbandonmentSweep({dryRun:true})` reports the aged account as scanned but deletes
+   nothing; the account still exists afterward.
+2. **Live sweep** — the aged-pending account is **fully gone** (auth user + cascade), its username is
+   **released** (re-claimable), the abuse hash is recorded and equals the **keyed HMAC**; the
+   fresh-pending and active controls are **untouched**; the dry-run fixture is now deleted.
+3. **Repeat-record increments** — calling the sweep again on a same-email abandon increments
+   `abandon_count` (no duplicate row) — the `ON CONFLICT` path.
+4. **EXECUTE denied** — anon cannot call either helper.
+
+### How to run (Isaac, on staging)
+1. Apply `migrations/012_phase2_step6_abandonment.sql` in the staging SQL editor (idempotent
+   `CREATE OR REPLACE`; additive — safe to replay).
+2. Same `.env.rls-test` as the Step 3/4/5 gates, **plus** `ABANDONMENT_EMAIL_HASH_PEPPER` and
+   `ABANDONMENT_EMAIL_HASH_KEY_VERSION=1` (already added to the gitignored `.env.rls-test`).
+   `RLS_TEST_CONFIRM_STAGING=yes` (the script mutates the DB; **never point it at prod**).
+3. `node scripts/abandonment-gate-test.mjs` from the `V1/` root.
+4. Exit 0 + all PASS = gate GREEN. Then check the Step 6 roadmap items.
+
+### Before prod
+- [ ] Replay migration 012 against prod **as part of the Phase 2 prod cutover** (after Step 7;
+  depends on 007–011).
+- [ ] Set in **Vercel Preview + Production** env (not just `.env.rls-test`):
+  `ABANDONMENT_EMAIL_HASH_PEPPER` (**same value** as `.env.rls-test`, so hashes stay consistent),
+  `ABANDONMENT_EMAIL_HASH_KEY_VERSION=1`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`.
+  The pepper must **never** be committed and **never** enter Postgres.
+- [ ] Confirm the cron is registered (Vercel project → Cron Jobs shows `/api/v1/jobs/abandonment`
+  daily 08:00 UTC) and that an unauthenticated hit returns 401 (the `CRON_SECRET` guard).
+
+### Known failure modes and how to diagnose
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `ERROR: function list_abandoned_pending_accounts(...) does not exist` | Migration 012 not applied on this project | Run `012_phase2_step6_abandonment.sql` in the staging SQL editor |
+| Gate fails "hash is plain SHA-256, not HMAC" | Sweep computed an unkeyed digest, or the pepper wasn't passed | Confirm `createHmac('sha256', pepper)` in `server/lib/abandonment.js` and that `ABANDONMENT_EMAIL_HASH_PEPPER` is set |
+| Sweep deletes fresh/active accounts | Selection RPC dropped the `status='pending'` or age predicate | Compare `list_abandoned_pending_accounts` body to migration 012 |
+| Abuse row missing after delete | Record-then-delete order inverted, or RPC errored silently | Confirm `record_abandoned_email_hash` is called **before** `deleteUser` and its result is checked |
+| `abandon_count` stuck at 1 on repeat | `ON CONFLICT … DO UPDATE` missing or wrong conflict target | Confirm the conflict target is `(tenant_id, email_hash, key_version)` and the `+ 1` update |
+| Cron returns 500 / runs unauthenticated | `CRON_SECRET` unset (fails closed) or header mismatch | Set `CRON_SECRET` in Vercel; confirm Vercel sends `Authorization: Bearer $CRON_SECRET` |
 
 ---
 

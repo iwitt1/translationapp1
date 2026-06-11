@@ -2,7 +2,7 @@
 
 > Living technical document. Describes what the system is, the principles it's built on, and what we're migrating toward. Updated in the same commit as any architectural change.
 
-**Last updated:** 2026-06-10 (§7/§10/§13 reconciled to Phase 2 **Step 5** — migration 011 (social graph + safety primitives) **gate PASSED on staging, 40/40 GREEN** (Step 4 discovery gate re-passed 22/22 after the block-filter amend): `relationships` adopts the **canonical-pair** model — `account_lo`/`account_hi`/`initiator_id` rather than the originally-sketched `requester_id`/`addressee_id` (decisions.md 2026-06-10 "Contact-graph representation"); adds `blocks`/`reports`/`invites`/`invite_redemptions`/`email_hash_abuse`, nine SECURITY DEFINER RPCs, and amends the two Step 4 discovery RPCs to filter active blocks. Prior 2026-06-10: §2, §7, §10, §13 reconciled to the Phase 2 build: migrations 007 (identity foundation) + 008 (identity cutover) are LIVE ON STAGING — `profiles`/`account_identifiers`/`account_settings` exist, `user_profiles` dropped, `messages.sender_id` + `user_linguistic_profiles`/`user_profile_events` cut over to uuid, RLS enabled on the Phase 2 tables, and `auth_tenant_id()`/`handle_new_user()`/`complete_onboarding()` added. Server-side profile inference shipped + verified on staging. **Prod is untouched** — it still runs the pre-auth no-RLS app; the cutover is a coordinated wipe-staging-then-prod event (see §10). Prior 2026-05-18: §7 vestigial-column reconciliation.)
+**Last updated:** 2026-06-10 (§7/§8/§11/§13 reconciled to Phase 2 **Step 6** — migration 012 (abandonment support functions `list_abandoned_pending_accounts()` + `record_abandoned_email_hash()`, service_role-only) **written, pending gate on staging**; the sweep itself is Node — `server/lib/abandonment.js` run by a Vercel cron (`api/v1/jobs/abandonment.js` + `vercel.json`). Username release is automatic via the auth.users→profiles→identifiers FK cascade — no release RPC (decisions.md 2026-06-10 "Step 6 abandonment"). Prior 2026-06-10: §7/§10/§13 reconciled to Phase 2 **Step 5** — migration 011 (social graph + safety primitives) **gate PASSED on staging, 40/40 GREEN** (Step 4 discovery gate re-passed 22/22 after the block-filter amend): `relationships` adopts the **canonical-pair** model — `account_lo`/`account_hi`/`initiator_id` rather than the originally-sketched `requester_id`/`addressee_id` (decisions.md 2026-06-10 "Contact-graph representation"); adds `blocks`/`reports`/`invites`/`invite_redemptions`/`email_hash_abuse`, nine SECURITY DEFINER RPCs, and amends the two Step 4 discovery RPCs to filter active blocks. Prior 2026-06-10: §2, §7, §10, §13 reconciled to the Phase 2 build: migrations 007 (identity foundation) + 008 (identity cutover) are LIVE ON STAGING — `profiles`/`account_identifiers`/`account_settings` exist, `user_profiles` dropped, `messages.sender_id` + `user_linguistic_profiles`/`user_profile_events` cut over to uuid, RLS enabled on the Phase 2 tables, and `auth_tenant_id()`/`handle_new_user()`/`complete_onboarding()` added. Server-side profile inference shipped + verified on staging. **Prod is untouched** — it still runs the pre-auth no-RLS app; the cutover is a coordinated wipe-staging-then-prod event (see §10). Prior 2026-05-18: §7 vestigial-column reconciliation.)
 **Repo:** https://github.com/iwitt1/translationapp1
 **Owner:** Isaac (iwitt1)
 
@@ -214,6 +214,7 @@ The `_source` fields in `user_linguistic_profiles` (e.g., `dialect_source: 'expl
 > | RLS on all Phase 2 tables + `messages`/`message_translations` | 007/008 | enabled on staging; verified by Step 3 gate |
 > | `find_account_by_email()`, `search_accounts_by_username()`, `change_username()` discovery RPCs + username-prefix index | 010 | **gate PASSED on staging (22/22); re-passed after 011's block-filter amend** (Phase 2 Step 4; additive, no table changes). The two discovery RPCs are **amended by 011** to filter active blocks. |
 > | `relationships` (canonical-pair), `blocks`, `reports`, `invites`, `invite_redemptions`, `email_hash_abuse` + 9 RPCs (`active_block_exists`, `request_contact`, `respond_to_contact`, `block_account`, `unblock_account`, `report_account`, `create_invite`, `redeem_invite`, `revoke_invite`) | 011 | **gate PASSED on staging (40/40)** (Phase 2 Step 5; additive tables + RLS + RPCs, no destructive change). `tenants.dm_initiation_policy` already exists (007). |
+> | `list_abandoned_pending_accounts()`, `record_abandoned_email_hash()` support functions for the abandonment sweep | 012 | **written; pending gate on staging** (Phase 2 Step 6; additive functions only, `service_role`-only EXECUTE, no table changes — `email_hash_abuse` shipped in 011). The sweep itself is Node (Vercel cron): `server/lib/abandonment.js` + `api/v1/jobs/abandonment.js`. |
 > | `conversation_contexts`, `translation_corrections`, `translation_reviews`, `data_deletion_requests` | — | **not built yet** |
 >
 > Prod still runs the pre-007 schema (no `profiles`, `sender_id` still text, no RLS). The column
@@ -594,6 +595,24 @@ is RLS SELECT-only (or no policy), so direct client writes are denied.
 - **`redeem_invite(p_token)`** → text — validate token (revoked/expired/max-uses/cross-tenant/own-invite all rejected), record the redemption (one per user), and **auto-accept** the contact with the creator (`via='invite_link'`, `initiator=creator`). Block-checked.
 - **`revoke_invite(p_invite_id)`** → text — revoke an invite the caller created (`'revoked'` / `'noop'`); no further redemptions.
 
+#### Phase 2 Step 6 abandonment support functions (migration 012; pending gate on staging)
+
+Unlike every RPC above, these are **system functions** called only by the abandonment sweep as
+the `service_role` — `EXECUTE` is granted to `service_role` only (revoked from
+`public`/`anon`/`authenticated`), and they do **not** use `auth.uid()`/`auth_tenant_id()` because
+the sweep operates across all tenants, not as a logged-in user. They exist because the sweep's
+logic must live partly in Node (the abuse hash is a keyed HMAC whose pepper never enters Postgres —
+decisions.md 2026-06-10) but two pieces are cleanest in SQL:
+
+- **`list_abandoned_pending_accounts(p_max_age interval DEFAULT '30 days')`** → setof `(account_id, tenant_id, canonical_email, username_source)` — `STABLE SECURITY DEFINER`. Returns every `status='pending'` account created more than `p_max_age` ago, with the canonical (`lower(trim)`) email the sweep hashes and `username_source` (a guard — the sweep refuses anything not `system_generated`). Backed by the `profiles_tenant_status_created_idx` partial index (007), built for exactly this query.
+- **`record_abandoned_email_hash(p_tenant_id uuid, p_email_hash_hex text, p_key_version smallint DEFAULT 1)`** → void — `VOLATILE SECURITY DEFINER`. Atomic insert-or-increment into `email_hash_abuse` (the +1 can't be expressed as a plain PostgREST upsert). The hash arrives as hex and is `decode()`d to `bytea`; on conflict `(tenant_id, email_hash, key_version)` it bumps `abandon_count` + `last_seen`, preserving `first_seen`.
+
+**No "release username" function exists by design:** the sweep deletes the `auth.users` row via the
+Supabase admin API, and the FK cascade (auth.users→profiles→account_identifiers/account_settings,
+all ON DELETE CASCADE, 007) drops the username + email rows — with the rows gone, within-tenant
+uniqueness + historical-non-reuse no longer block the handle, so it is released automatically
+(decisions.md 2026-06-10 "Step 6 abandonment").
+
 ---
 
 ## 8. How a translation moves through the system
@@ -731,6 +750,13 @@ Safe to ship to the browser *once RLS is enabled*. Until then, treat the live UR
 
 The OpenAI API key never leaves the backend. Frontend never calls OpenAI directly.
 
+**Step 6 abandonment cron (added 2026-06-10)** — the `/api/v1/jobs/abandonment` route needs these
+backend env vars (Preview → staging, Production → prod), none `VITE_`-prefixed:
+- `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` — service-role client for the admin delete + the two Step 6 RPCs. The service-role key is a full-access secret; never ship it to the browser.
+- `ABANDONMENT_EMAIL_HASH_PEPPER` — the HMAC pepper (decisions.md 2026-06-10). Must match the value the staging gate uses (`.env.rls-test`), and **never enters Postgres**.
+- `ABANDONMENT_EMAIL_HASH_KEY_VERSION` (default 1), `ABANDONMENT_MAX_AGE_DAYS` (default 30) — optional tuning.
+- `CRON_SECRET` — Vercel attaches `Authorization: Bearer $CRON_SECRET` to cron calls; the route fails closed if it's unset or mismatched (the endpoint deletes accounts, so it must not be publicly triggerable).
+
 ### Vercel env var scoping (added 2026-05-18 with staging)
 - Production environment env vars point at prod Supabase.
 - Preview environment env vars point at staging Supabase (`translationapp1-staging`).
@@ -760,7 +786,9 @@ The OpenAI API key never leaves the backend. Frontend never calls OpenAI directl
 ├── api/
 │   └── v1/
 │       ├── translate.js      Vercel serverless: translate/detect (versioned routes)
-│       └── infer-profile.js  Vercel serverless: server-side profile inference
+│       ├── infer-profile.js  Vercel serverless: server-side profile inference
+│       └── jobs/
+│           └── abandonment.js  Vercel cron entry (Step 6 sweep; CRON_SECRET-guarded)
 ├── lib/                       Shared (server + serverless) translation/policy logic
 │   ├── translatePrompt.js    System prompt + PROMPT_VERSION (semver, stamped on cache)
 │   └── policies.js           Machine source of truth for global identity/safety defaults
@@ -768,19 +796,22 @@ The OpenAI API key never leaves the backend. Frontend never calls OpenAI directl
 │   ├── index.js              Local dev backend (Express)
 │   ├── lib/
 │   │   ├── inferProfile.js   Inference→profile update logic (explicit-wins, confidence gate)
-│   │   └── events.js         user_profile_events writer
+│   │   ├── events.js         user_profile_events writer
+│   │   └── abandonment.js    Step 6 abandonment sweep (delete aged-pending, release username, HMAC)
 │   └── .env                  Local OPENAI_API_KEY (not committed)
-├── migrations/               Run in Supabase SQL editor, manually for now (000–011)
+├── migrations/               Run in Supabase SQL editor, manually for now (000–012)
 │   ├── 000_base_schema.sql … 006_user_profile_events_task_id.sql
 │   ├── 007_phase2_identity_foundation.sql   profiles/identifiers/settings, auth_tenant_id(), trigger
 │   ├── 008_phase2_step2_identity_cutover.sql  text→uuid cutover, RLS, complete_onboarding()
 │   ├── 009_restore_nonbinary_gender_signal.sql  restores nonbinary CHECK dropped by 008
 │   ├── 010_phase2_step4_discovery.sql       Step 4 discovery + change_username RPCs, username-prefix index
-│   └── 011_phase2_step5_social_graph.sql    Step 5 relationships/blocks/reports/invites/email_hash_abuse + 9 RPCs; amends 010 discovery RPCs to filter blocks
+│   ├── 011_phase2_step5_social_graph.sql    Step 5 relationships/blocks/reports/invites/email_hash_abuse + 9 RPCs; amends 010 discovery RPCs to filter blocks
+│   └── 012_phase2_step6_abandonment.sql     Step 6 list_abandoned_pending_accounts() + record_abandoned_email_hash() (service_role-only)
 ├── scripts/
 │   ├── rls-adversarial-test.mjs   Phase 2 Step 3 RLS gate (run on staging)
 │   ├── discovery-gate-test.mjs    Phase 2 Step 4 discovery gate (run on staging)
-│   └── social-graph-gate-test.mjs Phase 2 Step 5 social-graph + safety gate (run on staging)
+│   ├── social-graph-gate-test.mjs Phase 2 Step 5 social-graph + safety gate (run on staging)
+│   └── abandonment-gate-test.mjs  Phase 2 Step 6 abandonment + abuse-monitoring gate (run on staging)
 ├── src/
 │   ├── App.jsx               Frontend UI (login, chat, message bubble) — single file currently
 │   ├── main.jsx              React entry point
@@ -809,6 +840,7 @@ The OpenAI API key never leaves the backend. Frontend never calls OpenAI directl
 ├── package.json              
 ├── README.md                 
 ├── tailwind.config.js        
+├── vercel.json               Vercel cron schedule (Step 6 abandonment sweep, daily)
 └── vite.config.js            
 ```
 
