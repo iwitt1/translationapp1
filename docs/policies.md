@@ -13,7 +13,7 @@
 > **Audit cadence:** review at the start of each phase, and at minimum quarterly. Each review
 > updates "Last reviewed" and logs material changes in `decisions.md`.
 
-**Last reviewed:** 2026-06-11 (§6 added "Data deletion / Right to Erasure (GDPR Art. 17)" subsection at Step 7 build — two-phase 30-day grace; content de-identified via `messages.sender_id` ON DELETE SET NULL not deleted; audit row survives via `data_deletion_requests.user_id` ON DELETE SET NULL; abuse HMAC recorded on voluntary erasure too, source split parked. Written, gate pending on staging. See decisions.md 2026-06-11. Prior 2026-06-10: §6 Abandonment resolved at Step 6 build — hash-over-plaintext confirmed; HMAC pepper in env not Postgres, `key_version=1`; username release is automatic via FK cascade, no release function; re-prompt emails parked to a future CRM. Prior: 2026-06-09 initial draft — Phase 2 identity/discovery/lifecycle design.)
+**Last reviewed:** 2026-06-11 (§6 added "Data deletion / Right to Erasure (GDPR Art. 17)" subsection at Step 7 build — two-phase 30-day grace; content de-identified via `messages.sender_id` ON DELETE SET NULL not deleted; audit row survives via `data_deletion_requests.user_id` ON DELETE SET NULL; abuse HMAC recorded on voluntary erasure too, source split parked. Gate PASSED on staging 37/37. See decisions.md 2026-06-11. Prior 2026-06-10: §6 Abandonment resolved at Step 6 build — hash-over-plaintext confirmed; HMAC pepper in env not Postgres, `key_version=1`; username release is automatic via FK cascade, no release function; re-prompt emails parked to a future CRM. Prior: 2026-06-09 initial draft — Phase 2 identity/discovery/lifecycle design.)
 
 ---
 
@@ -160,7 +160,7 @@ language are required to flip to `active`.
   "Pending-account re-prompt UX".
 
 ### Data deletion / Right to Erasure (GDPR Art. 17)
-*Built in Step 7 (migration 013, `server/lib/deletion.js`, Vercel cron `/api/v1/jobs/deletion`, daily 09:00 UTC — an hour after abandonment so the two destructive jobs don't overlap). **Written, gate PENDING on staging.** See decisions.md 2026-06-11 "Step 7 data deletion".*
+*Built in Step 7 (migration 013, `server/lib/deletion.js`, Vercel cron `/api/v1/jobs/deletion`, daily 09:00 UTC — an hour after abandonment so the two destructive jobs don't overlap). **Gate PASSED on staging 2026-06-11 — 37/37 GREEN.** See decisions.md 2026-06-11 "Step 7 data deletion".*
 - **Two-phase, 30-day grace.** A user calls `request_account_deletion()`, which soft-deletes
   (`profiles.status='deactivated'`) and enqueues a row in `data_deletion_requests` (`status='pending'`,
   `grace_until = now() + 30 days`). `cancel_account_deletion()` reverses it any time before the sweep
