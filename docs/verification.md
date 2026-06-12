@@ -1258,11 +1258,14 @@ direct≠2), (5) `set_conversation_context_type` member vs non-member, (6) `conv
 
 ## Phase 3 — Step 2: Membership-scoped messages RLS (migration 018 / Spec 7) (2026-06-12)
 
-**Status: ⏳ BUILT, GATE PENDING on staging.** Migration `018_phase3_messages_rls.sql` and its gate
-`scripts/messages-rls-gate-test.mjs` are written (2026-06-12) but **not yet run** — apply on
-`translationapp1-staging`, confirm the embedded SQL verification block all-green, then run the gate.
-**Replay 018 to prod only AFTER 017, never before.** Record the gate result here and flip the roadmap
-Step 2 item `[~]` → `[x]` once GREEN.
+**Status: ✅ PASSED on staging — 27/27 GREEN (2026-06-12).** Sentinel data purged, migration
+`018_phase3_messages_rls.sql` applied on `translationapp1-staging` (embedded SQL verification block
+all-green), and `scripts/messages-rls-gate-test.mjs` exits 0 with all 27 assertions passing —
+including the load-bearing ones: a non-member is denied on **all four** surfaces (SELECT message,
+INSERT message, read cache, **realtime** — 0 events), a cross-tenant user is denied, joining via
+invite grants all four (including a cache upsert and realtime delivery ≥1), soft-leave revokes all
+four again, and `messages` remain immutable (member UPDATE/DELETE change 0 rows). **Prod replay of
+017 → 018 is still pending** (hold until the conversation-aware frontend lands — see roadmap UI).
 
 **What this step does:** Flips `messages` + `message_translations` RLS from **tenant-scoped** to
 **membership-scoped** — the highest-blast-radius security change since the Phase 2 RLS cutover (it
@@ -1289,7 +1292,9 @@ changes 0 rows). The realtime checks are explicit because realtime-RLS is a know
 
 **Gate:** `node scripts/messages-rls-gate-test.mjs` exits 0 with every phase PASS, on staging.
 
-**Gate result:** ⏳ _pending — not yet run._
+**Gate result:** ✅ **27/27 GREEN on staging 2026-06-12** (`translationapp1-staging`,
+`nvlmcdgzbxuwcnzkwqne`). All five phases PASS, both realtime checks behaved as expected (0 events for
+non-member/left, ≥1 for member). Roadmap Step 2 item flipped `[~]` → `[x]`.
 
 ### How to run it (staging)
 1. **Purge first (recommended):** run the read-only sentinel-inventory queries at the foot of
