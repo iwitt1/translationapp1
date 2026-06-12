@@ -16,6 +16,35 @@
 
 ---
 
+## 2026-06-11 — Phase 2 production cutover executed (prod wipe + replay 007→015)
+
+**Decision:** Executed the Phase 2 production cutover — wiped prod test data, replayed migrations 007→015 in order against prod, enabled the `profile_writer` LOGIN out of band, set the prod Vercel env vars on port 6543, and redeployed. Along the way settled three sub-decisions: **(a)** truncate the event-log tables (`translation_events`/`agent_events`) along with the chat data rather than preserving them; **(b)** proceed **without a pre-wipe snapshot** (Supabase free tier has no backups); **(c)** treat the existing `main` auto-deploy as the deploy mechanism — no separate "deploy frontend" step.
+
+**Context:** Prod was fully migrated through 006 (pre-007) and the Phase-2 auth frontend was already live on `main` against that un-migrated DB (i.e. prod was effectively broken — the auth/onboarding UI was calling tables/RPCs that didn't exist). The cutover's real job was therefore "migrate the DB to match the app that already shipped," not "ship a new app." All migrations had passed their gates on staging; the replay was a known-good sequence.
+
+**Alternatives considered:**
+- *Keep the event-log tables* — rejected: everything in them was pre-launch test data plus the known stray `hermes_test` row; truncating gives a clean flywheel from launch and finally clears that stray row (the INSERT-only `hermes_writer` role couldn't delete it).
+- *Manufacture a snapshot anyway* (pg_dump the few test rows) — rejected as not worth it: the schema lives in version-controlled migrations and the data was disposable, so the only thing a backup would insure against (real user data loss) didn't exist yet.
+- *Gate the prod deploy behind a manual `vercel --prod`* — moot: prod auto-deploys from `main` per the Vercel project config; the "gating" in hermes.md/specs.md is an operating *contract* for Hermes, not a structural block. The env-var change did require an explicit redeploy to take effect.
+
+**Reasoning:** An empty, disposable prod is the cheapest possible moment to do an irreversible reset. Replaying the exact staging-validated migration sequence (rather than hand-applying schema) guarantees prod ↔ staging parity. Each gate-bearing migration (008 identity cutover, 009 nonbinary restore, 015 profile_writer) was re-verified on prod immediately after running.
+
+**Verified on prod (2026-06-11):** wipe left 0 rows in all 8 data tables, `tenants` seed intact. Replay 007→015 all green — 3 new identity tables + 27 reserved words + RLS (007); `user_profiles` dropped, 3 uuid promotions + `messages_sender_id_fk` + RLS + `complete_onboarding` (008); nonbinary CHECK restored (009); 7 social/deletion tables + 16 RPCs + RLS (010–013); `conversation_id` + 7 vestigial drops + 4 timestamptz + 4 FK indexes (014); `profile_writer` role with exactly the scoped grants/policies, still NOLOGIN/non-super/non-bypassrls until the out-of-band ALTER (015). Single-user smoke PASSED on live prod (signup → onboard → `status='active'` + ULP row → message sent).
+
+**Still pending (next session, before declaring the cutover fully GREEN):**
+- *Two-user inference path* — confirm `POST /api/v1/infer-profile` writes an inferred update + event row end-to-end on prod under the `profile_writer` role (blocked this session by an email-verification rate limit).
+- *Vercel cron verification* — confirm `/api/v1/jobs/abandonment` (08:00) and `/api/v1/jobs/deletion` (09:00) are registered on the prod project.
+
+**Dashboard-only gotchas this surfaced (not captured in any migration):**
+- *Supabase Auth URL config* — magic links initially redirected to `localhost` because prod's **Site URL** was still the dev default. Fixed by setting Site URL = `https://translationapp1.vercel.app` and adding it to Redirect URLs. This config lives in the Supabase dashboard, not in `/migrations/`, so it's an easy cutover-checklist miss — see operations.md cutover notes.
+- *Stale comment in migration 015* — lines 37–38 say "port 5432" for the connection string; that's wrong for Vercel serverless, which needs **6543** (transaction pooler). The committed env var uses 6543; the migration comment should be corrected.
+
+**Resolves open Hermes-handoff escalations:** `DATABASE_URL_PROD_WRITER` confirmed on port 6543 in Vercel Production (was flagged as still 5432); the stray `hermes_test` prod row removed by the wipe.
+
+**Revisit when:** the two-user inference + cron checks complete (flip the cutover to fully GREEN and mark verification.md/roadmap accordingly); or if any prod-only divergence from staging surfaces during the pending verification.
+
+---
+
 ## 2026-06-11 — profile_writer role: scoped RLS, not BYPASSRLS (migration 015)
 
 **Decision:** Give `server/lib/inferProfile.js` its own dedicated least-privilege Postgres login role, `profile_writer` (migration 015), authorized via **column-scoped table GRANTs + RLS policies targeted `TO profile_writer` (USING/WITH CHECK `true`)** — **not** a `BYPASSRLS` role and **not** a `SECURITY DEFINER` RPC. The DB authorizes the *operation* (which tables/columns/verbs); the application authorizes the *row* via the message-derived trust boundary (decisions.md 2026-06-10). The role is created `NOLOGIN NOINHERIT`; an operator enables `LOGIN` + a strong password **out of band** (Supabase SQL editor) and stores it only in the Vercel env var `DATABASE_URL_PROFILE_WRITER` (never committed, never `VITE_`-prefixed).
