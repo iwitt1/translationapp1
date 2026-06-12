@@ -1393,7 +1393,7 @@ The core gate: **a translated message from another user causes that sender's pro
 
 ## Phase 2 production cutover (2026-06-11)
 
-**Status: ✅ EXECUTED on prod 2026-06-11 — schema + role + inference path all GREEN; one check (Vercel crons) PENDING.** The coordinated wipe-then-replay cutover ran against the prod project `translationapp1`. Prod previously sat at migration 006 (pre-auth, no RLS) while the already-shipped frontend expected the Phase 2 schema; the cutover migrated the DB to match the live app. See `decisions.md` 2026-06-11 "Phase 2 production cutover executed (prod wipe + replay 007→015)" and `operations.md` "Prod cutover — EXECUTED 2026-06-11".
+**Status: ✅ FULLY GREEN on prod 2026-06-11 — cutover complete.** Schema, `profile_writer` role, two-user inference path, and Vercel crons all verified live on prod. The coordinated wipe-then-replay cutover ran against the prod project `translationapp1`. Prod previously sat at migration 006 (pre-auth, no RLS) while the already-shipped frontend expected the Phase 2 schema; the cutover migrated the DB to match the live app. See `decisions.md` 2026-06-11 "Phase 2 production cutover executed (prod wipe + replay 007→015)" and `operations.md` "Prod cutover — EXECUTED 2026-06-11".
 
 **What ran:**
 
@@ -1406,9 +1406,9 @@ The core gate: **a translated message from another user causes that sender's pro
 - [x] **Two-user inference path on prod (2026-06-11)** — User A sent an Argentine-Spanish message; User B (different `preferred_language`) viewed it → `POST /api/v1/infer-profile` returned `{"status":"updated","fields":["dialect_region","dialect_confidence","dialect_source","formality_preference","formality_source"]}`. Verified: User A's ULP row updated to `dialect_region=es-AR` / `formality_preference=casual` with `updated_at` bumped; two `user_profile_events` rows landed (`dialect_region_inferred`, `formality_preference_inferred`, `source=inference`); **trust boundary held** — the write landed on the *sender* (User A), not the viewer (User B's row untouched). `gender_signal` null (no gender signal crossed the confidence threshold — expected). This exercised the `profile_writer` role's scoped SELECT/UPDATE/INSERT grants live on prod.
   - **Debugging note:** first attempt 500'd — Vercel log showed `password authentication failed for user "profile_writer"`. Root cause was the connection-string password in `DATABASE_URL_PROFILE_WRITER` (special characters corrupt parsing / mismatch). Fixed by resetting the role to an alphanumeric-only secret (`ALTER ROLE … WITH LOGIN PASSWORD`), updating the env var, and redeploying. The format (`profile_writer.<ref>` @ port 6543 pooler) was already correct — only the password was the problem. Migration 015's connection-string comment template was wrong (showed port 5432 / bare username / no URL-encode warning) and has been corrected.
 
-**PENDING (the only item keeping the cutover from fully GREEN):**
+- [x] **Vercel cron verification on prod (2026-06-11)** — both jobs confirmed registered on the prod project via the Vercel dashboard: `/api/v1/jobs/abandonment` (daily 08:00 UTC) and `/api/v1/jobs/deletion` (daily 09:00 UTC), both `CRON_SECRET`-guarded.
 
-- [ ] **Vercel cron verification on prod** — confirm both jobs are registered on the prod project: `/api/v1/jobs/abandonment` (daily 08:00 UTC) and `/api/v1/jobs/deletion` (daily 09:00 UTC), both `CRON_SECRET`-guarded.
+**No pending items — the Phase 2 production cutover is complete.**
 
 ---
 

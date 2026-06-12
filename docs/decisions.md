@@ -33,8 +33,7 @@
 
 **Two-user inference path — PASSED live on prod (2026-06-11).** User A sent an Argentine-Spanish message; User B (different `preferred_language`) viewed it → `POST /api/v1/infer-profile` returned `{"status":"updated","fields":[dialect_region, dialect_confidence, dialect_source, formality_preference, formality_source]}`. User A's ULP row updated to `es-AR`/`casual` (`updated_at` bumped); two `user_profile_events` rows landed (`dialect_region_inferred`, `formality_preference_inferred`, `source=inference`); **trust boundary held** — the write landed on the *sender* (A), not the viewer (B's row untouched); `gender_signal` null (below confidence — expected). This was the `profile_writer` role's first real exercise on prod.
 
-**Still pending (before declaring the cutover fully GREEN):**
-- *Vercel cron verification* — confirm `/api/v1/jobs/abandonment` (08:00) and `/api/v1/jobs/deletion` (09:00) are registered on the prod project.
+**Vercel crons — CONFIRMED on prod (2026-06-11).** Both `/api/v1/jobs/abandonment` (08:00) and `/api/v1/jobs/deletion` (09:00) verified registered on the prod project via the Vercel dashboard. **With this, the Phase 2 production cutover is FULLY GREEN — no pending verification.**
 
 **Dashboard-only gotchas this surfaced (not captured in any migration):**
 - *Supabase Auth URL config* — magic links initially redirected to `localhost` because prod's **Site URL** was still the dev default. Fixed by setting Site URL = `https://translationapp1.vercel.app` and adding it to Redirect URLs. This config lives in the Supabase dashboard, not in `/migrations/`, so it's an easy cutover-checklist miss — see operations.md cutover notes.
@@ -43,7 +42,7 @@
 
 **Resolves open Hermes-handoff escalations:** `DATABASE_URL_PROD_WRITER` confirmed on port 6543 in Vercel Production (was flagged as still 5432); the stray `hermes_test` prod row removed by the wipe.
 
-**Revisit when:** the Vercel cron check completes (flip the cutover to fully GREEN and mark verification.md/roadmap accordingly); or if any prod-only divergence from staging surfaces.
+**Status:** ✅ COMPLETE — cutover fully GREEN as of 2026-06-11 (schema, role, inference path, and crons all verified live on prod). **Revisit only if** a prod-only divergence from staging surfaces in normal operation.
 
 ---
 
