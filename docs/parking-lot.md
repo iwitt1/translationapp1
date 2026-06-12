@@ -17,6 +17,13 @@ A group of the same people could hold several parallel conversations — e.g. a 
 - **Related:** group dedupe is policy-driven and per-tenant (Spec 6 / decisions.md 2026-06-12) — threads are the richer alternative to "same people, many groups," so revisit dedupe policy and threads together.
 - **Trigger:** consumer group chat has real retention and users are creating multiple same-member groups as a workaround for topic separation.
 
+### Conversation garbage-collection (remove a conversation once all members are inactive for N days)
+A conversation — direct or group — should persist and stay accessible to everyone remaining as long as **at least one member is still active**. Only once **every** member has become inactive should it eventually be removed, after an inactivity window passes. The window (N days) is TBD and belongs in policies.md.
+- **Why interesting:** Closes the lifecycle loop. Migration 017 deliberately decoupled conversation existence from its creator (`created_by ON DELETE SET NULL` — a creator deleting their account does **not** delete the conversation; decisions.md 2026-06-12), which means nothing currently ever reaps a fully-abandoned conversation. This is the job that does.
+- **Shape (when built):** a service-role sweep (mirrors the Step 6 abandonment / Step 7 deletion crons) that finds conversations with zero active members (`conversation_members` all `left_at IS NOT NULL`, or members all deactivated/deleted) older than the window, and removes them; `conversation_members` rows cascade (`ON DELETE CASCADE`), and `messages`/`message_translations` handling follows the Spec 7 / sentinel-retirement precedent (decisions.md 2026-06-12 "Retire the global-room sentinel data").
+- **Deliberately NOT built in Phase 3 (decisions.md 2026-06-12, build-time decision #2).** Phase 3 Step 1 ships the schema with the right FK semantics so this is purely additive later; the reaping logic + the N-day policy value are out of scope until there's real conversation volume.
+- **Trigger:** real conversation retention exists and abandoned conversations accumulate; define N in policies.md first.
+
 ### Language preference as account setting, not session toggle
 The language selector is currently in the chat header — accessible mid-conversation. This makes it easy to accidentally trigger a full re-translation of chat history and burn credits. Language preference should live in user account/profile settings and be changed deliberately, not casually.
 - **Why interesting:** Prevents unintended credit burn; better UX signal — language is a stable identity attribute, not a per-session mode.

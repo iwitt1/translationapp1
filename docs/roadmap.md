@@ -201,17 +201,19 @@
 > **Forward-prep done (migration 014, 2026-06-11).** `messages.conversation_id` already exists — nullable, defaulted to the global-conversation sentinel `00000000-0000-0000-0000-000000000002`, and indexed — so this phase adds the conversations tables and *promotes* the existing column rather than backfilling. See decisions.md 2026-06-11 "Forward-schema prep before prod cutover".
 
 ### Schema
-- [ ] `conversations` table — insert the `…0002` global-conversation row so every pre-existing message already FK-resolves
-- [ ] `conversation_members` table
-- [ ] `messages.conversation_id`: add the FK (→ `conversations`), `SET NOT NULL`, then **drop the migration-014 default** so real conversation ids take over. **No backfill** — every row already carries the sentinel.
-- [ ] `conversation_contexts` rows scoped per conversation (table in place from Phase 1) — **add its RLS policy here** (SELECT same-tenant / write-via-RPC); it shipped without RLS and must not serve real traffic until the policy lands (architecture.md §7)
+> **Step 1 DONE on staging (migration 017, 2026-06-12) — gate GREEN 35/35.** All four schema items below are implemented in `migrations/017_phase3_conversations.sql` (+ the `create_conversation`/`leave_conversation`/`set_conversation_context_type`/`is_active_member` RPCs and the `create_invite`/`redeem_invite` conversation-kind amendments) and verified by `scripts/conversations-gate-test.mjs` (35/35 on `translationapp1-staging`). **Prod replay still pending.** See decisions.md 2026-06-12 "Phase 3 Step 1 conversations schema" + verification.md "Phase 3 — Step 1".
+- [x] `conversations` table — insert the `…0002` global-conversation row so every pre-existing message already FK-resolves *(migration 017; staging gate GREEN; prod pending)*
+- [x] `conversation_members` table *(migration 017, soft-leave model via `left_at`; staging gate GREEN; prod pending)*
+- [x] `messages.conversation_id`: add the FK (→ `conversations`), `SET NOT NULL`, then **drop the migration-014 default** so real conversation ids take over. **No backfill** — every row already carries the sentinel. *(migration 017, promotion is DO-block-guarded + idempotent; staging gate GREEN; prod pending)*
+- [x] `conversation_contexts` rows scoped per conversation (table in place from Phase 1) — **add its RLS policy here** (SELECT membership-gated / write-via-RPC); it shipped without RLS and must not serve real traffic until the policy lands (architecture.md §7) *(migration 017 adds the membership-gated SELECT policy + the `conversation_id` FK `NOT VALID`; staging gate GREEN; prod pending)*
 - [x] **Deliberate planning step:** before implementing, do a focused review of the data model with future efficiencies in mind — translation deduplication across conversations, caching strategies, multi-tenant scoping. Document conclusions in `decisions.md`. **Done 2026-06-12** — see decisions.md "Phase 3 data model: conversations as the single membership-scoped primitive". Schema + write RPCs carved into Spec 6 (migration 017); membership-scoped messages RLS into Spec 7 (migration 018); cross-conversation dedup/caching explicitly deferred to parking-lot. (Migration 016 is an unrelated FK-cascade drift fix that slotted in ahead — see decisions.md 2026-06-12 "FK drift".)
 
 ### UI
+> The server-side write layer for these flows ships in migration 017 (`create_conversation`, `leave_conversation`, conversation-kind `create_invite`/`redeem_invite`, `set_conversation_context_type`). The items below are the **UI** that calls them, still to build.
 - [ ] Conversation list view
-- [ ] Create conversation flow
-- [ ] Invite-to-conversation — reuses the Phase 2 `invites` + `invite_redemptions` primitive (built in Phase 2 for contact-add; extended here to conversation-join). Not a username-only flow: add by any discovery handle the user already has, subject to discovery policy + handle minimization (policies.md §2)
-- [ ] Per-conversation context type setting. **This is where the in-chat context/register dropdown moves** — kept in the header through Phase 2, relocated to per-conversation setting here (auto-inference is the longer-term target; see parking-lot.md "Context type: auto-inferred, not manually set")
+- [ ] Create conversation flow *(RPC `create_conversation` built in 017)*
+- [ ] Invite-to-conversation — reuses the Phase 2 `invites` + `invite_redemptions` primitive (built in Phase 2 for contact-add; extended here to conversation-join). Not a username-only flow: add by any discovery handle the user already has, subject to discovery policy + handle minimization (policies.md §2) *(RPC layer built in 017: `create_invite`/`redeem_invite` accept `conversation` kind)*
+- [ ] Per-conversation context type setting. *(RPC `set_conversation_context_type` built in 017)* **This is where the in-chat context/register dropdown moves** — kept in the header through Phase 2, relocated to per-conversation setting here (auto-inference is the longer-term target; see parking-lot.md "Context type: auto-inferred, not manually set")
 
 ### What "Phase 3 done" means
 - A user can have multiple distinct conversations with different other users.

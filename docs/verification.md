@@ -1199,6 +1199,63 @@ Imports the **same** `runDeletionSweep` the cron uses.
 
 ---
 
+## Phase 3 — Step 1: Conversations schema (migration 017) (2026-06-12)
+
+**Status: ✅ PASSED on staging — 35/35 GREEN (2026-06-12).** Migration
+`017_phase3_conversations.sql` applied on `translationapp1-staging` (embedded SQL verification block
+all-green), and `scripts/conversations-gate-test.mjs` exits 0 with all 35 assertions passing —
+including the load-bearing ones: direct-dedupe resolves re-create **and** reverse-create to the
+**same** id with exactly one row (no glare dup), group creates are always-new (distinct ids), a
+soft-left member **loses** both the conversation and its context row and **regains** both on re-join,
+conversation-kind invite create+redeem joins while a cross-tenant redeem is denied opaquely, every
+`messages.conversation_id` resolves (0 nulls, 0 unresolved FKs), and direct client INSERTs into
+`conversations`/`conversation_members` are RLS-denied. **Prod replay of 017 is still pending.**
+
+**What this step does:** Introduces first-class conversations (the move off "one global room").
+Adds `conversations` + `conversation_members` tables with membership-gated RLS, promotes
+`messages.conversation_id` to a real FK (zero backfill — the 014 default already seeded every row
+with the global sentinel), adds `conversation_contexts` RLS + FK `NOT VALID`, and the
+`create_conversation` / `leave_conversation` / `set_conversation_context_type` / `is_active_member`
+RPCs, plus conversation-kind `create_invite`/`redeem_invite` amendments. Dedupe is policy-driven
+(`tenants.conversation_policy` over `lib/policies.js` defaults) and race-safe via
+`conversations.dedupe_key` + a partial unique index. See decisions.md 2026-06-12 "Phase 3 Step 1
+conversations schema" + the dedupe / `created_by` ON DELETE SET NULL / FK-NOT-VALID entries.
+
+**How it's verified:** `scripts/conversations-gate-test.mjs` — a checked-in adversarial harness
+(same `.env.rls-test` + `RLS_TEST_CONFIRM_STAGING=yes` staging guard as Steps 3–7), nine phases:
+(1) direct create + membership visibility, (2) direct-dedupe race-safety (same id on re-create and
+reverse member order), (3) group always-new (distinct ids), (4) rejections (cross-tenant, self-only,
+direct≠2), (5) `set_conversation_context_type` member vs non-member, (6) `conversation_contexts` RLS
++ soft-leave/re-join, (7) conversation-kind invite create+redeem + cross-tenant denial, (8)
+`messages.conversation_id` data-level (0 nulls, 0 unresolved FKs), (9) direct-client-write-denied.
+
+**Gate:** `node scripts/conversations-gate-test.mjs` exits 0 with every phase PASS, on staging.
+
+**Gate result:** ✅ **35/35 GREEN on staging 2026-06-12** (`translationapp1-staging`,
+`nvlmcdgzbxuwcnzkwqne`). All nine phases PASS. Roadmap Schema items flipped `[~]` → `[x]`.
+
+### How to run it (staging)
+1. Apply `017_phase3_conversations.sql` in the staging (`translationapp1-staging`, non-main branch)
+   SQL editor; confirm the embedded verification block at the foot of the migration returns all-green.
+2. Same `.env.rls-test` as the Step 5–7 gates (staging URL + anon + service_role keys; three test
+   users A/B/C; `RLS_TEST_CONFIRM_STAGING=yes`).
+3. `node scripts/conversations-gate-test.mjs` from the `V1/` root.
+4. Exit 0 + all PASS = gate GREEN. Record the result above, flip the roadmap items, then proceed.
+
+### Known failure modes and how to diagnose
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `ERROR: function create_conversation(...) does not exist` | Migration 017 not applied on this project | Run `017_phase3_conversations.sql` in the staging SQL editor |
+| Direct re-create mints a **new** id instead of deduping | `dedupe_key` not set, or the partial unique index missing | Confirm `conversations_dedupe_unique (tenant_id, dedupe_key) WHERE dedupe_key IS NOT NULL` and that `create_conversation` writes the sorted member-set key for `direct` |
+| Group create dedupes (reuses a thread) | `conversation_policy` / default resolved to `dedupe` for `group` | Confirm `CONVERSATION.DEFAULTS.group = 'always_new'` and the RPC's `coalesce` fallback |
+| A user sees a conversation they aren't in | SELECT policy not gated on `is_active_member` | Confirm the `conversations`/`conversation_members` SELECT policies call `is_active_member(id, auth.uid())` |
+| Soft-leave hard-deletes the membership row | `leave_conversation` issued DELETE not `UPDATE left_at` | Confirm it stamps `left_at = now()` on the active row |
+| `messages.conversation_id` has NULLs / unresolved FKs | 014 default never populated, or promotion ran before seed | Confirm the global-conversation row (`…0002`) is inserted **before** `SET NOT NULL`, and 014 ran first |
+| Client can INSERT/UPDATE `conversations` directly | No REVOKE / a stray write policy exists | Confirm tables are RLS SELECT-only and the RPCs are the sole write path |
+
+---
+
 ## Phase 2 — Step 0: Pre-flight (2026-06-09)
 
 **What this step does:** Audits Supabase config that lives outside `/migrations/`, scaffolds

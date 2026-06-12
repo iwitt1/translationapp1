@@ -16,6 +16,36 @@
 
 ---
 
+## 2026-06-12 — Phase 3 Step 1 conversations schema — three build-time decisions (migration 017)
+
+These were resolved while writing `017_phase3_conversations.sql` (the schema + write RPCs carved out of the 2026-06-12 "Phase 3 data model" entry below). Three sub-decisions, each surfaced with alternatives.
+
+**1. Direct-conversation dedupe → canonical-key column, not an advisory lock.**
+**Decision:** Enforce "one DM thread per pair" (and, generally, one thread per member-set when policy = `dedupe`) with a `conversations.dedupe_key text` column (the sorted member-set, populated only when the resolved policy is `dedupe`, NULL otherwise) plus a **partial unique index** `conversations_dedupe_unique (tenant_id, dedupe_key) WHERE dedupe_key IS NOT NULL`. `create_conversation` does find-or-create: INSERT, and on `unique_violation` re-SELECT the existing row.
+**Context:** Two concurrent "start a DM with X" calls could otherwise mint two threads for the same pair (a classic glare race). Confirmed dedupe policy with Isaac: `direct → dedupe`, `group → always_new`, overridable per tenant via `tenants.conversation_policy`.
+**Alternatives considered:** (A) `pg_advisory_xact_lock` on a hash of the member-set — serializes creates but is invisible to the schema, easy to forget at the next call site, and doesn't survive as a constraint. (B) Application-layer check-then-insert — inherently racy. (C) **Canonical-key column + partial unique index — chosen.** The DB itself is the arbiter; the rule is declarative and visible; it generalizes to group-dedupe for free if a tenant ever opts in.
+**Reasoning:** The constraint lives in the schema where it can't be bypassed by a new code path, mirrors the Phase 2 canonical-pair + partial-unique pattern already proven for `relationships`/`blocks`, and the `unique_violation` catch turns the race into a deterministic find-or-create.
+**Implications:** `dedupe_key` must be computed identically everywhere (sorted member ids, comma-joined). Group conversations carry NULL `dedupe_key` (the partial index ignores them), so `always_new` is the natural default. Changing a tenant's `direct` policy to `always_new` later does not retro-split existing deduped threads.
+**Revisit when:** a tenant needs group-dedupe (already supported — just populate the key for groups), or member-set keying needs to change shape (e.g. role-aware dedupe).
+
+**2. `conversations.created_by` → ON DELETE SET NULL (a conversation survives its creator's deletion).**
+**Decision:** `created_by uuid REFERENCES profiles(id) ON DELETE SET NULL`.
+**Context:** Isaac asked explicitly whether a creator deleting their account would delete the conversation (and orphan everyone else in it). Desired rule: a conversation — direct or group — persists and stays accessible to everyone remaining as long as **at least one member is active**; only once **all** members are inactive should it eventually be removed after an inactivity window.
+**Alternatives considered:** (A) `ON DELETE CASCADE` — deletes the whole conversation when the creator leaves, destroying history for everyone else. Rejected. (B) `ON DELETE RESTRICT` — blocks account deletion while they own a conversation; conflicts with the Phase 2 Step 7 erasure guarantee. Rejected. (C) **SET NULL — chosen:** the conversation loses only its "created_by" attribution, not its existence.
+**Reasoning:** Membership (`conversation_members`), not creator, is the source of truth for who can see a conversation. `created_by` is provenance/attribution metadata; nulling it is harmless. This matches the Phase 2 pattern (`messages.sender_id`, `data_deletion_requests.user_id` are both SET NULL to retain content/audit past a user's erasure).
+**Implications:** The "remove a conversation once it has no active members for N days" garbage-collection job is a **separate** future concern, not coupled to `created_by` — parked (parking-lot.md). Nothing about creator deletion triggers conversation deletion.
+**Revisit when:** the conversation-GC job is built (it needs the inactivity window defined in policies.md).
+
+**3. `conversation_contexts.conversation_id` FK added NOT VALID.**
+**Decision:** Add the `conversation_contexts.conversation_id → conversations(id)` FK as **`NOT VALID`** (enforced on new/updated rows; existing rows not scanned), inside a DO-block guard so re-runs are idempotent.
+**Context:** `conversation_contexts` shipped in migration 002 and may hold legacy rows (incl. the sentinel) whose `conversation_id` predates the `conversations` table. A plain `ADD CONSTRAINT` would scan + validate every existing row and could fail on legacy data.
+**Alternatives considered:** (A) Validate immediately — risks failing the whole 017 transaction on a single legacy row. (B) No FK (leave it dangling) — loses referential integrity going forward. (C) **`NOT VALID` now — chosen:** integrity is enforced for all new traffic immediately; a `VALIDATE CONSTRAINT` can be run later once legacy rows are confirmed clean (cheap, non-blocking).
+**Reasoning:** Mirrors standard Postgres practice for adding FKs to populated tables without a maintenance window, and matches the project's "additive, no recreate, idempotent" migration posture.
+**Implications:** A future migration can `ALTER TABLE conversation_contexts VALIDATE CONSTRAINT conversation_contexts_conversation_id_fkey` once the sentinel/legacy rows are reconciled. Until then, legacy rows are unverified but new writes are constrained.
+**Revisit when:** legacy `conversation_contexts` rows are cleaned up (then VALIDATE the constraint).
+
+---
+
 ## 2026-06-12 — FK drift: message_translations → messages cascade (staging diverged from prod)
 
 **Decision:** Align the `message_translations.message_id → messages(id)` FK to **ON DELETE CASCADE on both environments**, via new **migration 016** (`016_fix_message_translations_cascade.sql`) plus a correction to migration 000 — rather than aligning prod down to NO ACTION or leaving the environments divergent.
