@@ -241,7 +241,7 @@ The `_source` fields in `user_linguistic_profiles` (e.g., `dialect_source: 'expl
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid | Primary key, default `gen_random_uuid()` |
-| `message_id` | uuid | FK to `messages(id)`. Nullable in schema; the cache contract assumes a real link. |
+| `message_id` | uuid | FK to `messages(id)`, **ON DELETE CASCADE** — the cache is a strict child of its message, so deleting a message removes its cached translations. Reconciled to cascade on **both** environments by migration 016 (2026-06-12) after staging was found drifted to NO ACTION (migration 000's hand-reconstruction had dropped the clause prod carried). Nullable in schema; the cache contract assumes a real link. |
 | `language` | text | NOT NULL. Target language code (BCP 47). |
 | `translated_text` | text | NOT NULL. The cached translation. |
 | `created_at` | timestamptz | Default `now()`. **Migration 014** converted this from `timestamp without time zone` (naive values interpreted AS UTC) to standardize on tz-aware timestamps across the schema. |
@@ -850,7 +850,8 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │   ├── 012_phase2_step6_abandonment.sql     Step 6 list_abandoned_pending_accounts() + record_abandoned_email_hash() (service_role-only)
 │   ├── 013_phase2_step7_data_deletion.sql   Step 7 data_deletion_requests table + RLS + 6 RPCs (request/cancel user-facing; list_due/claim/complete service_role)
 │   ├── 014_forward_schema_prep.sql          Pre-cutover: messages.conversation_id (Phase 3 forward-prep) + drop 7 vestigial cols + timestamp→timestamptz + FK indexes
-│   └── 015_profile_writer_role.sql          Least-privilege profile_writer role for inferProfile.js — scoped GRANTs + TO-role RLS (not BYPASSRLS); NOLOGIN (operator sets secret out of band)
+│   ├── 015_profile_writer_role.sql          Least-privilege profile_writer role for inferProfile.js — scoped GRANTs + TO-role RLS (not BYPASSRLS); NOLOGIN (operator sets secret out of band)
+│   └── 016_fix_message_translations_cascade.sql  Reconcile message_translations.message_id FK → ON DELETE CASCADE on both envs (staging had drifted to NO ACTION vs prod); also corrects migration 000
 ├── scripts/
 │   ├── rls-adversarial-test.mjs   Phase 2 Step 3 RLS gate (run on staging)
 │   ├── discovery-gate-test.mjs    Phase 2 Step 4 discovery gate (run on staging)

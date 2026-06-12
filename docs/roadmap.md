@@ -205,7 +205,7 @@
 - [ ] `conversation_members` table
 - [ ] `messages.conversation_id`: add the FK (→ `conversations`), `SET NOT NULL`, then **drop the migration-014 default** so real conversation ids take over. **No backfill** — every row already carries the sentinel.
 - [ ] `conversation_contexts` rows scoped per conversation (table in place from Phase 1) — **add its RLS policy here** (SELECT same-tenant / write-via-RPC); it shipped without RLS and must not serve real traffic until the policy lands (architecture.md §7)
-- [ ] **Deliberate planning step:** before implementing, do a focused review of the data model with future efficiencies in mind — translation deduplication across conversations, caching strategies, multi-tenant scoping. Document conclusions in `decisions.md`.
+- [x] **Deliberate planning step:** before implementing, do a focused review of the data model with future efficiencies in mind — translation deduplication across conversations, caching strategies, multi-tenant scoping. Document conclusions in `decisions.md`. **Done 2026-06-12** — see decisions.md "Phase 3 data model: conversations as the single membership-scoped primitive". Schema + write RPCs carved into Spec 6 (migration 017); membership-scoped messages RLS into Spec 7 (migration 018); cross-conversation dedup/caching explicitly deferred to parking-lot. (Migration 016 is an unrelated FK-cascade drift fix that slotted in ahead — see decisions.md 2026-06-12 "FK drift".)
 
 ### UI
 - [ ] Conversation list view

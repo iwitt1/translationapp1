@@ -48,7 +48,12 @@ create table if not exists public.messages (
 
 create table if not exists public.message_translations (
     id              uuid                        primary key default gen_random_uuid(),
-    message_id      uuid                        references public.messages(id),
+    -- FK is ON DELETE CASCADE: the cache is a strict child of its message.
+    -- Corrected 2026-06-12 — the original reconstruction here omitted this clause,
+    -- which left staging at NO ACTION while prod (the UI-built original) had CASCADE.
+    -- Fixed on existing environments by migration 016; this line keeps fresh builds
+    -- correct. See decisions.md 2026-06-12 "FK drift: message_translations → messages cascade".
+    message_id      uuid                        references public.messages(id) on delete cascade,
     language        text                        not null,
     translated_text text                        not null,
     created_at      timestamp without time zone default now(),

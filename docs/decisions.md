@@ -16,6 +16,62 @@
 
 ---
 
+## 2026-06-12 — FK drift: message_translations → messages cascade (staging diverged from prod)
+
+**Decision:** Align the `message_translations.message_id → messages(id)` FK to **ON DELETE CASCADE on both environments**, via new **migration 016** (`016_fix_message_translations_cascade.sql`) plus a correction to migration 000 — rather than aligning prod down to NO ACTION or leaving the environments divergent.
+**Context:** While purging the retired global-room sentinel data (entry below), the staging purge failed with a FK violation on `message_translations_message_id_fkey`, but the identical purge succeeded on prod. Investigation: the FK is `ON DELETE CASCADE` on prod (`pg_constraint.confdeltype = 'c'`) but `NO ACTION` on staging (`'a'`). Root cause is migration 000 — a hand-reconstruction of the pre-migrations base tables, which were originally built in the Supabase Studio UI. Prod carries the cascade the UI set; the reconstruction omitted the `ON DELETE CASCADE` clause, so staging (replayed from 000+) reproduced the inaccurate version. Prod was correct by virtue of being the original; the "source of truth" migration was the culprit.
+**Audit — did anything else drift?** Ran a three-query FK/default/constraint diff across the three 000-era tables on both environments (2026-06-12). Result: **this one FK is the only drift.** All 34 foreign keys' delete/update actions matched except this one; column defaults + nullability on `messages` and `message_translations` were identical; `user_profiles` is absent on both (replaced by `profiles` in 008 — expected). Every FK added by 007+ came from committed SQL and matched. Exposure was confined to the hand-reconstructed base tables, and only this single clause slipped through.
+**Alternatives considered:**
+- *Align staging up to CASCADE (chosen).* Prod's behavior is the intended one — the translation cache is a strict child of its message, and Spec 7 (migration 018) treats it as such.
+- *Align prod down to NO ACTION* — rejected: would make message deletion orphan or block on cached translations (wrong), and would mean "fixing" the environment that was actually correct.
+- *Leave it divergent / patch only the immediate purge* — rejected: breaks the staging↔prod parity invariant and leaves a latent footgun (any future message delete on staging orphans translation rows).
+**Reasoning:** Surfacing rather than silently patching is the standing rule — this is the same class of bug as migration 008 dropping the nonbinary CHECK, caught only on a manual sweep. The fix is tiny and safe to replay on both sides (drop + re-add the constraint; a no-op in effect on prod). Correcting migration 000 in the same commit stops fresh builds from reintroducing the drift.
+**Implications:** New **migration 016** created, independent of the Phase 3 conversations work — lowest blast radius, ships first. The two Phase 3 specs renumbered: Spec 6 schema → **migration 017**, Spec 7 messages RLS → **migration 018**. Apply order: 016 → 017 → 018. Migration 000 line ~51 corrected with an explanatory comment. Docs reconciled in the same pass: operations.md migrations list, architecture.md §7 (`message_translations` FK now documented ON DELETE CASCADE) + §13 file map. No code change.
+**Revisit when:** Never for this specific FK. More broadly: any time a hand-reconstructed migration (000) seeds a fresh environment, treat it as suspect — a quick FK/default/constraint diff of the reconstructed tables against the live original is cheap insurance. If staging is ever rebuilt from scratch again, diff it against prod before trusting parity.
+
+---
+
+## 2026-06-12 — Retire the global-room sentinel data
+
+**Decision:** Let pre-Phase-3 messages on the global-conversation sentinel `00000000-0000-0000-0000-000000000002` go invisible after the Spec 7 RLS cutover, and purge them rather than preserve them.
+**Context:** Migration 018 moves `messages` SELECT from tenant-scoped to membership-scoped. The sentinel conversation has no members, so every legacy message (and its cached `message_translations`) becomes unreachable. We had to choose between accepting that or seeding all active profiles as members of `…0002` to keep the history alive through the transition.
+**Alternatives considered:** (a) Accept invisibility + purge (chosen). (b) Seed all current active profiles as members of `…0002` so the global room's history survives. (c) Leave the rows dark but un-purged (free, but leaves dead rows that fail no constraint yet clutter the table and the 017 promotion set).
+**Reasoning:** The sentinel data is pre-Phase-3 throwaway test traffic; the Phase 2 identity cutover already wiped prod (2026-06-11), so there is no real user history to protect. The global room is being retired by design — preserving its contents would mean manufacturing membership rows for a room we're deleting. Purging before the prod replay also shrinks the set that 017's `SET NOT NULL` + FK promotion must validate.
+**Implications:** Isaac runs read-only inventory SQL (count + sample) on staging and prod separately before purging; the purge deletes the sentinel `messages`, and `message_translations` cascade-delete with their parent. Purge and migrations 017/018 are order-independent for correctness (rows are unreachable either way) but purge-first is cleaner. No code change. Closes the Spec 7 open question.
+**Revisit when:** Never for this data. If a future need arises to preserve a "broadcast"/global room, model it as a real conversation with explicit membership, not a sentinel everyone implicitly belongs to.
+
+---
+
+## 2026-06-12 — Phase 3 data model: conversations as the single membership-scoped primitive
+
+**Decision:** Settled the Phase 3 "deliberate planning step" (roadmap.md Phase 3 → Schema). Four calls, all confirmed with Isaac 2026-06-12:
+1. **A DM is a 2-member conversation — unified, not a separate concept.** `conversations.kind` is `'direct' | 'group'` (text + CHECK, anti-enum convention), but both kinds share one table set, one write-RPC surface, and one membership-scoped RLS predicate. `'direct'` differs from `'group'` only by member count (2) and the absence of group-admin affordances.
+2. **A conversation belongs to exactly one tenant.** `conversations.tenant_id NOT NULL`; every `conversation_members` row carries the same `tenant_id`; the create/join RPCs reject a member from a different tenant. No cross-tenant conversations.
+3. **Membership leave is soft, not a delete.** `conversation_members.left_at timestamptz` nullable (NULL = active member), mirroring the `blocks.unblocked_at` override-layer pattern. Preserves message attribution and allows re-join. A partial unique index keeps one *active* membership per `(conversation_id, account_id)` while historical rows coexist.
+4. **`messages` RLS moves from tenant-scoped to membership-scoped** — "you see a message only if you are an active member of its conversation." This is the structural heart of Phase 3 and is carved into its **own** spec/gate (Spec 7), separate from the schema migration (Spec 6), because it is the security-sensitive change.
+
+**Context:** roadmap.md mandates a focused data-model review before any Phase 3 schema is committed, "with future efficiencies in mind — translation deduplication across conversations, caching strategies, multi-tenant scoping." Migration 014 already pre-staged `messages.conversation_id` (nullable, default global-conversation sentinel `00000000-0000-0000-0000-000000000002`, indexed, no FK), so Phase 3 *promotes* that column rather than backfilling. The open shape questions were: model DMs separately or as 2-member conversations; allow cross-tenant conversations; hard- vs soft-leave; and where the membership authorization boundary lives.
+
+**Alternatives considered:**
+- *Separate `direct_messages` table/path distinct from group conversations* — rejected: doubles the schema, the RLS predicate, and the realtime/translate wiring for no product gain. A DM and a 2-person group are the same object.
+- *Allow cross-tenant conversations now* — rejected: adds real complexity to RLS, membership, and the per-call context object with no near-term product behind it. In the Phase 6 API reality, a tenant is a B2B customer and a conversation lives inside one customer's app; a user from dating-app-A chatting with a user from gaming-app-B is not a product. Cheap to relax later if that ever changes (drop the same-tenant CHECK in the join RPC); expensive to add the isolation back if we start loose.
+- *Hard-delete on leave* — rejected: loses message attribution and the ability to re-join, and diverges from the established `blocks` override-layer pattern. The soft column is free now.
+- *Authorize membership inside the message-insert RPC only (no RLS change)* — rejected: leaves `messages` readable tenant-wide, which is exactly the "one global room" posture Phase 3 exists to end. The authorization must live in RLS so direct Supabase/PostgREST reads are also constrained (consistent with the Phase 2 adversarial-gate posture).
+
+**Reasoning:** The unified-conversation + single-tenant + membership-RLS shape is the minimum structure that ends the global-room model while staying faithful to the project's "over-engineer the structural pieces, under-build the features" rule. The structural pieces (table shape, FK promotion, membership RLS, RPC write boundary) are done properly now; everything else is deferred (see below). `conversation_contexts` is already keyed by `conversation_id` (PK) and is correctly per-conversation — it only needs its RLS policy (still outstanding from Phase 1) added here.
+
+**Explicitly NOT built in Phase 3 (decisions, not omissions):**
+- *Cross-conversation translation deduplication / shared cache* — parked. `message_translations` is already keyed by `message_id`, so translations are naturally per-message; a cross-conversation cache of identical source text is a premature optimization with no traffic to justify it. → parking-lot.md.
+- *Unread counts / read receipts* — the `conversation_members.last_read_at` column is added now (free), but no logic or UI reads it in Phase 3.
+- *Group admin controls* (rename, kick, role changes beyond `owner`/`member`, archive-vs-leave UX) — `role` and `title` columns exist; the management surface is deferred.
+- *Auto-inferred conversation context type* — already parked (parking-lot.md "Context type: auto-inferred, not manually set"); Phase 3 ships the manual per-conversation setting only.
+
+**Implications:** Commits Phase 3 to two specs — **Spec 6** (schema: migration 017 — `conversations` + `conversation_members` + `conversation_id` FK/NOT NULL promotion + `conversation_contexts` RLS + write RPCs + un-rejecting `conversation`-kind in `redeem_invite()`) and **Spec 7** (membership-scoped `messages` RLS + realtime/translate path, with an extended `scripts/rls-adversarial-test.mjs`). Adds the free-now columns (`left_at`, `last_read_at`, `title`, `role`) so the deferred features above never require a destructive migration. The single-tenant CHECK and the soft-leave override-layer are the two future-proofing hinges.
+
+**Revisit when:** a real product need appears for cross-tenant conversations (e.g. a federated/marketplace use case in Phase 6), or when conversation volume makes a shared translation cache measurably worthwhile (revisit the dedup parking-lot item then, not before).
+
+---
+
 ## 2026-06-11 — Phase 2 production cutover executed (prod wipe + replay 007→015)
 
 **Decision:** Executed the Phase 2 production cutover — wiped prod test data, replayed migrations 007→015 in order against prod, enabled the `profile_writer` LOGIN out of band, set the prod Vercel env vars on port 6543, and redeployed. Along the way settled three sub-decisions: **(a)** truncate the event-log tables (`translation_events`/`agent_events`) along with the chat data rather than preserving them; **(b)** proceed **without a pre-wipe snapshot** (Supabase free tier has no backups); **(c)** treat the existing `main` auto-deploy as the deploy mechanism — no separate "deploy frontend" step.

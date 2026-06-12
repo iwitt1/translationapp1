@@ -81,7 +81,7 @@ Push to `main`. Vercel auto-deploys both the Vite build (frontend) and the `/api
 
 ## Status
 
-Phase 1 (contextual translation) near-complete; staging environment built 2026-05-18; Phase 1.5 (Hermes Agent setup) is the next phase. See [`docs/roadmap.md`](docs/roadmap.md) for what's next and [`docs/architecture.md`](docs/architecture.md) §2 for what currently works versus what doesn't.
+Phase 2 (multi-tenant identity + social graph) shipped; identity cutover GREEN 2026-06-11. Phase 1.5 (Hermes Agent) online. Staging environment built 2026-05-18. Phase 3 (real conversation model) starting 2026-06-12 — see Specs 6 & 7. See [`docs/roadmap.md`](docs/roadmap.md) for what's next and [`docs/architecture.md`](docs/architecture.md) §2 for what currently works versus what doesn't.
 
 ## Repo
 

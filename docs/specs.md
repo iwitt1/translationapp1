@@ -4,7 +4,121 @@
 >
 > Spec lifecycle: **draft** → **approved** → **in-flight** → **shipped** → **archived**. When a spec ships, mark it `shipped` here with the commit reference and move the verification details to `/docs/verification.md`. Archive specs after one cycle of "shipped" review (typically 2-4 weeks) — move them to a future `/docs/specs-archive.md` if/when this file exceeds ~600 lines.
 
-**Last updated:** 2026-06-02 (Spec 4a shipped — migrations 005 + 006 run on staging and prod; hermes_writer role provisioned. Spec 4b approved, awaiting Hermes execution. hermes.md §7.2 and §7.3 finalized. Section order: draft → approved → shipped.)
+**Last updated:** 2026-06-12 (Migration renumber: a newly-discovered FK-cascade drift fix takes **migration 016** (`016_fix_message_translations_cascade.sql` — staging's `message_translations.message_id` FK was NO ACTION vs prod's CASCADE; see decisions.md + operations.md 2026-06-12), so the two Phase 3 specs shifted up one — Spec 6 conversations schema is now **migration 017**, Spec 7 messages RLS is now **migration 018**. Apply order: 016 (FK fix, independent — can ship first) → 017 → 018. Prior same-day: Spec 6 drafted + open question resolved — Phase 3 Step 1 conversations schema, migration 017. Dedupe is policy-driven (direct dedupe / group always-new, per-tenant overridable, no user-facing toggle). Spec 6 is **Cowork-executed** (Isaac is implementing Phase 3 in Cowork directly, not via Hermes). Gated by the 2026-06-12 decisions.md data-model entry. Spec 7 — membership-scoped messages RLS (migration 018) — drafted; flips messages + message_translations from tenant-scoped to membership-scoped via is_active_member, with realtime + cache-leak coverage and its own adversarial gate. Both Phase 3 specs now drafted; awaiting Isaac's approval to implement (017 then 018, staging-first).)
+
+---
+
+## Spec 6 — Phase 3 Step 1: Conversations schema + write RPCs (migration 017) — Cowork-executed
+
+**Linked roadmap item:** Phase 3 — Real conversation model → Schema (conversations, conversation_members, messages.conversation_id promotion, conversation_contexts RLS)
+**Author:** Isaac
+**Drafted:** 2026-06-12
+**Status:** draft
+
+### Goal
+
+End the "one global room" model at the schema layer. Introduce `conversations` and `conversation_members` so a user can belong to many distinct conversations, promote the already-pre-staged `messages.conversation_id` column to a real FK + NOT NULL (zero backfill — migration 014 defaulted every row to the global-conversation sentinel `00000000-0000-0000-0000-000000000002`), and finally give `conversation_contexts` its outstanding RLS policy. This spec is **schema + write RPCs only**; the membership-scoped read authorization on `messages` (the security-sensitive RLS change) is Spec 7, and all UI is later Phase 3 steps. Data-model shape is fixed by decisions.md 2026-06-12 ("Phase 3 data model: conversations as the single membership-scoped primitive").
+
+### Prerequisites
+
+- Migration 014 applied (staging + prod — done): `messages.conversation_id` exists, nullable, defaulted to `…0002`, indexed.
+- Migrations 007–013 applied (`profiles`, `auth_tenant_id()`, the social/invite primitives). `redeem_invite()` exists and currently rejects `conversation`-kind invites.
+- Runs on `translationapp1-staging` first; prod replay only after the Spec 6 gate is GREEN (operations.md §3).
+
+### Acceptance criteria
+
+Each is pass/fail against staging after migration 017 runs.
+
+- [ ] `conversations` table exists: `id uuid PK`, `tenant_id uuid NOT NULL FK tenants`, `kind text NOT NULL CHECK (kind IN ('direct','group'))`, `title text NULL`, `context_type text NOT NULL DEFAULT 'casual' CHECK (context_type IN ('professional','casual','romantic','family','support'))`, `created_by uuid FK profiles`, `created_at`/`updated_at timestamptz NOT NULL DEFAULT now()`. RLS enabled.
+- [ ] The global-conversation row is inserted: `id = 00000000-0000-0000-0000-000000000002`, `kind='group'`, sole-tenant `tenant_id`, so every pre-existing message FK-resolves.
+- [ ] `conversation_members` table exists: `id uuid PK`, `conversation_id uuid NOT NULL FK conversations ON DELETE CASCADE`, `account_id uuid NOT NULL FK profiles ON DELETE CASCADE`, `tenant_id uuid NOT NULL FK tenants`, `role text NOT NULL DEFAULT 'member' CHECK (role IN ('owner','member'))`, `joined_at timestamptz NOT NULL DEFAULT now()`, `left_at timestamptz NULL`, `last_read_at timestamptz NULL`. RLS enabled.
+- [ ] Partial unique index `conversation_members_active_unique (conversation_id, account_id) WHERE left_at IS NULL` — one active membership per pair, history rows coexist (mirrors `blocks_active_unique`).
+- [ ] FK indexes present: `conversation_members(account_id)`, `conversation_members(conversation_id)`, `conversations(tenant_id)` (Postgres does not auto-index FK columns; RLS predicates read them).
+- [ ] `messages.conversation_id` promoted: FK → `conversations(id)` added, `SET NOT NULL`, **migration-014 default dropped**. No backfill (verify 0 NULLs and 0 unresolved FKs before/after).
+- [ ] `conversation_contexts` RLS added: SELECT to `authenticated` where `tenant_id = auth_tenant_id()` AND caller is an active member of `conversation_id`; no INSERT/UPDATE/DELETE policy (writes via the background context job / service role). This closes the Phase-1 RLS gap flagged in architecture.md §7.
+- [ ] Write RPCs exist (all `SECURITY DEFINER SET search_path = public`, tenant-scoped via `auth_tenant_id()`, deny-by-default, mirroring migration 011 idioms):
+  - `create_conversation(p_kind text, p_member_ids uuid[], p_title text DEFAULT NULL, p_context_type text DEFAULT 'casual') RETURNS uuid` — inserts the conversation (caller = `created_by`, `role='owner'`), inserts the caller + each member as active members. Rejects: any member not an active profile in the caller's tenant (single-tenant invariant); `kind='direct'` with member count ≠ 2; self-only conversations. **Dedupe is policy-driven, not hardcoded:** for `kind='direct'` the RPC returns the existing active 1:1 conversation between the two accounts if one exists (one DM thread per pair); for `kind='group'` it always mints a new conversation. The default (`direct: dedupe`, `group: always-new`) lives in `lib/policies.js` and is overridable per tenant via the tenants conversation-policy jsonb (same pattern as `dm_initiation_policy`). The override is read at creation time only and affects only newly-created conversations — there is no user-facing toggle and no retroactive merge.
+- [ ] Direct-dedupe is race-safe: two simultaneous "message X" taps resolve to the same single DM conversation, not two (the glare race — same concern the `relationships` canonical-pair model guards; enforce via a unique constraint or lock, not a check-then-insert).
+  - `leave_conversation(p_conversation_id uuid) RETURNS void` — soft-leave (`left_at = now()` on the caller's active membership). No-op-safe if already left.
+  - `set_conversation_context_type(p_conversation_id uuid, p_context_type text) RETURNS void` — caller must be an active member; validates against the CHECK set.
+  - `redeem_invite()` amended: `conversation`-kind invites **un-rejected** — redeeming one inserts an active `conversation_members` row for `redeemed_by` on the invite's `target_conversation_id` (single-tenant + block checks first), reusing the existing invite/redemption plumbing. `contact`-kind behavior unchanged.
+- [ ] Single-tenant invariant proven: `create_conversation` with a member from a different tenant raises (cross-tenant = "not found", same opaque-error posture as `request_contact`).
+- [ ] Idempotent + ALTER-only: re-running 017 is a no-op; no table recreate (operations.md §3 recreate checklist not triggered).
+- [ ] Embedded verification block at the bottom of the migration (the 011/014 convention) returns the documented results.
+
+### Out of scope
+
+- Membership-scoped `messages` read RLS + the realtime/translate path changes → **Spec 7** (the security-sensitive change; own adversarial gate).
+- All UI (conversation list, create flow, invite-to-conversation surface, relocating the context/register dropdown) → later Phase 3 steps.
+- Unread counts / read receipts (the `last_read_at` column lands here but nothing reads it), group admin (rename/kick/roles beyond owner-member), archive-vs-leave UX, auto-inferred context type. Per decisions.md 2026-06-12.
+- Cross-conversation translation dedup / shared cache → parking-lot.md.
+
+### Open questions
+
+- **Resolved 2026-06-12 (with Isaac).** Dedupe is policy-driven, not hardcoded: `direct` dedupes (one thread per pair), `group` is always-new. Defaults live in `lib/policies.js`, overridable per tenant via the tenants conversation-policy jsonb — this is the Phase 6 seam (a B2B customer could opt into group dedupe with a config change, no code change). It is **not** a user-facing toggle, and a flip would affect only newly-created groups (the rule is consulted at creation time only; it never merges or alters existing conversations). Confirmed against the actual cross-app convention: groups are first-class objects, not derived from their member set — iMessage's member-set merging is inconsistent and widely complained-about, and WhatsApp allows duplicate-member groups freely.
+
+### Technical sketch (for implementation — Cowork)
+
+- New file `migrations/017_phase3_conversations.sql`. Single `begin; … commit;`. Order: create `conversations` (+ RLS, + global row) → create `conversation_members` (+ indexes + RLS) → promote `messages.conversation_id` (add FK, SET NOT NULL, drop default) → add `conversation_contexts` RLS → RPCs (`CREATE OR REPLACE`) → amend `redeem_invite()`. Mirror migration 011 for table/RLS/RPC idioms (`auth_tenant_id()`, `text + CHECK`, `DROP POLICY IF EXISTS` before `CREATE POLICY`, `SECURITY DEFINER SET search_path = public`, opaque cross-tenant errors).
+- The `messages.conversation_id` promotion must run *after* the global row insert, or the FK validation fails on pre-existing sentinel rows.
+- Membership-check helper: add `is_active_member(p_conversation_id uuid, p_account_id uuid) RETURNS boolean` (SECURITY DEFINER, tenant-scoped) — reused by the `conversation_contexts` RLS policy, the three RPCs, and Spec 7's `messages` policy. Define it here so Spec 7 only writes the policy.
+- Doc reconciliation in the same commit (DoD #3): architecture.md §7 (new tables + `conversation_contexts` RLS-now-present + `messages.conversation_id` FK/NOT NULL promoted + DB-functions list), §13 file map (017), §10 (membership-scoped authorization note), operations.md migrations list, roadmap.md Phase 3 Schema checkboxes, verification.md (gate result). parking-lot.md: mark the dedup/caching item as deferred-by-decision if not already.
+
+### Verification plan
+
+- New gate `scripts/conversations-gate-test.mjs` (mirrors `social-graph-gate-test.mjs`): exercises `create_conversation` (direct + group), the single-tenant rejection, soft-leave + re-join, `set_conversation_context_type`, `conversation_contexts` SELECT allowed for members / denied for non-members, the `conversation`-kind invite redemption, and confirms `messages.conversation_id` is NOT NULL with the default dropped and 0 unresolved FKs. Target GREEN on staging before any prod replay.
+- Record the gate result + counts in verification.md under "Phase 3 Step 1 — conversations schema (Spec 6)". Prod replay of 017 noted as pending until Isaac approves the merge (DoD #5).
+
+---
+
+## Spec 7 — Phase 3 Step 2: Membership-scoped messages RLS (migration 018) — Cowork-executed
+
+**Linked roadmap item:** Phase 3 — Real conversation model → the read/write authorization change implied by `conversation_members` (decisions.md 2026-06-12, decision #4)
+**Author:** Isaac
+**Drafted:** 2026-06-12
+**Status:** draft
+
+### Goal
+
+Flip the authorization on `messages` and its translation cache from **tenant-scoped** to **membership-scoped**: a user can read or post a message only if they are an *active member* of its conversation. This is the security-sensitive half of Phase 3 — it ends the "one global room" posture at the authorization layer (Spec 6 ends it at the schema layer). It is deliberately a **separate migration (018) and a separate adversarial gate** from Spec 6, because an RLS change on the message tables is the highest-blast-radius change in the system and deserves its own isolation and verification.
+
+### Prerequisites
+
+- **Spec 6 (migration 017) on staging:** `conversations` + `conversation_members` exist, `messages.conversation_id` is FK + NOT NULL, and the `is_active_member(p_conversation_id uuid, p_account_id uuid) RETURNS boolean` helper exists, defined `STABLE SECURITY DEFINER SET search_path = public` (so the policy reads `conversation_members` under the function's own privilege — the caller needs no direct SELECT on that table, and the policy doesn't recurse). If 017 didn't define it STABLE/SECURITY DEFINER, amend 017 before this runs.
+- **Current state (migration 008):** `messages` SELECT/INSERT are tenant-scoped (`messages_select_same_tenant` USING `tenant_id = auth_tenant_id()`; `messages_insert_own` WITH CHECK `sender_id = auth.uid() AND tenant_id = auth_tenant_id()`). `message_translations` SELECT/INSERT/UPDATE are tenant-scoped.
+- **Enforcement surface confirmed:** the frontend reads `messages` + `message_translations` and subscribes to realtime via the **anon (RLS-bound) key** (`src/lib/supabase.js`), so these policies *are* the boundary. `/api/v1/translate` is **stateless** — it receives `history` in the request body and never reads the message tables — so it needs no change.
+
+### Acceptance criteria
+
+- [ ] **`messages` SELECT** replaced: `USING (tenant_id = auth_tenant_id() AND is_active_member(conversation_id, auth.uid()))`. A tenant member who is *not* a member of a given conversation cannot read its messages.
+- [ ] **`messages` INSERT** tightened: `WITH CHECK (sender_id = auth.uid() AND tenant_id = auth_tenant_id() AND is_active_member(conversation_id, auth.uid()))`. You can only post to a conversation you're an active member of.
+- [ ] **`message_translations` follows `messages` (the cache-leak fix):** SELECT/INSERT/UPDATE policies require membership of the *parent message's* conversation — `EXISTS (SELECT 1 FROM public.messages m WHERE m.id = message_translations.message_id AND m.tenant_id = auth_tenant_id() AND is_active_member(m.conversation_id, auth.uid()))`. Without this, a non-member could read a conversation's translations even though they can't read its messages. This is the easy-to-miss half of the change.
+- [ ] **Realtime delivery respects the new SELECT policy:** a non-member subscribed to the `messages` channel receives no rows for conversations they're not in (Supabase `postgres_changes` applies the SELECT policy for the `authenticated` role). Verify explicitly — realtime RLS is a known footgun, not something to assume.
+- [ ] **Soft-leave is honored:** a user who has left a conversation (`left_at` set → `is_active_member` false) loses read + write + cache + realtime access; re-joining restores all of it.
+- [ ] `messages` remains immutable — no UPDATE/DELETE policy (unchanged).
+- [ ] Idempotent; `DROP POLICY IF EXISTS` before each `CREATE POLICY`; no table recreate; no data changes.
+
+### Out of scope
+
+- The `conversations`/`conversation_members` schema + write RPCs (Spec 6).
+- **Per-conversation realtime subscription in the UI** (later Phase 3 step). Spec 7 makes the authorization correct *regardless* of what the client subscribes to; narrowing the subscription to the open conversation is a later efficiency/UX change, not a security boundary.
+- Any change to `/api/v1/translate` (stateless; history passed in body).
+
+### Open questions
+
+- **Legacy messages on the global sentinel `…0002`. RESOLVED 2026-06-12 — option (a), accept invisibility.** After 018, sentinel rows are visible only to members of conversation `…0002`, of which there are none, so they go dark. This is intended: they're pre-Phase-3 throwaway data and the global room is being retired. Isaac will run the read-only inventory SQL (below) on staging + prod to see exactly what falls dark, then purge it (`message_translations` cascade-deletes with their parent `messages` — delete the messages, translations follow). Purge and migrations are order-independent (the rows are simply unreachable either way), but purging is cleaner done before the prod replay so 017's `SET NOT NULL` + FK promotion validate against a smaller set. See decisions.md 2026-06-12 "Retire the global-room sentinel data". *(was: option (b) seed all profiles as members — rejected, pointless history-preservation for throwaway data.)*
+- **Performance (note, not a blocker):** the `message_translations` EXISTS subquery + `is_active_member` run per cache row. Negligible at current scale (tens of testers) and index-backed (`messages(conversation_id)`, the `conversation_members` active lookup). Revisit only if per-conversation message volume grows large.
+
+### Technical sketch (for implementation — Cowork)
+
+- New file `migrations/018_phase3_messages_rls.sql`. Single `begin; … commit;`. Drops + recreates exactly five policies (`messages` SELECT + INSERT; `message_translations` SELECT + INSERT + UPDATE) with the membership predicate. No DDL beyond policies; no data changes. `is_active_member()` comes from 017.
+- Sequencing: 018 runs *after* 017 on staging, gate GREEN, then both replay to prod in order (017 → 018). 018 must never reach prod before 017 (the helper + tables won't exist).
+- Doc reconciliation in the same commit (DoD #3): architecture.md §7 (`messages` + `message_translations` RLS now membership-scoped), §10 (headline: global-room → membership authorization — the most security-relevant change since the Phase 2 RLS cutover), §13 file map (018); operations.md migrations list; roadmap.md Phase 3 (the messages-RLS line); verification.md (gate result).
+
+### Verification plan
+
+- New gate `scripts/messages-rls-gate-test.mjs` (extends the `scripts/rls-adversarial-test.mjs` patterns). Adversarial matrix: two users in one tenant; create a conversation with only user A; assert B **cannot** SELECT A's messages, **cannot** INSERT into the conversation, **cannot** read its cached translations, and **receives nothing** on realtime; add B as a member → assert B now **can** on all four; B soft-leaves → assert all four revoked again. Target GREEN on staging before any prod replay.
+- Record the result + the full matrix in verification.md under "Phase 3 Step 2 — membership-scoped messages RLS (Spec 7)". Prod replay of 018 pending Isaac's merge approval and gated behind 017 being on prod first.
 
 ---
 
