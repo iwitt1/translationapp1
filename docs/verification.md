@@ -1256,6 +1256,68 @@ direct≠2), (5) `set_conversation_context_type` member vs non-member, (6) `conv
 
 ---
 
+## Phase 3 — Step 2: Membership-scoped messages RLS (migration 018 / Spec 7) (2026-06-12)
+
+**Status: ⏳ BUILT, GATE PENDING on staging.** Migration `018_phase3_messages_rls.sql` and its gate
+`scripts/messages-rls-gate-test.mjs` are written (2026-06-12) but **not yet run** — apply on
+`translationapp1-staging`, confirm the embedded SQL verification block all-green, then run the gate.
+**Replay 018 to prod only AFTER 017, never before.** Record the gate result here and flip the roadmap
+Step 2 item `[~]` → `[x]` once GREEN.
+
+**What this step does:** Flips `messages` + `message_translations` RLS from **tenant-scoped** to
+**membership-scoped** — the highest-blast-radius security change since the Phase 2 RLS cutover (it
+governs every message read, write, and realtime push). 017 ended "one global room" at the *schema*
+layer; 018 ends it at the *authorization* layer. A user may read or post a message, and read or write
+its cached translation, only as an active member of its conversation
+(`is_active_member(conversation_id, auth.uid())`). `message_translations` (which has no
+`conversation_id`) resolves membership through the parent message via `EXISTS` — the easy-to-miss
+cache-leak half. `messages` stays immutable (no UPDATE/DELETE policy). Policies-only; no DDL, no data
+change, no recreate; same five policy names as migration 008. See decisions.md 2026-06-12 "Phase 3
+data model" (point 4) + "Retire the global-room sentinel data".
+
+**How it's verified:** `scripts/messages-rls-gate-test.mjs` — a checked-in adversarial harness (same
+`.env.rls-test` + `RLS_TEST_CONFIRM_STAGING=yes` staging guard as the other gates). Two users in one
+tenant, a service-seeded **A-only** conversation (the `create_conversation` RPC can't make one — it
+requires a second member). Five phases: (1) setup + positive controls (A posts + caches a translation
++ reads both); (2) **non-member B** denied on all four surfaces — SELECT message, INSERT message,
+read cache, **realtime** (explicit `postgres_changes` subscription receives 0 events) — plus a
+cross-tenant C negative; (3) **B joins** via conversation invite (`create_invite`/`redeem_invite`) →
+all four now allowed, including a cache UPDATE/upsert and realtime delivery ≥1; (4) **B soft-leaves**
+(`leave_conversation`) → all four revoked again; (5) messages immutability (member UPDATE/DELETE
+changes 0 rows). The realtime checks are explicit because realtime-RLS is a known footgun (Supabase
+`postgres_changes` runs the SELECT policy for `authenticated`) — not something the gate assumes.
+
+**Gate:** `node scripts/messages-rls-gate-test.mjs` exits 0 with every phase PASS, on staging.
+
+**Gate result:** ⏳ _pending — not yet run._
+
+### How to run it (staging)
+1. **Purge first (recommended):** run the read-only sentinel-inventory queries at the foot of
+   `018_phase3_messages_rls.sql` on staging to see what goes dark, then purge the sentinel
+   (`…0002`) messages (translations cascade) per decisions.md "Retire the global-room sentinel data".
+2. Apply `018_phase3_messages_rls.sql` in the staging (`translationapp1-staging`, non-main branch)
+   SQL editor — **017 must already be applied** (the `is_active_member` helper + `conversations`
+   tables are prerequisites); confirm the embedded verification block returns all-green.
+3. Same `.env.rls-test` as the Step 1 / 3–7 gates (staging URL + anon + service_role keys; three test
+   users A/B/C; `RLS_TEST_CONFIRM_STAGING=yes`).
+4. `node scripts/messages-rls-gate-test.mjs` from the `V1/` root.
+5. Exit 0 + all PASS = gate GREEN. Record the result above, flip the roadmap item, then (and only
+   then) replay 017 → 018 to prod.
+
+### Known failure modes and how to diagnose
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `ERROR: function is_active_member(...) does not exist` | Migration 017 not applied on this project | Run `017_phase3_conversations.sql` first — 018 depends on it |
+| Non-member B **can** SELECT A's message | `messages` SELECT policy missing the `is_active_member` conjunct | Confirm `messages_select_same_tenant` USING is `tenant_id = auth_tenant_id() AND is_active_member(conversation_id, auth.uid())` |
+| Non-member B **can** read the cached translation though not the message | `message_translations` SELECT policy not following the parent message | Confirm `mt_select_same_tenant` uses the `EXISTS (… FROM messages m WHERE m.id = message_translations.message_id AND …)` predicate |
+| Member B's cache **upsert** fails (`INSERT … ON CONFLICT DO UPDATE`) | `mt_update_same_tenant` missing the `WITH CHECK` half (only `USING`) | Confirm the UPDATE policy carries the predicate in **both** `USING` and `WITH CHECK` |
+| Non-member B **receives realtime** events | realtime delivery not applying the new SELECT policy / `messages` not in the publication | Confirm `messages` is in `supabase_realtime` (migration 004) and the SELECT policy is membership-gated; the gate's realtime phase is the canary |
+| A member's message **UPDATE/DELETE** succeeds (changes rows) | A stray UPDATE/DELETE policy exists on `messages` | Confirm `messages` has **no** UPDATE/DELETE policy (immutability is by omission) |
+| Gate harness errors on realtime subscribe timeout | staging realtime disabled, or anon key lacks realtime | Confirm Realtime is enabled on the staging project and `setAuth(token)` is using the user JWT |
+
+---
+
 ## Phase 2 — Step 0: Pre-flight (2026-06-09)
 
 **What this step does:** Audits Supabase config that lives outside `/migrations/`, scaffolds
