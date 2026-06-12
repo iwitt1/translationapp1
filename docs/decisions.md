@@ -31,17 +31,19 @@
 
 **Verified on prod (2026-06-11):** wipe left 0 rows in all 8 data tables, `tenants` seed intact. Replay 007→015 all green — 3 new identity tables + 27 reserved words + RLS (007); `user_profiles` dropped, 3 uuid promotions + `messages_sender_id_fk` + RLS + `complete_onboarding` (008); nonbinary CHECK restored (009); 7 social/deletion tables + 16 RPCs + RLS (010–013); `conversation_id` + 7 vestigial drops + 4 timestamptz + 4 FK indexes (014); `profile_writer` role with exactly the scoped grants/policies, still NOLOGIN/non-super/non-bypassrls until the out-of-band ALTER (015). Single-user smoke PASSED on live prod (signup → onboard → `status='active'` + ULP row → message sent).
 
-**Still pending (next session, before declaring the cutover fully GREEN):**
-- *Two-user inference path* — confirm `POST /api/v1/infer-profile` writes an inferred update + event row end-to-end on prod under the `profile_writer` role (blocked this session by an email-verification rate limit).
+**Two-user inference path — PASSED live on prod (2026-06-11).** User A sent an Argentine-Spanish message; User B (different `preferred_language`) viewed it → `POST /api/v1/infer-profile` returned `{"status":"updated","fields":[dialect_region, dialect_confidence, dialect_source, formality_preference, formality_source]}`. User A's ULP row updated to `es-AR`/`casual` (`updated_at` bumped); two `user_profile_events` rows landed (`dialect_region_inferred`, `formality_preference_inferred`, `source=inference`); **trust boundary held** — the write landed on the *sender* (A), not the viewer (B's row untouched); `gender_signal` null (below confidence — expected). This was the `profile_writer` role's first real exercise on prod.
+
+**Still pending (before declaring the cutover fully GREEN):**
 - *Vercel cron verification* — confirm `/api/v1/jobs/abandonment` (08:00) and `/api/v1/jobs/deletion` (09:00) are registered on the prod project.
 
 **Dashboard-only gotchas this surfaced (not captured in any migration):**
 - *Supabase Auth URL config* — magic links initially redirected to `localhost` because prod's **Site URL** was still the dev default. Fixed by setting Site URL = `https://translationapp1.vercel.app` and adding it to Redirect URLs. This config lives in the Supabase dashboard, not in `/migrations/`, so it's an easy cutover-checklist miss — see operations.md cutover notes.
-- *Stale comment in migration 015* — lines 37–38 say "port 5432" for the connection string; that's wrong for Vercel serverless, which needs **6543** (transaction pooler). The committed env var uses 6543; the migration comment should be corrected.
+- *Connection-string password footgun (cost ~1 hr).* The first prod inference attempt 500'd with `password authentication failed for user "profile_writer"` in the Vercel log. The connection *format* was correct (`profile_writer.<prod-ref>` @ port 6543 pooler) — the **password** was the problem: special characters in a connection-string password corrupt URL parsing and surface as this exact misleading auth error. Fixed by resetting the role to an **alphanumeric-only** secret + redeploy. **Lesson (applies to all future Supabase-role-for-Vercel bring-up, incl. the Phase 2 B2B API roles): use alphanumeric-only DB passwords, or URL-encode them.**
+- *Stale comment in migration 015 — FIXED.* Lines 37–38 had shown "port 5432" + a bare `profile_writer` username + no encoding warning for the connection string; that's wrong for Vercel serverless (needs **6543** transaction pooler, and the pooler username must carry the project-ref suffix). The committed env var was always on 6543; the migration comment was corrected 2026-06-11 (now shows the 6543 pooler form + the alphanumeric-password warning).
 
 **Resolves open Hermes-handoff escalations:** `DATABASE_URL_PROD_WRITER` confirmed on port 6543 in Vercel Production (was flagged as still 5432); the stray `hermes_test` prod row removed by the wipe.
 
-**Revisit when:** the two-user inference + cron checks complete (flip the cutover to fully GREEN and mark verification.md/roadmap accordingly); or if any prod-only divergence from staging surfaces during the pending verification.
+**Revisit when:** the Vercel cron check completes (flip the cutover to fully GREEN and mark verification.md/roadmap accordingly); or if any prod-only divergence from staging surfaces.
 
 ---
 

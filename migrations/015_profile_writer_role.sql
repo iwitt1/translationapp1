@@ -34,8 +34,14 @@
 --    — never committed, never VITE_-prefixed (that would ship a privileged DB credential to
 --    the browser). One-time step:
 --        ALTER ROLE profile_writer WITH LOGIN PASSWORD '<strong-random-secret>';
---    Connection string form (direct connection or session pooler, port 5432):
---        postgres://profile_writer:<secret>@<project-host>:5432/postgres
+--    ⚠️ Use an ALPHANUMERIC-ONLY secret (or URL-encode it in the connection string).
+--       Special chars (@ : / # ? %) corrupt connection-string parsing and surface as a
+--       MISLEADING "password authentication failed" — this 500'd the first prod inference
+--       attempt on 2026-06-11 (the role/format were fine; only the password was the problem).
+--    Connection string form for VERCEL SERVERLESS — TRANSACTION POOLER, port 6543, and the
+--    username MUST carry the project-ref suffix (a bare `profile_writer` fails on the pooler).
+--    (Port 5432 / direct connection is for the VPS / session-pooler use only.)
+--        postgres://profile_writer.<project-ref>:<secret>@<pooler-host>:6543/postgres
 --
 -- Staging-first: run on translationapp1-staging, set the password out of band, run the
 -- inference gate, then this file joins the prod replay (007 → 015).
