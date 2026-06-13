@@ -219,6 +219,7 @@ The `_source` fields in `user_linguistic_profiles` (e.g., `dialect_source: 'expl
 > | `conversations`, `conversation_members` + `is_active_member()` + write RPCs (`create_conversation`, `leave_conversation`, `set_conversation_context_type`) + `create_invite`/`redeem_invite` amended for `conversation`-kind + `tenants.conversation_policy` jsonb | 017 | **gate PASSED on staging 2026-06-12 (35/35 GREEN); prod replay pending** (Phase 3 Step 1 / Spec 6; additive tables + RLS + RPCs, promotes `messages.conversation_id` to FK + NOT NULL, adds `conversation_contexts` RLS + FK). Direct-dedupe is race-safe via `conversations.dedupe_key` + a partial unique index. |
 > | `conversation_contexts` RLS + `conversation_id` FK | 017 | **added 2026-06-12** — closes the outstanding Phase-1 RLS gap; FK added `NOT VALID` (legacy rows unscanned). |
 > | `messages` + `message_translations` RLS flipped **tenant-scoped → membership-scoped** | 018 | **gate PASSED on staging 2026-06-12 (27/27 GREEN; sentinel purged first); prod replay pending** (Phase 3 Step 2 / Spec 7; policies-only, no DDL/data change). Drops + recreates the same five policy names from 008 with an added `is_active_member()` predicate. Must replay to prod **after** 017, never before. |
+> | `conversations.context_type` CHECK + `create_conversation`/`set_conversation_context_type` inline guards → unified on the engine vocab `casual/dating/professional/academic` | 019 | **written 2026-06-12; staging apply pending** (was `casual/professional/romantic/family/support`). ALTER on the table CHECK + CREATE OR REPLACE on the two RPCs (signatures unchanged → grants preserved); defensive remap of any retired-value rows (0 expected). Does **not** touch the `detected_register` field. Interim stop-gap until the tenant-scoped vocab registry (parking-lot). |
 > | `translation_corrections`, `translation_reviews` | — | **not built yet** |
 >
 > Prod still runs the pre-007 schema (no `profiles`, `sender_id` still text, no RLS). The column
@@ -362,7 +363,7 @@ Updated by a background job every N messages or when a significant shift is dete
 | `tenant_id` | uuid | NOT NULL, FK → tenants. Single-tenant invariant enforced in the RPC. |
 | `kind` | text + CHECK | `'direct' \| 'group'`. `direct` must have exactly 2 members. |
 | `title` | text | Nullable; group display name. |
-| `context_type` | text + CHECK | `'professional' \| 'casual' \| 'romantic' \| 'family' \| 'support'`, default `'casual'`. Set via `set_conversation_context_type()`. |
+| `context_type` | text + CHECK | `'casual' \| 'dating' \| 'professional' \| 'academic'`, default `'casual'`. **Unified with the translation engine vocab in migration 019** (was `professional/casual/romantic/family/support`). This is the user-chosen conversation register; distinct from the inference-output `detected_register` field, which keeps its own set. Set via `set_conversation_context_type()`. |
 | `created_by` | uuid | FK → `profiles(id)` **ON DELETE SET NULL** — a conversation survives its creator's account deletion (persists while any member is active). |
 | `dedupe_key` | text | Sorted member-set string; populated only when resolved policy = `dedupe`, else NULL. Arbiter of "one thread per member-set". |
 | `created_at` / `updated_at` | timestamptz | NOT NULL, default `now()`. |
@@ -938,7 +939,8 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │   ├── 015_profile_writer_role.sql          Least-privilege profile_writer role for inferProfile.js — scoped GRANTs + TO-role RLS (not BYPASSRLS); NOLOGIN (operator sets secret out of band)
 │   ├── 016_fix_message_translations_cascade.sql  Reconcile message_translations.message_id FK → ON DELETE CASCADE on both envs (staging had drifted to NO ACTION vs prod); also corrects migration 000
 │   ├── 017_phase3_conversations.sql          Phase 3 Step 1: conversations + conversation_members tables + RLS + dedupe; promotes messages.conversation_id to a real FK; adds conversation_contexts RLS+FK; create_conversation/leave_conversation/set_conversation_context_type/is_active_member RPCs; amends create_invite/redeem_invite for conversation-kind; adds tenants.conversation_policy
-│   └── 018_phase3_messages_rls.sql           Phase 3 Step 2 / Spec 7: flips messages + message_translations RLS tenant-scoped → membership-scoped (is_active_member). Drops+recreates the same 5 policy names from 008; policies-only, no DDL/data change; messages stay immutable; replay to prod AFTER 017
+│   ├── 018_phase3_messages_rls.sql           Phase 3 Step 2 / Spec 7: flips messages + message_translations RLS tenant-scoped → membership-scoped (is_active_member). Drops+recreates the same 5 policy names from 008; policies-only, no DDL/data change; messages stay immutable; replay to prod AFTER 017
+│   └── 019_unify_context_type_vocab.sql       Unify conversations.context_type CHECK + create_conversation/set_conversation_context_type inline guards on the engine vocab (casual/dating/professional/academic). ALTER + CREATE OR REPLACE; defensive remap; does NOT touch detected_register
 ├── scripts/
 │   ├── rls-adversarial-test.mjs   Phase 2 Step 3 RLS gate (run on staging)
 │   ├── discovery-gate-test.mjs    Phase 2 Step 4 discovery gate (run on staging)
@@ -948,12 +950,22 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │   ├── conversations-gate-test.mjs Phase 3 Step 1 conversations schema + RPC gate (run on staging)
 │   └── messages-rls-gate-test.mjs  Phase 3 Step 2 membership-scoped messages RLS gate — adversarial matrix + explicit realtime check (run on staging)
 ├── src/
-│   ├── App.jsx               Frontend UI (login, chat, message bubble) — single file currently
+│   ├── App.jsx               Orchestrator: auth state machine, conversation list, active thread, single realtime subscription, optimistic send + reconcile, modals
 │   ├── main.jsx              React entry point
 │   ├── index.css             Tailwind directives
+│   ├── components/           Presentational pieces (Phase 3 conversation UI; markup ported from mockups/phase3-conversations.html)
+│   │   ├── ConversationList.jsx     Sidebar list of conversations (+ avatar/initials/time helpers, exported)
+│   │   ├── ConversationView.jsx     Thread: header + overflow menu (register selector + "?" explainer) + messages + composer
+│   │   ├── MessageBubble.jsx        Per-message translate/cache/infer + "Original:" single-line expandable preview + optimistic pending/failed states
+│   │   ├── NewConversationModal.jsx People-picker (discovery RPCs) → create_conversation (direct dedupe / group)
+│   │   └── InviteModal.jsx          Mints a conversation invite (create_invite) → copyable ?join=<token> link
 │   └── lib/
 │       ├── supabase.js       Supabase client initialization
-│       └── config.js         Non-secret constants (CHAT_APP_TENANT_ID etc.)
+│       ├── config.js         Non-secret constants (CHAT_APP_TENANT_ID etc.)
+│       ├── vocabularies.js   Client source of truth for enumerated option sets (context_type/register, languages); aligned with translatePrompt.js + the 019 CHECK
+│       ├── translation.js    Translation-engine client config (API URLs, PROFILE_INFERENCE_ENABLED) + language-code normalizer + detectSourceLanguage(); keeps chat UI decoupled from the engine HTTP contract
+│       ├── discovery.js      Data-access layer for the people-picker: find_account_by_email / search_accounts_by_username RPC wrappers
+│       └── conversations.js  Data-access layer for Phase 3 conversations: RPC wrappers (create/leave/setContextType/invite/redeem) + list/read/insert queries
 ├── docs/
 │   ├── architecture.md       This file
 │   ├── strategy.md           Product vision, two-phase plan, market

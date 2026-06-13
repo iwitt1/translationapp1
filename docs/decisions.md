@@ -16,6 +16,58 @@
 
 ---
 
+## 2026-06-12 — Phase 3 conversation-aware frontend (App.jsx rewrite + component split)
+
+**Decision:** Rewrite the single-file global-room `src/App.jsx` into a conversation-aware app split across `src/components/` (`ConversationList`, `ConversationView`, `MessageBubble`, `NewConversationModal`, `InviteModal`) over three new data-layer modules (`src/lib/conversations.js`, `discovery.js`, `translation.js`). App.jsx is the orchestrator (auth, conversation list, active thread, realtime, optimistic send, modals); components are presentational; the data layer owns every RPC/HTTP contract. Three sub-decisions worth recording:
+
+1. **One global `messages` realtime subscription, not one-per-conversation.** App opens a single `postgres_changes` INSERT channel on `messages` and routes each row (to the active thread and/or the list). It does *not* filter by `conversation_id` client-side.
+2. **Optimistic send + reconcile, deduped by id with a content-match fallback.** Send pushes a temp row (`tmp_…` id, `pending:true`) instantly, detects language, inserts via `insertMessage().select().single()`, then swaps the temp for the DB row. The realtime echo of our own insert is deduped: if the real id is already present we drop the temp; if the echo arrives first, a pending temp matching `sender_id + original_text` is swapped in place. Failed inserts flip to a `failed` state with tap-to-retry.
+3. **Component split now, despite a small app.** Chose multiple files over keeping one growing `App.jsx`.
+
+**Context:** Phase 3 ends the "one global room." The old App.jsx loaded *all* messages by `tenant_id` and inserted **without** `conversation_id` — the exact coupling flagged as blocking the 017→018 prod replay. The frontend had to land before those migrations can go to prod. The mockup (`mockups/phase3-conversations.html`) already settled the UX (list⇄thread responsive, register in the overflow menu, "Original:" expandable preview, optimistic send).
+
+**Alternatives considered:**
+- *Per-conversation realtime channel.* Tighter scoping but requires subscribe/unsubscribe churn on every conversation switch and a second mechanism to keep the *list* (other conversations') snippets fresh. Rejected: migration 018 already makes realtime membership-scoped, so the single channel only ever delivers rows the viewer may see — the DB does the filtering. Simpler and leak-safe by construction.
+- *No optimistic UI (await the insert before rendering).* Simpler, but the live app's visible send lag is exactly what Isaac asked to fix (users re-send dupes). Rejected.
+- *Add a `client_id` column to dedupe echoes.* A schema change purely for client bookkeeping; the id + content-match reconcile achieves the same with no migration. Rejected.
+- *Keep everything in one App.jsx.* Fewer files, but the conversation UI is large and the project's standing rule is to over-engineer structural separation now (chat vs. engine; future B2B). Split chosen deliberately.
+
+**Reasoning:** Leaning on RLS-scoped realtime instead of client-side filtering removes a whole class of "did I filter correctly?" bugs and matches the security model already gate-tested in 018. The id-based reconcile is the minimum mechanism that survives both insert/echo orderings. The data-layer modules keep the eventual B2B engine surface decoupled from React, per the layer-separation rule.
+
+**Implications:**
+- Sends now require `conversation_id` (via `conversations.js insertMessage`) — replaying 017→018→019 to prod must ship **together with this frontend**, never before.
+- The single-channel model assumes 018's membership-scoped realtime is applied on the target DB. On a DB where 018 is *not* yet applied (e.g. current prod), the channel would deliver cross-conversation rows — another reason the migration + frontend cut over together.
+- Known gaps (acceptable for the MVP smoke, tracked as follow-ups): a conversation someone else creates with you, or invites you to, won't appear until reload (no conversations-table realtime); list enrichment is N+1 (members + latest message per conversation); `?join=<token>` redemption reloads the list rather than deep-linking into the joined thread.
+- New client modules: `translation.js` (engine API config + `detectSourceLanguage` + lang normalizer, extracted from App.jsx) and `discovery.js` (people-picker RPCs).
+
+**Revisit when:** Conversation-list realtime / unread is needed beyond a reload (add a `conversations` realtime channel or a per-user activity feed); list enrichment N+1 becomes a latency problem (fold into a single `list_conversations` RPC returning name+snippet+unread); or the optimistic-send dedupe shows races in practice (then reconsider a `client_id` column).
+
+**Revisit-blocked-by:** staging smoke pass on Vercel Preview after 017/018/019 are applied — the code is bundle-clean but has not been exercised against a live DB.
+
+---
+
+## 2026-06-12 — Unify context_type vocab with the translation engine (migration 019)
+
+**Decision:** Collapse the two divergent `context_type` vocabularies onto the translation engine's set — `casual / dating / professional / academic` — making it the single allowed set for `conversations.context_type` (migration 019 moves the table CHECK + the `create_conversation`/`set_conversation_context_type` guards). The retired set was `casual / professional / romantic / family / support`.
+
+**Context:** Building the Phase 3 conversation-aware frontend, the per-conversation register selector needs to write the conversation's `context_type`, and that value then drives translation. But the *conversation column* (migration 017 CHECK) and the *translation engine* (`lib/translatePrompt.js` `CONTEXT_TYPE_MODIFIERS`) accepted different word lists — only `casual` + `professional` overlapped. So a user could pick a register the engine silently ignores (no modifier → falls back to casual) or that the DB rejects. Surfaced as a schema/code discrepancy during the build rather than silently picked (per the "never silently fix a discrepancy" rule).
+
+**Alternatives considered:**
+- *Keep the column's set, map to the engine at send time (romantic→dating, etc.).* No migration, but adds a translation-time mapping layer and leaves `family`/`support` with no real engine behavior — two sets to reason about forever.
+- *Defer — keep the register client-only (not persisted to the conversation).* Ships the frontend fastest but the selector wouldn't survive a reload and punts the real model.
+- *Adopt the column's set and add engine modifiers for romantic/family/support.* Keeps relationship-flavored categories but requires writing+reviewing four new prompt behaviors with no product demand yet.
+
+**Reasoning:** The engine set is the vocabulary that has real, reviewed behavior attached (each value maps to a prompt modifier) and it already matches the existing `App.jsx` `CONTEXT_TYPES`. Unifying there means one word list end-to-end with the fewest moving parts. `romantic/family/support` were aspirational and unused; `dating` covers the romantic case.
+
+**Implications:**
+- `conversations.context_type` is now `casual/dating/professional/academic`; the user-chosen conversation register and the inference-output `detected_register` (which keeps `professional/casual/romantic/family/support`) are explicitly **different fields** and must not be conflated.
+- Adding/removing a register value now means: migration (move the CHECK) + edit `src/lib/vocabularies.js` + edit `lib/translatePrompt.js`. That three-file coupling is the motivation for the **deferred tenant-scoped vocab registry** (parking-lot.md) — Isaac's ask to make these option sets data-driven, editable in one place, and per-tenant. Migration 019's hardcoded CHECK is an explicit interim stop-gap until that lands.
+- New `src/lib/vocabularies.js` is the frontend's single source for these lists (replaces the inline `CONTEXT_TYPES`/`LANGUAGES` consts).
+
+**Revisit when:** The tenant-scoped vocab registry is built (it supersedes the hardcoded CHECK + guards), or a customer/product need reintroduces relationship-type categories distinct from translation register.
+
+---
+
 ## 2026-06-12 — Phase 3 Step 1 conversations schema — three build-time decisions (migration 017)
 
 These were resolved while writing `017_phase3_conversations.sql` (the schema + write RPCs carved out of the 2026-06-12 "Phase 3 data model" entry below). Three sub-decisions, each surfaced with alternatives.

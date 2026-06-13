@@ -9,3 +9,5 @@ which
 .env*
 # ...but keep the committed, non-secret example for the RLS gate
 !.env.rls-test.example
+# Vite writes ephemeral config-load shims; never commit them
+vite.config.js.timestamp-*.mjs

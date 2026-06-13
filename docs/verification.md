@@ -1323,6 +1323,83 @@ non-member/left, ≥1 for member). Roadmap Step 2 item flipped `[~]` → `[x]`.
 
 ---
 
+## Phase 3 — Step 2b: Unify `context_type` vocab (migration 019) (2026-06-12)
+
+**Status: ⏳ NOT YET APPLIED (staging pending).** `019_unify_context_type_vocab.sql` is written but
+not yet run — apply on `translationapp1-staging` (non-main branch) before prod, same as every other
+migration.
+
+**What this step does:** Unifies `conversations.context_type` onto the translation engine's vocabulary
+(`casual`/`dating`/`professional`/`academic`) — the set `lib/translatePrompt.js`
+`CONTEXT_TYPE_MODIFIERS` already keys off. Migration 017 had shipped a divergent column CHECK
+(`casual`/`professional`/`romantic`/`family`/`support`), so three of five conversation values had **no
+matching prompt modifier** (silent fallthrough to the casual/default tone). 019 fixes the table CHECK
+**and** the two RPC inline guards (`create_conversation`, `set_conversation_context_type`) in lockstep,
+with a defensive `UPDATE` remapping any pre-existing retired-value rows (`romantic`→`dating`,
+`family`/`support`→`casual`) before the constraint is re-added. **`detected_register` (the separate
+inference-OUTPUT enum) is deliberately untouched.** ALTER not recreate; CREATE OR REPLACE preserves the
+RPC signatures (so GRANTs survive); whole thing is one idempotent transaction.
+
+**How to verify (staging):**
+1. Apply `019_unify_context_type_vocab.sql` in the staging SQL editor; confirm the trailing
+   verification block returns: the `conversations_context_type_check` constraint definition listing
+   exactly `casual`/`dating`/`professional`/`academic`, and **0 rows** remaining on any retired value.
+2. Re-run the Step 1 gate — `node scripts/conversations-gate-test.mjs` — and confirm it stays **GREEN
+   35/35**. The gate only feeds `professional`/`casual`/`nonsense` to `set_conversation_context_type`,
+   all still valid (or still correctly rejected), so 019 must not regress it.
+3. Spot-check `create_conversation(p_context_type => 'dating')` succeeds and
+   `… => 'romantic'` now raises the guard error.
+
+**Gate:** existing `scripts/conversations-gate-test.mjs` must stay 0/GREEN; no new harness needed (the
+change is a vocabulary tightening, not a new surface).
+
+**Prod:** replay **016 → 017 → 018 → 019** as one coordinated cutover, shipped together with the
+conversation-aware frontend (the frontend must pass real `conversation_id` on insert first — see
+roadmap UI). See decisions.md 2026-06-12 "Unify context_type vocab".
+
+---
+
+## Phase 3 — Step 3: Conversation-aware frontend (manual smoke, PENDING) (2026-06-12)
+
+**Status: ⏳ CODE COMPLETE, NOT YET EXERCISED against a live DB.** `App.jsx` + `src/components/*`
++ `src/lib/{conversations,discovery,translation}.js` are written and the entry bundles clean
+(`esbuild src/main.jsx --bundle` succeeds). There is **no automated gate** for the UI — this is a
+manual checklist to run on **Vercel Preview against `translationapp1-staging`** once migrations
+**017 → 018 → 019** are applied there.
+
+**Prerequisite ordering (do not skip):**
+1. Apply 017, then 018 (purge the sentinel first — see Step 2), then 019 on `translationapp1-staging`.
+2. Re-run the two existing gates and confirm still GREEN: `conversations-gate-test.mjs` (35/35) and
+   `messages-rls-gate-test.mjs` (27/27).
+3. Deploy this branch to Vercel Preview (non-main → Preview = the staging app). **Never point this at prod.**
+
+**Smoke checklist (two test accounts A + B in the staging tenant):**
+- [ ] A signs in (magic link) → onboarding (if pending) → lands on the conversation list.
+- [ ] A taps **+**, searches B by username (≥3 chars) or exact email, picks B, Create → a **direct**
+      conversation opens. Re-creating with the same single member **dedupes** to the same thread (no second row).
+- [ ] A sends a message: it appears **instantly** (greyed, "· sending…") then settles to "· sent" — no
+      visible lag, and sending the same text twice fast does **not** produce duplicates (optimistic id reconcile).
+- [ ] B (other browser/profile) signs in, opens the conversation, sees A's message **translated** into B's
+      preferred language as the main bubble, with an **"Original:"** single-line preview that **expands on tap**.
+- [ ] B replies; A receives it via realtime (no reload) and sees it translated; the list row's snippet/time
+      update and unread count bumps when the thread isn't open.
+- [ ] Overflow (⋯) → **Register** selector changes the conversation's `context_type`; the "?" explainer shows
+      on hover/focus; the new register survives a reload (persisted via `set_conversation_context_type`).
+- [ ] Overflow → **Invite to conversation** mints a link; opening `…/?join=<token>` as a third user (C) joins
+      them (`redeem_invite`); after join C can read/post (018 membership gate) and the param is stripped from the URL.
+- [ ] Overflow → **Leave conversation** removes it from the leaver's list (soft-leave; `left_at`), and they
+      stop receiving its realtime.
+- [ ] Create a **group** (2+ members, optional title): sender names show above received bubbles; sent bubbles
+      have **no** "Original:" line.
+- [ ] Force a send failure (e.g. offline) → bubble shows **"⚠ Failed — tap to retry"** and retry resends.
+
+**Note:** the single `messages` realtime channel relies on 018's membership-scoped realtime being applied
+on the target DB — that's why this only runs after 017/018 land. See decisions.md 2026-06-12 "Phase 3
+conversation-aware frontend" for the realtime/optimistic-send model and the known MVP gaps (no
+conversation-list realtime, N+1 list enrichment, no join deep-link).
+
+---
+
 ## Phase 2 — Step 0: Pre-flight (2026-06-09)
 
 **What this step does:** Audits Supabase config that lives outside `/migrations/`, scaffolds

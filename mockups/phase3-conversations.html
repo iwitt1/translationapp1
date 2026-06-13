@@ -1,0 +1,328 @@
+<!-- Phase 3 conversations — clickable mid-fi prototype (fake data, not connected).
+     Responsive: single-column list⇄thread on mobile, two-pane on desktop.
+     Throwaway JS for navigation; the Tailwind markup is what translates to App.jsx. -->
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Translation App — Phase 3 conversations (prototype)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  /* mobile: show only the active pane */
+  @media (max-width: 767px) {
+    body[data-mobile="list"]   #thread  { display: none; }
+    body[data-mobile="thread"] #sidebar { display: none; }
+  }
+  @media (min-width: 768px) {
+    #sidebar, #thread { display: flex !important; }
+  }
+  .scrollbar-thin::-webkit-scrollbar { width: 6px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+</style>
+
+<body data-mobile="list" class="bg-slate-100 text-slate-900 antialiased">
+  <!-- prototype ribbon -->
+  <div class="fixed bottom-3 left-1/2 -translate-x-1/2 z-50 text-[11px] bg-slate-900/90 text-white px-3 py-1 rounded-full shadow-lg">
+    Prototype · fake data · not connected
+  </div>
+
+  <div class="mx-auto max-w-6xl h-screen md:h-[92vh] md:my-[4vh] md:rounded-2xl md:shadow-xl bg-white overflow-hidden flex">
+    <!-- ============================ SIDEBAR / LIST ============================ -->
+    <aside id="sidebar" class="w-full md:w-[360px] md:border-r border-slate-200 flex flex-col shrink-0">
+      <header class="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+        <h1 class="text-lg font-semibold">Messages</h1>
+        <button onclick="openNew()" class="h-9 w-9 grid place-items-center rounded-full bg-indigo-600 text-white hover:bg-indigo-700" title="New conversation" aria-label="New conversation">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </header>
+      <div id="convList" class="flex-1 overflow-y-auto scrollbar-thin"></div>
+    </aside>
+
+    <!-- ============================ THREAD ============================ -->
+    <section id="thread" class="flex-1 flex-col min-w-0">
+      <!-- header -->
+      <header class="px-3 md:px-4 py-2.5 border-b border-slate-200 flex items-center gap-2">
+        <button onclick="showList()" class="md:hidden h-9 w-9 grid place-items-center rounded-full hover:bg-slate-100" aria-label="Back">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <div id="threadAvatar" class="h-9 w-9 rounded-full grid place-items-center text-sm font-semibold text-white shrink-0">M</div>
+        <div class="min-w-0 flex-1">
+          <div id="threadName" class="font-semibold leading-tight truncate">María González</div>
+          <div id="threadSub" class="text-xs text-slate-500 truncate">Spanish · active now</div>
+        </div>
+
+        <!-- overflow menu (now also holds the register selector, moved out of the header) -->
+        <div class="relative">
+          <button onclick="toggleOverflow()" class="h-9 w-9 grid place-items-center rounded-full hover:bg-slate-100" aria-label="More">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+          </button>
+          <div id="overflow" class="hidden absolute right-0 mt-1 w-64 bg-white border border-slate-200 rounded-xl shadow-lg py-1 z-20 text-sm">
+            <!-- register / tone selector -->
+            <div class="px-3 py-2">
+              <div class="flex items-center gap-1.5 mb-1">
+                <span class="text-xs font-medium text-slate-500">Register</span>
+                <span class="relative group/help">
+                  <button class="h-4 w-4 grid place-items-center rounded-full border border-slate-300 text-[10px] text-slate-400 leading-none" aria-label="What is register?">?</button>
+                  <span class="invisible group-hover/help:visible group-focus-within/help:visible absolute left-0 top-5 z-30 w-56 bg-slate-900 text-white text-[11px] leading-snug rounded-lg p-2 shadow-lg">
+                    Sets the tone the translation aims for — how formal or familiar it sounds. <b>Casual</b> for friends, <b>Dating</b> warmer, <b>Professional</b> for work, <b>Academic</b> most formal.
+                  </span>
+                </span>
+              </div>
+              <select id="contextSelect" onchange="onContextChange(this.value)" class="w-full text-xs rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <option value="casual">Casual</option>
+                <option value="dating">Dating</option>
+                <option value="professional">Professional</option>
+                <option value="academic">Academic</option>
+              </select>
+            </div>
+            <div class="border-t border-slate-100 my-1"></div>
+            <button onclick="openInvite()" class="w-full text-left px-3 py-2 hover:bg-slate-50 flex items-center gap-2">Invite to conversation</button>
+            <button id="membersBtn" onclick="alert('Member list — deferred for this prototype')" class="w-full text-left px-3 py-2 hover:bg-slate-50">View members</button>
+            <div class="border-t border-slate-100 my-1"></div>
+            <button onclick="alert('Leave conversation → leave_conversation RPC (soft-leave)')" class="w-full text-left px-3 py-2 hover:bg-slate-50 text-rose-600">Leave conversation</button>
+            <button id="blockBtn" onclick="alert('Block / report — direct conversations only')" class="w-full text-left px-3 py-2 hover:bg-slate-50 text-rose-600">Block &amp; report</button>
+          </div>
+        </div>
+      </header>
+
+      <!-- messages -->
+      <div id="messages" class="flex-1 overflow-y-auto scrollbar-thin bg-slate-50 px-3 md:px-6 py-4 space-y-3"></div>
+
+      <!-- composer -->
+      <div class="border-t border-slate-200 p-3 flex items-end gap-2">
+        <textarea id="composer" rows="1" placeholder="Message…" class="flex-1 resize-none rounded-2xl border border-slate-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+        <button onclick="fakeSend()" class="h-10 px-4 rounded-2xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">Send</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- ============================ NEW CONVERSATION (overlay) ============================ -->
+  <div id="newModal" class="hidden fixed inset-0 z-40 bg-slate-900/40 flex md:items-center md:justify-center">
+    <div class="bg-white w-full md:max-w-md md:rounded-2xl md:shadow-2xl flex flex-col h-full md:h-auto md:max-h-[88vh]">
+      <header class="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+        <button onclick="closeNew()" class="text-sm text-slate-500 hover:text-slate-700">Cancel</button>
+        <h2 class="font-semibold">New conversation</h2>
+        <button id="createBtn" disabled onclick="createConversation()" class="text-sm font-medium text-indigo-600 disabled:text-slate-300">Create</button>
+      </header>
+      <div class="p-4 space-y-4 overflow-y-auto">
+        <!-- people picker -->
+        <div>
+          <div id="chips" class="flex flex-wrap gap-1.5 mb-2"></div>
+          <input id="peopleSearch" oninput="renderResults(this.value)" placeholder="Add by username or email…" class="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          <div id="results" class="mt-1 border border-slate-100 rounded-xl divide-y divide-slate-100 overflow-hidden"></div>
+          <p class="text-[11px] text-slate-400 mt-1">Search hits the discovery RPCs (find_account_by_email / search_accounts_by_username). Only handles you're allowed to see appear — cross-tenant &amp; blocked are filtered silently.</p>
+        </div>
+        <!-- group title (appears at 2+ members) -->
+        <div id="titleField" class="hidden">
+          <label class="text-xs font-medium text-slate-500">Group name <span class="text-slate-300">(optional)</span></label>
+          <input id="groupTitle" placeholder="e.g. Trip planning" class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        </div>
+        <!-- starting register -->
+        <div>
+          <label class="text-xs font-medium text-slate-500">Starting register</label>
+          <select id="newContext" class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <option value="casual">Casual</option>
+            <option value="dating">Dating</option>
+            <option value="professional">Professional</option>
+            <option value="academic">Academic</option>
+          </select>
+        </div>
+        <p id="newKind" class="text-xs text-slate-500"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================ INVITE (overlay) ============================ -->
+  <div id="inviteModal" class="hidden fixed inset-0 z-40 bg-slate-900/40 flex items-end md:items-center justify-center">
+    <div class="bg-white w-full md:max-w-sm rounded-t-2xl md:rounded-2xl md:shadow-2xl p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="font-semibold">Invite to <span id="inviteConvName">this conversation</span></h2>
+        <button onclick="closeInvite()" class="h-8 w-8 grid place-items-center rounded-full hover:bg-slate-100" aria-label="Close">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <p class="text-sm text-slate-500 mb-3">Anyone in your space with this link can join. Redeeming runs <code class="text-xs bg-slate-100 px-1 rounded">redeem_invite</code> and adds them as a member.</p>
+      <div class="flex gap-2">
+        <input id="inviteLink" readonly value="https://app.example/join/cv_8Kd2…aZ" class="flex-1 rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-600" />
+        <button onclick="copyInvite(this)" class="px-3 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">Copy</button>
+      </div>
+      <p class="text-[11px] text-slate-400 mt-2">Link can be revoked later from this menu (revoke_invite — deferred in this prototype).</p>
+    </div>
+  </div>
+
+<script>
+// ---------- fake data ----------
+const ME = 'You';
+const palette = ['bg-rose-500','bg-indigo-500','bg-emerald-500','bg-amber-500','bg-sky-500','bg-fuchsia-500'];
+const color = (s) => palette[[...s].reduce((a,c)=>a+c.charCodeAt(0),0) % palette.length];
+const initials = (s) => s.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
+const esc = (s='') => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const preview = (s='', n=42) => s.length>n ? s.slice(0,n).trim()+'…' : s;
+
+const conversations = [
+  { id:'t1', kind:'direct', name:'María González', lang:'Spanish', context:'casual', unread:2,
+    members:[ME,'María González'], snippet:'Are you coming tonight?', time:'7:14 PM',
+    messages:[
+      {from:'María González', body:'Are you coming tonight?', orig:'¿Vas a venir esta noche?', src:'es', t:'7:14 PM'},
+      {from:ME, body:"Yes, I'll be there around 8", tr:'Sí, llegaré sobre las 8', dst:'es', t:'7:15 PM'},
+      {from:'María González', body:'Perfect, save me a seat', orig:'Perfecto, guárdame un sitio', src:'es', t:'7:15 PM'},
+    ]},
+  { id:'t2', kind:'group', name:'Trip planning', context:'casual', unread:0,
+    members:[ME,'Kenji','Amara','Luis'], snippet:'Amara: I booked the train', time:'2:02 PM',
+    messages:[
+      {from:'Kenji', body:'Should we leave Friday or Saturday?', orig:'金曜日と土曜日、どっちにする？', src:'ja', t:'1:58 PM'},
+      {from:'Amara', body:'I booked the train for Friday morning', orig:"J'ai réservé le train vendredi matin", src:'fr', t:'2:02 PM'},
+      {from:ME, body:'Works for me', tr:'Me viene bien / 私はそれでいい', dst:'multi', t:'2:03 PM'},
+    ]},
+  { id:'t3', kind:'direct', name:'Dr. Reyes', lang:'Spanish', context:'professional', unread:0,
+    members:[ME,'Dr. Reyes'], snippet:'Thank you, I will review it', time:'Yesterday',
+    messages:[
+      {from:'Dr. Reyes', body:'Thank you, I will review the report and respond by Monday.', orig:'Gracias, revisaré el informe y responderé el lunes.', src:'es', t:'Yesterday'},
+    ]},
+];
+
+const directory = [
+  {h:'@mariag', n:'María González'}, {h:'@kenji_w', n:'Kenji Watanabe'},
+  {h:'@amara', n:'Amara Diallo'}, {h:'luis@example.com', n:'Luis Romero'},
+  {h:'@dr.reyes', n:'Dr. Reyes'}, {h:'@sofia', n:'Sofia Lindqvist'},
+];
+
+let activeId = 't1';
+let picked = [];
+
+// ---------- render: conversation list ----------
+function renderList(){
+  const el = document.getElementById('convList');
+  el.innerHTML = conversations.map(c => `
+    <button onclick="openConv('${c.id}')" class="w-full text-left px-3 py-3 flex gap-3 items-center hover:bg-slate-50 ${c.id===activeId?'md:bg-indigo-50':''}">
+      <div class="relative shrink-0">
+        <div class="h-11 w-11 rounded-full grid place-items-center text-white font-semibold ${color(c.name)}">${c.kind==='group'?'#':initials(c.name)}</div>
+        ${c.kind==='group'?'<span class="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full bg-white grid place-items-center text-[9px] text-slate-500 border border-slate-200">'+(c.members.length)+'</span>':''}
+      </div>
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center justify-between gap-2">
+          <span class="font-medium truncate">${c.name}</span>
+          <span class="text-[11px] text-slate-400 shrink-0">${c.time}</span>
+        </div>
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-sm text-slate-500 truncate">${c.snippet}</span>
+          ${c.unread?'<span class="shrink-0 h-5 min-w-5 px-1 rounded-full bg-indigo-600 text-white text-[11px] grid place-items-center">'+c.unread+'</span>':''}
+        </div>
+        <span class="inline-block mt-1 text-[10px] uppercase tracking-wide text-slate-400">${c.context}</span>
+      </div>
+    </button>`).join('');
+}
+
+// ---------- render: thread ----------
+function renderThread(){
+  const c = conversations.find(x=>x.id===activeId);
+  document.getElementById('threadName').textContent = c.name;
+  document.getElementById('threadSub').textContent = c.kind==='group'
+    ? c.members.length+' members · '+c.members.filter(m=>m!==ME).join(', ')
+    : c.lang+' · active now';
+  const av = document.getElementById('threadAvatar');
+  av.textContent = c.kind==='group' ? '#' : initials(c.name);
+  av.className = 'h-9 w-9 rounded-full grid place-items-center text-sm font-semibold text-white shrink-0 '+color(c.name);
+  document.getElementById('contextSelect').value = c.context;
+  document.getElementById('membersBtn').classList.toggle('hidden', c.kind!=='group');
+  document.getElementById('blockBtn').classList.toggle('hidden', c.kind!=='direct');
+
+  document.getElementById('messages').innerHTML = c.messages.map(m=>{
+    const mine = m.from===ME;
+    // Received + translated: big bubble = translation, secondary "Original:" preview that expands on tap (and tooltip on hover).
+    // Sent: no secondary line — the sender wrote it, they don't need a translation echoed back.
+    const sub = (!mine && m.orig)
+      ? `<div class="group/orig mt-1 text-[11px] text-slate-400 cursor-pointer select-none" onclick="this.classList.toggle('open')" title="${esc(m.orig)}">
+           <!-- collapsed: single line, CSS-truncated to whatever the bubble width allows -->
+           <div class="flex items-baseline gap-1 group-[.open]/orig:hidden">
+             <span class="font-medium text-slate-500 shrink-0">Original:</span>
+             <span class="min-w-0 truncate">${esc(m.orig)}</span>
+           </div>
+           <!-- expanded: full text, wraps freely -->
+           <div class="hidden group-[.open]/orig:block">
+             <span class="font-medium text-slate-500">Original:</span> ${esc(m.orig)}
+           </div>
+         </div>`
+      : '';
+    const pending = m.pending ? ' opacity-60' : '';
+    const tick = mine ? `<span class="ml-1">${m.pending?'· sending…':'· sent'}</span>` : '';
+    return `<div class="flex ${mine?'justify-end':'justify-start'}">
+      <div class="max-w-[78%] md:max-w-[65%]">
+        ${(!mine && conversations.find(x=>x.id===activeId).kind==='group')?'<div class="text-[11px] text-slate-400 mb-0.5 ml-1">'+m.from+'</div>':''}
+        <div class="rounded-2xl px-3.5 py-2 ${mine?'bg-indigo-600 text-white rounded-br-md':'bg-white border border-slate-200 rounded-bl-md'}${pending}">
+          <div class="text-sm whitespace-pre-wrap">${esc(m.body)}</div>
+          ${sub}
+        </div>
+        <div class="text-[10px] text-slate-400 mt-0.5 ${mine?'text-right mr-1':'ml-1'}">${m.t}${tick}</div>
+      </div>
+    </div>`;
+  }).join('');
+  const mEl = document.getElementById('messages'); mEl.scrollTop = mEl.scrollHeight;
+}
+
+// ---------- navigation ----------
+function openConv(id){ activeId=id; const c=conversations.find(x=>x.id===id); c.unread=0; renderList(); renderThread(); document.body.dataset.mobile='thread'; }
+function showList(){ document.body.dataset.mobile='list'; renderList(); }
+function toggleOverflow(){ document.getElementById('overflow').classList.toggle('hidden'); }
+document.addEventListener('click', e=>{ if(!e.target.closest('#overflow') && !e.target.closest('[aria-label=More]')) document.getElementById('overflow').classList.add('hidden'); });
+function onContextChange(v){ conversations.find(x=>x.id===activeId).context=v; renderList(); }
+
+// ---------- new conversation ----------
+function openNew(){ picked=[]; document.getElementById('peopleSearch').value=''; document.getElementById('groupTitle').value=''; syncNew(); renderResults(''); document.getElementById('newModal').classList.remove('hidden'); }
+function closeNew(){ document.getElementById('newModal').classList.add('hidden'); }
+function renderResults(q){
+  const hits = directory.filter(d=> (d.h+d.n).toLowerCase().includes(q.toLowerCase()) && !picked.find(p=>p.h===d.h));
+  document.getElementById('results').innerHTML = (q===''?[]:hits).slice(0,4).map(d=>`
+    <button onclick='pick(${JSON.stringify(d)})' class="w-full text-left px-3 py-2 hover:bg-slate-50 flex items-center gap-2">
+      <span class="h-7 w-7 rounded-full grid place-items-center text-white text-xs font-semibold ${color(d.n)}">${initials(d.n)}</span>
+      <span class="text-sm">${d.n} <span class="text-slate-400">${d.h}</span></span>
+    </button>`).join('');
+}
+function pick(d){ picked.push(d); document.getElementById('peopleSearch').value=''; renderResults(''); syncNew(); }
+function unpick(h){ picked=picked.filter(p=>p.h!==h); renderResults(document.getElementById('peopleSearch').value); syncNew(); }
+function syncNew(){
+  document.getElementById('chips').innerHTML = picked.map(p=>`
+    <span class="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 rounded-full pl-2 pr-1 py-0.5 text-xs">
+      ${p.n}<button onclick="unpick('${p.h}')" class="h-4 w-4 grid place-items-center rounded-full hover:bg-indigo-100">×</button>
+    </span>`).join('');
+  const isGroup = picked.length>=2;
+  document.getElementById('titleField').classList.toggle('hidden', !isGroup);
+  document.getElementById('createBtn').disabled = picked.length<1;
+  document.getElementById('newKind').textContent = picked.length===0 ? ''
+    : isGroup ? `Group conversation · ${picked.length+1} members (create_conversation kind='group')`
+              : `Direct conversation · deduped to one thread per pair (kind='direct')`;
+}
+function createConversation(){
+  const isGroup = picked.length>=2;
+  const name = isGroup ? (document.getElementById('groupTitle').value || 'New group') : picked[0].n;
+  const id = 'n'+Date.now();
+  conversations.unshift({ id, kind:isGroup?'group':'direct', name, lang:'—',
+    context:document.getElementById('newContext').value, unread:0,
+    members:[ME,...picked.map(p=>p.n)], snippet:'No messages yet', time:'now', messages:[] });
+  closeNew(); openConv(id);
+}
+
+// ---------- invite ----------
+function openInvite(){ toggleOverflow(); document.getElementById('inviteConvName').textContent = conversations.find(x=>x.id===activeId).name; document.getElementById('inviteModal').classList.remove('hidden'); }
+function closeInvite(){ document.getElementById('inviteModal').classList.add('hidden'); }
+function copyInvite(btn){ navigator.clipboard?.writeText(document.getElementById('inviteLink').value); const o=btn.textContent; btn.textContent='Copied'; setTimeout(()=>btn.textContent=o,1200); }
+
+// ---------- composer (fake, demonstrates the optimistic-send pattern) ----------
+// Real App.jsx does the same shape: push a temp message immediately (status 'sending'),
+// fire the insert in the background, then swap the temp row for the DB row when it confirms.
+function fakeSend(){
+  const ta=document.getElementById('composer'); const v=ta.value.trim(); if(!v) return;
+  const c=conversations.find(x=>x.id===activeId);
+  const tempId = 'tmp_'+Date.now();
+  // 1) optimistic: appears instantly, marked pending
+  c.messages.push({ id:tempId, from:ME, body:v, t:'now', pending:true });
+  c.snippet=v; c.time='now'; ta.value=''; renderThread(); renderList();
+  // 2) simulate the round-trip; on confirm, clear pending (real app swaps in the DB row + id)
+  setTimeout(()=>{
+    const m=c.messages.find(x=>x.id===tempId); if(m){ m.pending=false; }
+    if(activeId===c.id) renderThread();
+  }, 700);
+}
+
+// init
+renderList(); renderThread();
+</script>
+</body>
