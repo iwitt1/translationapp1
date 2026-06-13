@@ -1363,12 +1363,12 @@ roadmap UI). See decisions.md 2026-06-12 "Unify context_type vocab".
 
 ## Phase 3 — Step 3: Conversation-aware frontend (manual smoke) (2026-06-12)
 
-**Status: 🟡 SMOKE LARGELY GREEN on Vercel Preview against staging (2026-06-12).** Every flow that could
-be exercised with one tester + the available magic-link budget passed; two flows (third-user
-invite/join/leave, group rendering) were **blocked by the Supabase auth magic-link rate limit**, not by
-any failure — and their server halves are already gate-green (see note). Magic-link sign-in worked on the
-Preview URL with **no** staging/Vercel auth-config change. One cosmetic issue logged (register "?" tooltip
-clips at the screen edge → parking-lot, deferred to a later UI pass).
+**Status: ✅ SMOKE GREEN on Vercel Preview against staging (2026-06-12), with two non-blocking quirks
+logged.** All flows now exercised (the third-user/group items were unblocked once the magic-link rate
+limit reset). Magic-link sign-in worked on the Preview URL with **no** staging/Vercel auth-config change.
+Two known quirks, both deferred (parking-lot): (1) register "?" tooltip clips at the screen edge;
+(2) inviting a third user into a **direct** conversation doesn't promote it to a group — see the
+checklist note below.
 
 **Setup as run:** branch `phase3/step1-conversations` pushed → Vercel Preview (staging DB); migrations
 016✓/017✓/018✓/019✓ on `translationapp1-staging`; both gates green (35/35, 27/27).
@@ -1381,21 +1381,81 @@ clips at the screen edge → parking-lot, deferred to a later UI pass).
       off-screen — cosmetic, deferred (parking-lot "register tooltip clip").
 - [x] **No "Original:" line on own sent messages** (received-only sub-line) confirmed.
 - [x] **Network-loss → "⚠ Failed — tap to retry"** → retry resends. Confirmed.
-- [ ] **Invite → `?join=<token>` join + Leave** — NOT exercised (magic-link rate limit; needed a 3rd user).
-      RPC layer is gate-green (`messages-rls-gate-test.mjs`: join-via-invite grants all four surfaces,
-      soft-leave revokes them). Only the UI wiring (InviteModal mint, App `?join` redemption, Leave button)
-      is unverified.
-- [ ] **Group conversation** (sender names above received bubbles) — NOT exercised (needed 2+ other users).
-      `create_conversation` group path is gate-green; only the group **rendering** is unverified.
+- [x] **Invite → `?join=<token>` join** — third user added successfully (confirmed after the magic-link
+      rate-limit window reset). ⚠️ **quirk on direct chats** — see below.
+- [x] **Group conversation** — created; **sender names render above received bubbles** as expected.
 
-**To finish the two pending UI flows** (before or right after prod cutover): raise the staging Supabase
-auth rate limit (Dashboard → Authentication → Rate Limits) or wait for the window to reset, then run them
-with two more aliases. Both are low-risk given the green RPC coverage.
+**⚠️ Known quirk — "Invite to conversation" on a `direct` chat doesn't promote it to a group.**
+Observed: inviting a third user from within a 1:1 direct conversation appears to drop them into "a new
+direct chat" rather than the existing thread. Root cause (from reading `redeem_invite`, 017 L606–632):
+the RPC correctly adds the redeemer as a member of the **existing** target conversation — **no new row is
+created** — but it leaves `conversations.kind = 'direct'`. The frontend renders any `direct` conversation
+as a 1:1 chat labeled by a single counterpart (`ConversationList`/`ConversationView` derive the name from
+`otherMembers[0]`), so the now-3-person thread *displays* as a direct chat and hides the third
+participant. So it's a display/promotion gap, not duplicate-conversation data corruption. **Deferred** (Isaac,
+2026-06-12 — not blocking). Fix options live in parking-lot "direct→group promotion on invite". Group
+chats created fresh via the people-picker (2+ members → `kind='group'`) render correctly; the quirk is
+specific to *inviting into* an existing direct chat.
 
 **Note:** the single `messages` realtime channel relies on 018's membership-scoped realtime — verified by
 the live B-replies-to-A realtime delivery during smoke. See decisions.md 2026-06-12 "Phase 3
 conversation-aware frontend" for the realtime/optimistic-send model and the known MVP gaps (no
 conversation-list realtime, N+1 list enrichment, no join deep-link).
+
+---
+
+## Phase 3 — Step 4: Production cutover (RUNBOOK — pending) (2026-06-12)
+
+**Status: ⏳ NOT STARTED.** Staging is fully green (016–019 applied, both gates 35/35 + 27/27, frontend
+smoke green with two deferred quirks). Prod high-water mark is **015**. This is the coordinated cutover:
+DB migrations **016 → 017 → 018 → 019** + the frontend (`main` merge), done together.
+
+**Why coordinated (the load-bearing constraint):** 017 sets `messages.conversation_id` NOT NULL and drops
+its default, so the *currently-live* old frontend's insert (no `conversation_id`) starts failing the moment
+017 lands. Sends are broken on prod from then until the new frontend deploys. There is no ordering that
+avoids this; minimize the window — apply the migrations and merge to `main` back-to-back in a low-traffic
+moment. (Accepted tradeoff — decisions.md 2026-06-12 "Phase 3 conversation-aware frontend".)
+
+**Pre-flight:**
+1. Confirm prod holds only disposable test data. Free tier = **no backups/PITR**; if any real user data
+   exists, export/snapshot first (operations.md §4 standing rule).
+2. Confirm prod's `message_translations → messages` FK is already CASCADE (`confdeltype='c'`) so the
+   sentinel purge cascades — it is (016 is a verified no-op on prod), but check.
+
+**Sequence (prod SQL editor = `translationapp1`; NEVER point a gate/test script at prod):**
+1. **016** — run for ledger completeness (no-op on prod). Verify `confdeltype='c'`.
+2. **017** — run; confirm its embedded verification block is all-green (conversations/members tables, RLS,
+   `conversation_id` promoted to NOT NULL FK, the four RPCs + amended invite RPCs present).
+3. **Sentinel inventory + purge** (BEFORE 018, so the cache cascades cleanly). Read-only first:
+   ```sql
+   select count(*) as sentinel_messages from public.messages
+    where conversation_id = '00000000-0000-0000-0000-000000000002';
+   select count(*) as sentinel_translations from public.message_translations mt
+     join public.messages m on m.id = mt.message_id
+    where m.conversation_id = '00000000-0000-0000-0000-000000000002';
+   -- sanity: nothing dark outside the sentinel
+   select m.conversation_id, count(*) from public.messages m
+    where not exists (select 1 from public.conversation_members cm
+                       where cm.conversation_id = m.conversation_id and cm.left_at is null)
+    group by m.conversation_id;   -- expect only …0002 (or nothing)
+   ```
+   Then purge (cascades to `message_translations`):
+   ```sql
+   delete from public.messages where conversation_id = '00000000-0000-0000-0000-000000000002';
+   ```
+4. **018** — run; confirm verification block all-green (the five policy names carry `is_active_member`;
+   `messages` has no UPDATE/DELETE policy).
+5. **019** — run; confirm the `conversations_context_type_check` lists the engine set and 0 rows on retired values.
+6. **Merge the branch → `main` immediately** → prod auto-deploys the conversation-aware frontend, closing
+   the broken-sends window.
+
+**Post-cutover smoke (on prod, fresh aliases):** repeat the Step 3 checklist above — at minimum: sign in,
+create direct conversation, send (instant + no dupes), receive translated + "Original:" expand, register
+persists, third-user invite/join, group create + sender names, network-loss retry. The dashboard Site
+URL / redirect URLs are already correct on prod (set in the Phase 2 cutover) — no auth-config step.
+
+**Known quirks carried to prod (both deferred, not blockers):** register "?" tooltip clips off-screen;
+inviting into a `direct` chat doesn't promote it to `group`. See parking-lot.
 
 ---
 
