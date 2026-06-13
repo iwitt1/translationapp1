@@ -1325,9 +1325,11 @@ non-member/left, ≥1 for member). Roadmap Step 2 item flipped `[~]` → `[x]`.
 
 ## Phase 3 — Step 2b: Unify `context_type` vocab (migration 019) (2026-06-12)
 
-**Status: ⏳ NOT YET APPLIED (staging pending).** `019_unify_context_type_vocab.sql` is written but
-not yet run — apply on `translationapp1-staging` (non-main branch) before prod, same as every other
-migration.
+**Status: ✅ APPLIED + GATE GREEN on staging (2026-06-12).** `019_unify_context_type_vocab.sql` run on
+`translationapp1-staging`: constraint verification returned the engine set
+(`casual`/`dating`/`professional`/`academic`) with 0 rows on any retired value, and **both** Phase 3
+gates stayed green afterward (`conversations-gate-test.mjs` 35/35, `messages-rls-gate-test.mjs` 27/27).
+**Prod replay pending** the coordinated cutover (016→017→018→019 + frontend).
 
 **What this step does:** Unifies `conversations.context_type` onto the translation engine's vocabulary
 (`casual`/`dating`/`professional`/`academic`) — the set `lib/translatePrompt.js`
@@ -1359,42 +1361,39 @@ roadmap UI). See decisions.md 2026-06-12 "Unify context_type vocab".
 
 ---
 
-## Phase 3 — Step 3: Conversation-aware frontend (manual smoke, PENDING) (2026-06-12)
+## Phase 3 — Step 3: Conversation-aware frontend (manual smoke) (2026-06-12)
 
-**Status: ⏳ CODE COMPLETE, NOT YET EXERCISED against a live DB.** `App.jsx` + `src/components/*`
-+ `src/lib/{conversations,discovery,translation}.js` are written and the entry bundles clean
-(`esbuild src/main.jsx --bundle` succeeds). There is **no automated gate** for the UI — this is a
-manual checklist to run on **Vercel Preview against `translationapp1-staging`** once migrations
-**017 → 018 → 019** are applied there.
+**Status: 🟡 SMOKE LARGELY GREEN on Vercel Preview against staging (2026-06-12).** Every flow that could
+be exercised with one tester + the available magic-link budget passed; two flows (third-user
+invite/join/leave, group rendering) were **blocked by the Supabase auth magic-link rate limit**, not by
+any failure — and their server halves are already gate-green (see note). Magic-link sign-in worked on the
+Preview URL with **no** staging/Vercel auth-config change. One cosmetic issue logged (register "?" tooltip
+clips at the screen edge → parking-lot, deferred to a later UI pass).
 
-**Prerequisite ordering (do not skip):**
-1. Apply 017, then 018 (purge the sentinel first — see Step 2), then 019 on `translationapp1-staging`.
-2. Re-run the two existing gates and confirm still GREEN: `conversations-gate-test.mjs` (35/35) and
-   `messages-rls-gate-test.mjs` (27/27).
-3. Deploy this branch to Vercel Preview (non-main → Preview = the staging app). **Never point this at prod.**
+**Setup as run:** branch `phase3/step1-conversations` pushed → Vercel Preview (staging DB); migrations
+016✓/017✓/018✓/019✓ on `translationapp1-staging`; both gates green (35/35, 27/27).
 
-**Smoke checklist (two test accounts A + B in the staging tenant):**
-- [ ] A signs in (magic link) → onboarding (if pending) → lands on the conversation list.
-- [ ] A taps **+**, searches B by username (≥3 chars) or exact email, picks B, Create → a **direct**
-      conversation opens. Re-creating with the same single member **dedupes** to the same thread (no second row).
-- [ ] A sends a message: it appears **instantly** (greyed, "· sending…") then settles to "· sent" — no
-      visible lag, and sending the same text twice fast does **not** produce duplicates (optimistic id reconcile).
-- [ ] B (other browser/profile) signs in, opens the conversation, sees A's message **translated** into B's
-      preferred language as the main bubble, with an **"Original:"** single-line preview that **expands on tap**.
-- [ ] B replies; A receives it via realtime (no reload) and sees it translated; the list row's snippet/time
-      update and unread count bumps when the thread isn't open.
-- [ ] Overflow (⋯) → **Register** selector changes the conversation's `context_type`; the "?" explainer shows
-      on hover/focus; the new register survives a reload (persisted via `set_conversation_context_type`).
-- [ ] Overflow → **Invite to conversation** mints a link; opening `…/?join=<token>` as a third user (C) joins
-      them (`redeem_invite`); after join C can read/post (018 membership gate) and the param is stripped from the URL.
-- [ ] Overflow → **Leave conversation** removes it from the leaver's list (soft-leave; `left_at`), and they
-      stop receiving its realtime.
-- [ ] Create a **group** (2+ members, optional title): sender names show above received bubbles; sent bubbles
-      have **no** "Original:" line.
-- [ ] Force a send failure (e.g. offline) → bubble shows **"⚠ Failed — tap to retry"** and retry resends.
+**Smoke checklist — results:**
+- [x] Direct conversation create + **dedupe** confirmed (re-create with same member → same thread).
+- [x] **Optimistic send**: instant render, settles to sent, no duplicates reproducible.
+- [x] **Translation** display + **"Original:" tap-to-expand** work.
+- [x] **Register** selector changes tone; **"?"** explainer shows on hover. ⚠️ tooltip renders partly
+      off-screen — cosmetic, deferred (parking-lot "register tooltip clip").
+- [x] **No "Original:" line on own sent messages** (received-only sub-line) confirmed.
+- [x] **Network-loss → "⚠ Failed — tap to retry"** → retry resends. Confirmed.
+- [ ] **Invite → `?join=<token>` join + Leave** — NOT exercised (magic-link rate limit; needed a 3rd user).
+      RPC layer is gate-green (`messages-rls-gate-test.mjs`: join-via-invite grants all four surfaces,
+      soft-leave revokes them). Only the UI wiring (InviteModal mint, App `?join` redemption, Leave button)
+      is unverified.
+- [ ] **Group conversation** (sender names above received bubbles) — NOT exercised (needed 2+ other users).
+      `create_conversation` group path is gate-green; only the group **rendering** is unverified.
 
-**Note:** the single `messages` realtime channel relies on 018's membership-scoped realtime being applied
-on the target DB — that's why this only runs after 017/018 land. See decisions.md 2026-06-12 "Phase 3
+**To finish the two pending UI flows** (before or right after prod cutover): raise the staging Supabase
+auth rate limit (Dashboard → Authentication → Rate Limits) or wait for the window to reset, then run them
+with two more aliases. Both are low-risk given the green RPC coverage.
+
+**Note:** the single `messages` realtime channel relies on 018's membership-scoped realtime — verified by
+the live B-replies-to-A realtime delivery during smoke. See decisions.md 2026-06-12 "Phase 3
 conversation-aware frontend" for the realtime/optimistic-send model and the known MVP gaps (no
 conversation-list realtime, N+1 list enrichment, no join deep-link).
 
