@@ -16,6 +16,33 @@
 
 ---
 
+## 2026-06-18 — Phase 3 production cutover executed (prod replay 016→019 + frontend merge)
+
+**Decision:** Executed the Phase 3 production cutover — replayed migrations 016→017→018→019 against prod `translationapp1` (prod high-water mark was 015 from the Phase 2 cutover), then merged `phase3/step1-conversations` → `main` (fast-forward `5251669..c13f8ae`) so Vercel auto-deployed the conversation-aware frontend. Ran as a single Cowork-guided session with a verification gate after every migration. Smoke scope was deliberately reduced to **two users** this session (see deferrals).
+
+**Context:** Staging was fully green through 019 (017 gate 35/35, 018 gate 27/27, frontend smoke green). Load-bearing constraint: migration 017 sets `messages.conversation_id` NOT NULL + drops its default, so the live pre-Phase-3 frontend's inserts (no `conversation_id`) break the instant 017 lands and stay broken until the new frontend deploys. No ordering avoids this window; the mitigation is migrations + the `main` merge back-to-back in a low-traffic moment (decisions.md 2026-06-12 "Phase 3 conversation-aware frontend").
+
+**What ran / verified on prod (2026-06-18):**
+- **Pre-flight:** prod held only disposable test data (messages=0, message_translations=0, profiles=2, ULP=2 — the Phase 2 test users); `message_translations→messages` FK confirmed `confdeltype='c'` (CASCADE). Free tier = no backups; accepted (disposable data; schema lives in migrations).
+- **016** (FK reconcile) — no-op on prod (already CASCADE); re-verified `'c'`.
+- **017** (conversations schema) — embedded verification all green: conversations/members tables + RLS, global sentinel row, 5 indexes, `messages.conversation_id` promoted to NOT NULL FK with default dropped (0 nulls / 0 unresolved), `conversation_contexts` FK NOT VALID + RLS, `conversation_policy` column, all 6 functions.
+- **Sentinel purge** — no-op (messages=0; 0 sentinel rows; nothing dark outside the sentinel).
+- **018** (membership-scoped messages RLS) — the five policies carry `is_active_member`; messages immutable (0 UPDATE/DELETE); RLS on; helper SECURITY DEFINER + STABLE. The 6th `messages` SELECT policy `profile_writer_messages_select` (migration 015, `TO profile_writer`) is expected and correctly carries no membership predicate.
+- **019** (context_type vocab unify) — constraint is the engine set `casual/dating/professional/academic`; 0 rows on retired values.
+- **Merge → deploy** — `main` fast-forwarded and pushed; Vercel auto-deployed the new frontend, closing the broken-sends window. No env-var change this round (Production secrets were set in the Phase 2 cutover).
+- **2-user smoke GREEN on prod:** sign in + onboard ×2, create direct conversation, send (instant + no dupes, real `conversation_id` on the insert), receive translated + "Original:" expand, register persists across reload, network-loss retry.
+
+**Sub-decisions / deferrals:**
+- **Reduced 2-user smoke** instead of the full runbook smoke, because Supabase's built-in email service caps magic links at ~2/hr — not enough for the 3rd-user/group flows. The 2-user path validates the cutover's actual risk (sends now require `conversation_id`; translation; realtime; RLS between two members). 3rd-user invite/join + group create/sender-names are deferred to the next email window; both are already gate-verified on staging (017 35/35, 018 27/27).
+- **Custom SMTP + sending domain** logged as a follow-up (parking-lot) — the production-correct fix for the magic-link limit, and it also unblocks the parked re-prompt/CRM email. Its own scoped piece of work, not folded into the cutover.
+- **Empty-conversation visibility quirk** found in smoke (a conversation A starts but never sends in shows for B on refresh) — parked, non-blocking (B is a legitimate member; nothing leaks). Preferred fix is option 1 (hide message-less conversations in the list query); options 2/3 noted in parking-lot.
+
+**Implications:** Prod and staging are schema-matched at migration 019. Phase 3 is shipped to prod. The membership-scoped authorization model (018) is now the live read/write/realtime boundary on prod — the most security-relevant change since the Phase 2 RLS cutover. `messages.conversation_id` FK is NO ACTION (conversations are never hard-deleted in-model; soft-leave only).
+
+**Revisit when:** the deferred 3rd-user/group smoke runs (next email window or after custom SMTP); or a prod-only divergence from staging surfaces in normal operation.
+
+---
+
 ## 2026-06-12 — Phase 3 conversation-aware frontend (App.jsx rewrite + component split)
 
 **Decision:** Rewrite the single-file global-room `src/App.jsx` into a conversation-aware app split across `src/components/` (`ConversationList`, `ConversationView`, `MessageBubble`, `NewConversationModal`, `InviteModal`) over three new data-layer modules (`src/lib/conversations.js`, `discovery.js`, `translation.js`). App.jsx is the orchestrator (auth, conversation list, active thread, realtime, optimistic send, modals); components are presentational; the data layer owns every RPC/HTTP contract. Three sub-decisions worth recording:
