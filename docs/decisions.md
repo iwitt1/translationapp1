@@ -16,6 +16,44 @@
 
 ---
 
+## 2026-06-23 — Sending domain now, rebrand later (no brand name yet)
+
+**Decision:** When the Phase 2.2 custom-SMTP work lands, set up email on a **cheap neutral/holding domain now** rather than waiting for a final brand, send from a **dedicated subdomain** (e.g. `mail.<domain>`), and keep every domain reference in **config, not code** — so an eventual rebrand to the real brand domain is a settings change, not a migration.
+
+**Context:** The app has no brand name yet, and the live URL is `translationapp1.vercel.app`. Custom SMTP needs a verified sending domain, which raised the worry of being locked into a domain chosen before the brand exists.
+
+**Alternatives considered:**
+- *Wait for the brand, stay on Supabase built-in email until then.* Rejected — the built-in email cap (~2–4/hr) is a hard blocker on onboarding testers (Phase 2.2), and the brand could be months out. Blocks real testing for no good reason.
+- *Use the `vercel.app` domain / a subdomain of it for sending.* Rejected — you can't set proper SPF/DKIM/DMARC auth records on a domain you don't control, so deliverability would be poor and it's not portable.
+- *Commit to a "best guess" brand domain now.* Rejected — premature; if the brand changes you've burned the name and any reputation on it.
+
+**Reasoning:** The only genuinely *sticky* cost in changing sending domains later is **email deliverability reputation** (mail providers learn to trust a domain via its auth records + sending history over time; a switch resets that). At testing scale there's almost no reputation to lose, so doing it now is the cheap moment — the cost of a domain change rises with email volume, not falls. Everything else about a domain change is config: Supabase Auth Site URL + redirect allowlist, the Vercel custom domain, and the provider's SMTP creds. User identity is uuid-based and domain-independent (architecture.md §7), so a domain change never touches who users are. Sending from a subdomain isolates email reputation from the apex and lets the web domain be rebranded independently. Choosing a provider that supports multiple verified domains (Resend / Postmark) makes a later cutover an add-warm-switch with no code change.
+
+**Implications:** Buy a disposable domain (~$10–15/yr) as part of the Phase 2.2 SMTP spec. Hardcoding a domain anywhere (links, email templates, redirect URLs in code) is now an anti-pattern — all of it lives in config/env. On any future rebrand/migration, keep both old and new domains in the Supabase redirect allowlist during the cutover window so magic links already sitting in inboxes don't break.
+
+**Revisit when:** the brand domain is chosen (execute the rebrand as a config migration per this entry), or email volume grows enough that a domain change would carry real deliverability cost (do the rebrand *before* that point if it's coming).
+
+---
+
+## 2026-06-23 — Phase 2.1 / 2.2 — auth-hardening + testing-enablement sub-phases
+
+**Decision:** Added two new roadmap sub-phases between Phase 2 and Phase 3 — **Phase 2.1 (Close auth/security gaps before widening access)** and **Phase 2.2 (Enable real multi-user testing)** — to track the connective-tissue work that sits between "Phase 3 shipped" and "real testers on prod." 2.1 = token auth on every backend API call, refresh/rotation verified, stray prod `translation_events` row cleanup, Cowork↔Hermes git-pull gap. 2.2 = custom SMTP + sending domain, persistent login, sign-out bug. **Ordered auth-first (reordered 2026-06-23 from an initial testing-first draft):** the 2.2 SMTP item removes the email throttle that currently keeps strangers out, so it is explicitly **blocked by** the 2.1 token-auth item — lock the endpoints before opening signup.
+
+**Context:** Picking the project back up after the Phase 3 prod cutover. A doc sweep surfaced that the engine + data model are on prod, but several non-feature items block actually putting people on it: the magic-link email cap (~2/hr) limited the cutover smoke to 2 users, there's no persistent session, the mobile sign-out button is a logout-by-mistake hazard, and two Phase 2 "Authentication" items (token auth on the API, refresh/rotation) were never checked off. These were scattered across parking-lot.md and an unchecked corner of Phase 2; they needed one tracked home.
+
+**Alternatives considered:**
+- *Leave them where they were* (parking-lot + unchecked Phase 2 lines). Rejected — they're committed work now, not someday-ideas, and the parking-lot framing buries the fact that they gate testing.
+- *Fold them into Phase 4* (corrections capture). Rejected — Phase 4's whole point is generating corrections data from real users, which can't happen until these enablers land; they're a prerequisite, not a peer.
+- *One combined "Phase 2.5".* Rejected — the two groups have different characters (UX/infra enablement vs. security hardening) and different urgency, and splitting them lets the auth-hardening sequencing be reasoned about on its own.
+
+**Reasoning:** Numbered 2.x because they're logically Phase-2 (multi-user safety) follow-ons even though they're being executed after Phase 3. Keeping the canonical checkbox for token-auth/refresh in 2.2 (with a pointer left on the Phase 2 lines) avoids two checkboxes tracking one boolean. Verified against architecture.md before writing: token-auth-on-API is genuinely still target-state (§8 send path, §10 "Target"); and the previously-flagged "realtime / translation-cache cross-tenant" worry was **already closed by migration 018** (membership-scoped policies, realtime delivery explicitly gate-verified), so it was deliberately **not** carried into 2.2 — the residual (a conversation co-member overwriting shared cache; `display_name` charset not validated server-side) stays in parking-lot as minor.
+
+**Implications:** Phase ordering's "one phase at a time, finish N before N+1" principle now reads 2 → 2.1 → 2.2 → (3 already done) → 4. Within the pair there is now one **hard dependency**: the 2.2 SMTP item is blocked by 2.1 token auth (recorded as "Blocks/Blocked by" on the roadmap items), because widening signup access to still-unauthenticated endpoints is the exact exposure 2.1 closes. Everything else in the two sub-phases can run in parallel. None of this is a code change yet — it's planning/tracking only.
+
+**Revisit when:** 2.1/2.2 are scoped into actual specs (each is its own piece of work), or if real-tester onboarding reveals a different blocker that should reorder them.
+
+---
+
 ## 2026-06-18 — Phase 3 production cutover executed (prod replay 016→019 + frontend merge)
 
 **Decision:** Executed the Phase 3 production cutover — replayed migrations 016→017→018→019 against prod `translationapp1` (prod high-water mark was 015 from the Phase 2 cutover), then merged `phase3/step1-conversations` → `main` (fast-forward `5251669..c13f8ae`) so Vercel auto-deployed the conversation-aware frontend. Ran as a single Cowork-guided session with a verification gate after every migration. Smoke scope was deliberately reduced to **two users** this session (see deferrals).
