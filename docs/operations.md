@@ -2,7 +2,7 @@
 
 > Living document. Owns cost model, hiring plan, development workflow, and vendor decisions.
 
-**Last updated:** 2026-06-18 (**Phase 3 production cutover EXECUTED** — replayed migrations 016→019 on prod `translationapp1` (high-water mark was 015), each verified against its embedded block, then merged `phase3/step1-conversations` → `main` (`5251669..c13f8ae`) and Vercel auto-deployed the conversation-aware frontend. 2-user prod smoke GREEN; 3rd-user/group smoke + custom SMTP deferred (Supabase built-in email caps magic links ~2/hr — also a real production blocker, logged in parking-lot). Migrations-list statuses for 016–019 + the "what's in /migrations/" paragraph flipped to prod-applied; added the "Prod cutover — Phase 3 EXECUTED 2026-06-18" §3 notes. See decisions.md/verification.md 2026-06-18. Prior 2026-06-12: migration 016 — FK-cascade drift fix: `message_translations.message_id → messages(id)` was ON DELETE CASCADE on prod but NO ACTION on staging, because migration 000's hand-reconstruction of the base tables dropped the clause the Studio-UI-built prod actually carried. 016 re-adds CASCADE on both environments + corrects 000 so fresh builds stay right. A full FK/default/constraint audit of the three 000-era tables found this the **only** drift. Independent of the Phase 3 conversations work — ships first; the two Phase 3 specs renumbered to migrations 017 (Spec 6 schema) / 018 (Spec 7 messages RLS). See decisions.md 2026-06-12 "FK drift: message_translations → messages cascade". Prior, 2026-06-11: migration 013 — Phase 2 Step 7 data deletion / GDPR Right to Erasure: net-new `data_deletion_requests` table + RLS + 6 RPCs (`request_account_deletion`, `cancel_account_deletion`, `list_due_deletion_requests`, `claim_deletion_request`, `complete_deletion_request`); two-phase soft-delete → 30-day grace → daily cron hard-delete via `server/lib/deletion.js` + `api/v1/jobs/deletion.js` (second Vercel cron, 09:00 UTC). **Gate PASSED on staging — 37/37 GREEN** (`scripts/deletion-gate-test.mjs`; first run 5/15 before 013 was applied). 007–013 staging-only; prod replay pending the Phase 2 cutover. Same-day prior: migration 012 **gate PASSED on staging — 19/19 GREEN** (first run 18/19; a dry-run counter bug in `server/lib/abandonment.js` was fixed — increments moved inside the `if (!dryRun)` guards — and the gate summary wording clarified; prod replay of 012 pending the Phase 2 cutover after Step 7). Prior 2026-06-10: migration 012 added — Phase 2 Step 6 abandonment + abuse monitoring: two service_role-only `SECURITY DEFINER` helpers, **written, gate pending on staging**; 007–012 flagged staging-only (prod replay pending the Phase 2 cutover, which lands after Step 7). Earlier same-day: 011 Step 5 social graph **gate PASSED 40/40**; Step 4 gate re-passed 22/22 after the 011 block-filter amend; 010 Step 4 discovery RPCs; 005–008 list, the `nonbinary` gender-enum regression in 008, post-008 test-user note.)
+**Last updated:** 2026-06-23 (Added §3 **"Git & deploy: staging vs prod — command-line runbook"** — a plain-English, copy-paste terminal guide to branch→Preview (staging) vs merge-to-`main` (prod), how to avoid an accidental push to `main`, and recovery if it happens. Added after the Phase 2.1 token-auth code reached prod via an accidental `main` merge (2026-06-23; accepted, no users — see decisions.md). Prior 2026-06-18: **Phase 3 production cutover EXECUTED** — replayed migrations 016→019 on prod `translationapp1` (high-water mark was 015), each verified against its embedded block, then merged `phase3/step1-conversations` → `main` (`5251669..c13f8ae`) and Vercel auto-deployed the conversation-aware frontend. 2-user prod smoke GREEN; 3rd-user/group smoke + custom SMTP deferred (Supabase built-in email caps magic links ~2/hr — also a real production blocker, logged in parking-lot). Migrations-list statuses for 016–019 + the "what's in /migrations/" paragraph flipped to prod-applied; added the "Prod cutover — Phase 3 EXECUTED 2026-06-18" §3 notes. See decisions.md/verification.md 2026-06-18. Prior 2026-06-12: migration 016 — FK-cascade drift fix: `message_translations.message_id → messages(id)` was ON DELETE CASCADE on prod but NO ACTION on staging, because migration 000's hand-reconstruction of the base tables dropped the clause the Studio-UI-built prod actually carried. 016 re-adds CASCADE on both environments + corrects 000 so fresh builds stay right. A full FK/default/constraint audit of the three 000-era tables found this the **only** drift. Independent of the Phase 3 conversations work — ships first; the two Phase 3 specs renumbered to migrations 017 (Spec 6 schema) / 018 (Spec 7 messages RLS). See decisions.md 2026-06-12 "FK drift: message_translations → messages cascade". Prior, 2026-06-11: migration 013 — Phase 2 Step 7 data deletion / GDPR Right to Erasure: net-new `data_deletion_requests` table + RLS + 6 RPCs (`request_account_deletion`, `cancel_account_deletion`, `list_due_deletion_requests`, `claim_deletion_request`, `complete_deletion_request`); two-phase soft-delete → 30-day grace → daily cron hard-delete via `server/lib/deletion.js` + `api/v1/jobs/deletion.js` (second Vercel cron, 09:00 UTC). **Gate PASSED on staging — 37/37 GREEN** (`scripts/deletion-gate-test.mjs`; first run 5/15 before 013 was applied). 007–013 staging-only; prod replay pending the Phase 2 cutover. Same-day prior: migration 012 **gate PASSED on staging — 19/19 GREEN** (first run 18/19; a dry-run counter bug in `server/lib/abandonment.js` was fixed — increments moved inside the `if (!dryRun)` guards — and the gate summary wording clarified; prod replay of 012 pending the Phase 2 cutover after Step 7). Prior 2026-06-10: migration 012 added — Phase 2 Step 6 abandonment + abuse monitoring: two service_role-only `SECURITY DEFINER` helpers, **written, gate pending on staging**; 007–012 flagged staging-only (prod replay pending the Phase 2 cutover, which lands after Step 7). Earlier same-day: 011 Step 5 social graph **gate PASSED 40/40**; Step 4 gate re-passed 22/22 after the 011 block-filter amend; 010 Step 4 discovery RPCs; 005–008 list, the `nonbinary` gender-enum regression in 008, post-008 test-user note.)
 
 **Prior update:** 2026-06-09 (added §6 "Trust & safety / identity policy review" ritual pointing at the new policies.md review cadence — start of each phase + quarterly, in sync with lib/policies.js and tenants.dm_initiation_policy)
 
@@ -127,6 +127,69 @@ Set up 2026-05-18, pulled forward from Phase 2 to give Hermes (and us) a safe ta
 - Vercel's Preview environment has `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `OPENAI_API_KEY` set as Project-scoped env vars pointing at staging. Vercel applies them at build time to any Preview deployment.
 - Production env vars are untouched and continue pointing at prod Supabase.
 - A push to any branch other than `main` triggers a Preview build using the staging values. A merge to `main` triggers a Production build using the prod values. The branch determines which database the deploy talks to.
+
+### Git & deploy: staging vs prod — command-line runbook
+
+> Plain-English version for driving deploys from the terminal. Added 2026-06-23 after an accidental commit+push straight to `main` shipped to prod. **The one rule that prevents that: `main` IS production. Anything you push to `main` goes live. So do your work on a branch first, and only merge to `main` when you mean to ship.**
+
+A *branch* is just a named, parallel copy of the code you can change without touching `main`. Pushing a branch deploys it to **staging** (a Preview URL on the staging database); merging that branch into `main` deploys it to **production**.
+
+**Always check where you are before you commit:**
+
+```bash
+git branch --show-current   # which branch am I on? If it says "main", STOP — make a branch first.
+git status                  # what's changed / staged?
+```
+
+**1. Start clean and make a branch (do this before editing):**
+
+```bash
+git checkout main
+git pull --ff-only          # get the latest main (fetch + fast-forward; fails loudly if histories diverged)
+git checkout -b my-change   # create + switch to a new branch; name it for the change, e.g. phase2-1-token-auth
+```
+
+**2. Make your edits** (in Cursor/Cowork), then save them to the branch:
+
+```bash
+git add -A                  # stage every change
+git commit -m "short description of the change"
+git push -u origin my-change   # push the branch to GitHub (-u links it so future pushes are just `git push`)
+```
+
+This triggers a **Vercel Preview** build against **staging**. Find the Preview URL in the Vercel dashboard → Deployments (or in the GitHub branch/PR). Test there.
+
+**3. Ship to production** once staging looks good. Two options:
+
+- **Via GitHub (recommended — gives a review step):** on github.com, open a Pull Request from `my-change` → `main`, look over the diff, click **Merge**. Vercel auto-deploys `main` to prod.
+- **Via terminal:**
+
+  ```bash
+  git checkout main
+  git pull --ff-only
+  git merge my-change
+  git push                  # THIS is the moment it goes to production
+  ```
+
+**Schema changes are separate.** Deploying code does **not** run database migrations. For any `/migrations/*.sql`, follow the **Migration workflow** below (staging Supabase first, then prod) — the SQL is run by hand in the Supabase SQL editor, independent of the git push.
+
+**Avoiding the accidental-prod-push:**
+- Make `git branch --show-current` a reflex before every commit. If it says `main`, run `git checkout -b some-branch` first.
+- Treat `git push` while on `main` as "deploy to production" — only do it when that's the intent.
+
+**"Oops, I committed/pushed to `main`" recovery:**
+- *Committed but not pushed yet:* move the commit onto a branch and rewind main —
+  ```bash
+  git branch my-change        # save your commit on a new branch
+  git reset --hard origin/main   # rewind local main to the remote (discards the local commit from main)
+  git checkout my-change      # continue on the branch
+  ```
+- *Already pushed to `main` (already live):* the safe undo is a revert commit (doesn't rewrite history) —
+  ```bash
+  git revert <commit-sha>     # creates a new commit that undoes the change
+  git push                    # deploys the revert to prod
+  ```
+  Or, given no users yet, it's often fine to just move forward (as we did 2026-06-23 with the token-auth merge — see decisions.md). Force-pushing/hard-resetting a pushed `main` is possible but riskier; prefer `git revert` unless you know why you need otherwise.
 
 **Migration workflow:**
 1. New schema changes are written as new `.sql` files in `/migrations/` with a sequential number prefix.

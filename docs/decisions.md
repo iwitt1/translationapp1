@@ -35,6 +35,7 @@
 - **Accepted tradeoff:** local verification doesn't instantly notice a just-revoked token — valid until expiry (~1h default). Bounded by keeping access-token lifetime short; a sensitive path could force a network check in the helper later.
 - Closes the `translation_events.user_id = null` gap; the event log is now per-user attributable.
 - Pairs with Phase 2.1 "refresh/rotation verified" (still open) and unblocks the Phase 2.2 SMTP item.
+- **Shipped to prod 2026-06-23 via an accidental merge to `main`** (no staging gate first). Decision: **move forward rather than revert** — there are no users yet, the change only *tightens* the (previously open) endpoints, and verification degrades gracefully (network fallback works without asymmetric keys). Risk accepted; **prod smoke GREEN 2026-06-23** (logged-in send → 200, translation rendered). Enable asymmetric keys on staging→prod as a follow-up perf step. Surfaced the need for a staging-vs-prod deploy runbook (operations.md, follow-up).
 
 **Revisit when:** the B2B API opens (add the API-key path in `authenticateRequest`); multi-tenant lands (move tenant to a JWT claim); or revocation latency becomes a real concern (add a targeted network check).
 
