@@ -4,6 +4,7 @@ import cors from 'cors';
 import { buildMessages, PROMPT_VERSION } from '../lib/translatePrompt.js';
 import { logTranslationEvent } from './lib/events.js';
 import { inferProfile } from './lib/inferProfile.js';
+import { requireAuth } from './lib/auth.js';
 
 dotenv.config();
 if (!process.env.OPENAI_API_KEY) {
@@ -30,6 +31,10 @@ app.get('/api/health', (req, res) => {
 ========================================================
 */
 app.post('/api/v1/translate', async (req, res) => {
+  // Every call (including detect) requires a valid user token.
+  const principal = await requireAuth(req, res);
+  if (!principal) return; // 401/403 already sent
+
   try {
     const {
       text,
@@ -110,12 +115,13 @@ app.post('/api/v1/translate', async (req, res) => {
     // ── Event log (non-blocking) ───────────────────────────────────────────
     // was_cached: hardcoded false — no cache check exists in this path yet.
     // Known gap: update when message_translations cache is wired.
-    // tenant_id: chat-app tenant UUID (hardcoded until multi-tenant routing exists).
-    // user_id: not available in request body — null until auth is threaded through.
+    // user_id: now the verified token's user (was null until Phase 2.1 token auth).
+    // tenant_id: sole-tenant constant (correct today); moves to a JWT claim at
+    // multi-tenant. (decisions.md 2026-06-23 "Token auth on backend API calls".)
     logTranslationEvent({
       tenant_id: '00000000-0000-0000-0000-000000000001',
       task_id: null,
-      user_id: null,
+      user_id: principal.userId,
       target_language: targetLanguage ?? 'detect',
       was_cached: false,
       model_used: 'gpt-4o-mini',
@@ -152,6 +158,10 @@ atomically (SELECT ... FOR UPDATE). Replaces the dead client-side applyInference
 path that RLS blocked. See server/lib/inferProfile.js.
 */
 app.post('/api/v1/infer-profile', async (req, res) => {
+  // Login required (trust boundary in inferProfile handles target resolution).
+  const principal = await requireAuth(req, res);
+  if (!principal) return; // 401/403 already sent
+
   try {
     const { message_id, inferences, detected_language } = req.body;
 

@@ -16,6 +16,30 @@
 
 ---
 
+## 2026-06-23 — Token auth on backend API calls (Phase 2.1)
+
+**Decision:** Require a valid Supabase user token on every backend engine call (`/api/v1/translate` incl. detect, `/api/v1/infer-profile`), in both the Vercel handlers and the local Express mirror. Verification goes through one helper — `server/lib/auth.js` `authenticateRequest(req)` → `{ userId }` — that verifies the JWT with `supabase.auth.getClaims()` using the **anon** key (`VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`), not the service-role key. The three frontend call sites route through a new `apiFetch()` wrapper in `src/lib/translation.js` that attaches the session access token. `translation_events.user_id` (was hardcoded `null`) now comes from the verified principal; `tenant_id` stays the sole-tenant constant (already correct).
+
+**Context:** Phase 2 shipped RLS (which protects the *database*) but never added auth on the *API endpoints* — they were callable by anyone, with `user_id` unthreaded (architecture.md §8/§10 listed token-on-API as target state). Open endpoints mean anyone can burn OpenAI spend via translate, and the inference endpoint was fully anonymous. This is the Phase 2.1 lead item and a hard prerequisite for the Phase 2.2 SMTP work (which widens signup access).
+
+**Alternatives considered:**
+- *Verification method — getClaims/JWKS (local) vs getUser (network) vs raw JWT-secret verify.* Chose `getClaims()`: it verifies locally against the project JWKS when asymmetric signing keys are enabled (no per-call network hop — the scale-correct path for the future B2B engine), and falls back to network verification on the legacy symmetric secret with the *same* call site. getUser() adds a network hop per call (rejected for the scale story); hand-rolling JWT verification violates the "no hand-rolled crypto" principle. Isaac's steer was explicitly "best fast+secure blend at scale."
+- *Credentials — anon key vs service-role key.* Chose the **anon** key (`VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`). `getClaims()` needs only the project URL (the JWKS endpoint is public) + any apikey, so the least-privilege anon key suffices and the full-access service-role key stays off the API hot path — consistent with the scoped-role / not-BYPASSRLS posture (decisions.md 2026-06-11). **An earlier draft wrongly used `SUPABASE_SERVICE_ROLE_KEY` and assumed it was set in Vercel Preview; it is not — it was only ever set in Production for the crons (operations.md 2026-06-11). Corrected 2026-06-23 after Isaac verified the Preview env.**
+- *Inline check per handler vs a shared helper.* Chose the helper — it's the single seam where an external customer's API-key path slots in later (additive), per the "build the B2B seam now" rule.
+- *Inference endpoint strictness — login-only vs login + conversation membership.* Chose login-only: the existing message-derived trust boundary (server resolves the real sender from `message_id`) already prevents targeting another user's profile, so login is sufficient to close the open-door. Membership was a cheap defense-in-depth option (`is_active_member()` exists) but adds little given the trust boundary; deferred.
+- *Tenant source — profiles lookup vs hardcoded constant vs JWT claim.* Chose to **not resolve tenant in the helper** — return only `userId` and keep the sole-tenant constant in the handlers (correct today). A `profiles` lookup would have required a privileged key (rejected — see Credentials) or a per-call RLS read (a network hop that defeats the point of local verification). The multi-tenant-correct path is a JWT claim via a Supabase access-token auth hook — no lookup, no privileged key — added when multi-tenant lands.
+
+**Implications:**
+- **Prerequisite (Isaac, config — staging first):** enable Supabase **asymmetric JWT signing keys** so `getClaims()` verifies locally. The code works before the toggle (network fallback) but only gets the fast/local path after. This is config state outside `/migrations/` (parking-lot "Other config state lives outside /migrations/").
+- **No new secret, no new Vercel env var:** the helper uses `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`, already present in both Vercel Preview and Production. (Server-side these are plain `process.env` values; the `VITE_` prefix only affects Vite's client bundling. The anon key is non-secret by design.) **Local dev** needs those two in `server/.env` (previously only `OPENAI_API_KEY`), plus a way to mint a token, to exercise the endpoints.
+- **Accepted tradeoff:** local verification doesn't instantly notice a just-revoked token — valid until expiry (~1h default). Bounded by keeping access-token lifetime short; a sensitive path could force a network check in the helper later.
+- Closes the `translation_events.user_id = null` gap; the event log is now per-user attributable.
+- Pairs with Phase 2.1 "refresh/rotation verified" (still open) and unblocks the Phase 2.2 SMTP item.
+
+**Revisit when:** the B2B API opens (add the API-key path in `authenticateRequest`); multi-tenant lands (move tenant to a JWT claim); or revocation latency becomes a real concern (add a targeted network check).
+
+---
+
 ## 2026-06-23 — Sending domain now, rebrand later (no brand name yet)
 
 **Decision:** When the Phase 2.2 custom-SMTP work lands, set up email on a **cheap neutral/holding domain now** rather than waiting for a final brand, send from a **dedicated subdomain** (e.g. `mail.<domain>`), and keep every domain reference in **config, not code** — so an eventual rebrand to the real brand domain is a settings change, not a migration.

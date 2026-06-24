@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { CHAT_APP_TENANT_ID } from '../lib/config';
 import { PROMPT_VERSION } from '../../lib/translatePrompt.js';
-import { API_URL, INFER_API_URL, PROFILE_INFERENCE_ENABLED, normalizeLang } from '../lib/translation';
+import { API_URL, INFER_API_URL, PROFILE_INFERENCE_ENABLED, normalizeLang, apiFetch } from '../lib/translation';
 
 /*
 ========================================================
@@ -110,17 +110,13 @@ export default function MessageBubble({
           : null;
 
         // ── 4. Translate ──────────────────────────────────────────────────
-        const res = await fetch(API_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            text: message.original_text,
-            targetLanguage,
-            mode: 'translate',
-            context_type: contextType,
-            context,
-            history,
-          }),
+        const res = await apiFetch(API_URL, {
+          text: message.original_text,
+          targetLanguage,
+          mode: 'translate',
+          context_type: contextType,
+          context,
+          history,
         });
 
         if (cancelled) return;
@@ -157,14 +153,10 @@ export default function MessageBubble({
 
         // ── 6. Apply inferences to sender's profile (server-side) ─────────
         if (PROFILE_INFERENCE_ENABLED && result?.inferences) {
-          fetch(INFER_API_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              message_id: message.id,
-              inferences: result.inferences,
-              detected_language: normalizeLang(result.detected_language),
-            }),
+          apiFetch(INFER_API_URL, {
+            message_id: message.id,
+            inferences: result.inferences,
+            detected_language: normalizeLang(result.detected_language),
           }).catch((err) => console.error('infer-profile POST failed:', err));
         }
       } catch (err) {

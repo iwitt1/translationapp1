@@ -7,6 +7,8 @@
 // or its language-code quirks lives here; components import from here.
 // ============================================================================
 
+import { supabase } from './supabase';
+
 /*
 🌐 API endpoints (LOCAL + PROD SAFE).
 In dev the Vite server proxies nothing — talk to the local engine on :3001.
@@ -49,16 +51,33 @@ export function normalizeLang(lang) {
   return LANG_NAME_TO_CODE[lower] ?? lower;
 }
 
+/*
+🔐 Authenticated POST to the engine API.
+The backend now requires a valid user token on every call (Phase 2.1). This
+wrapper attaches the current Supabase session's access token as a Bearer header.
+Centralised here so token handling lives in one place rather than at each call
+site. If there's no session the call goes out tokenless and the backend returns
+401 — the correct behaviour (you must be signed in to translate).
+*/
+export async function apiFetch(url, body) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  return fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 // Detect the language of outgoing text via the engine's detect mode. Returns a
 // normalised BCP-47 code if confident enough, else the provided fallback.
 // Never throws — detection is best-effort and must not block a send.
 export async function detectSourceLanguage(text, fallback = 'unknown') {
   try {
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, mode: 'detect' }),
-    });
+    const res = await apiFetch(API_URL, { text, mode: 'detect' });
     if (!res.ok) return fallback;
     const detection = await res.json();
     const lang = normalizeLang(detection?.detected_language);

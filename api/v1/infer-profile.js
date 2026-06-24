@@ -1,4 +1,5 @@
 import { inferProfile } from '../../server/lib/inferProfile.js';
+import { requireAuth } from '../../server/lib/auth.js';
 
 /**
  * POST /api/v1/infer-profile — Vercel serverless handler.
@@ -16,6 +17,13 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  // Login required. We don't need the principal beyond this — the message-derived
+  // trust boundary (server resolves the real sender from message_id) is what
+  // prevents targeting another user's profile, so a valid login is sufficient.
+  // (decisions.md 2026-06-23 "Token auth on backend API calls".)
+  const principal = await requireAuth(req, res);
+  if (!principal) return; // 401/403 already sent
 
   try {
     const { message_id, inferences, detected_language } = req.body;

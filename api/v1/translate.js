@@ -1,10 +1,15 @@
 import { buildMessages, PROMPT_VERSION } from '../../lib/translatePrompt.js';
 import { logTranslationEvent } from '../../server/lib/events.js';
+import { requireAuth } from '../../server/lib/auth.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  // Every call (including detect) requires a valid user token.
+  const principal = await requireAuth(req, res);
+  if (!principal) return; // 401/403 already sent
 
   try {
     const {
@@ -75,12 +80,12 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'Bad AI response' });
     }
 
-    // ── Event log (non-blocking) ───────────────────────────────────────────
+    // ── Event log (awaited on Vercel serverless) ───────────────────────────
     // was_cached: hardcoded false — no cache check exists in this path yet.
     // Known gap: update when message_translations cache is wired (Spec 4b report §known-gaps).
-    // tenant_id: chat-app tenant UUID (hardcoded until multi-tenant routing exists).
-    // user_id: not available in request body — null until auth is threaded through.
-    // ── Event log (awaited on Vercel serverless) ───────────────────────────
+    // user_id: now the verified token's user (was null until Phase 2.1 token auth).
+    // tenant_id: sole-tenant constant (correct today); moves to a JWT claim at
+    // multi-tenant. (decisions.md 2026-06-23 "Token auth on backend API calls".)
     // Vercel freezes the process the moment res.json() is called, so a
     // fire-and-forget write never completes. We await here to ensure the row
     // lands before the response is sent. logTranslationEvent() swallows its
@@ -88,7 +93,7 @@ export default async function handler(req, res) {
     await logTranslationEvent({
       tenant_id: '00000000-0000-0000-0000-000000000001',
       task_id: null,
-      user_id: null,
+      user_id: principal.userId,
       target_language: targetLanguage ?? 'detect',
       was_cached: false,
       model_used: 'gpt-4o-mini',

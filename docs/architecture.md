@@ -809,6 +809,7 @@ Fine-tuning takes a base model and trains it further on our corrections data. Be
 - OpenAI API key lives in backend env vars only; frontend never sees it.
 - Frontend never calls OpenAI directly.
 - Supabase anon key is in the frontend bundle (by design — that's how a browser app talks to Supabase).
+- **API token auth (Phase 2.1 — BUILT 2026-06-23 on branch, pending staging gate + merge).** Every backend engine call (`/api/v1/translate` incl. detect, `/api/v1/infer-profile`) requires a valid Supabase user JWT, verified in `server/lib/auth.js` (`authenticateRequest` → `{userId}`) via `getClaims()` — local JWKS verification once asymmetric signing keys are enabled, network fallback until then. Verification uses the **anon** key (`VITE_SUPABASE_*`), not the service-role key — least privilege, no privileged credential on the hot path, no new Vercel secret. RLS protects the *database*; this protects the *endpoints* (an open translate endpoint = anyone burning OpenAI spend). Inference is login-only (the message-derived trust boundary already prevents cross-user targeting). `translation_events.user_id` now records the verified user (was null); `tenant_id` stays the sole-tenant constant (moves to a JWT claim at multi-tenant). The helper is the single seam where the future B2B API-key path slots in. See decisions.md 2026-06-23 "Token auth on backend API calls".
 - **Prod: RLS live.** Migrations 007/008 (RLS on identity/content tables) were replayed to prod in the Phase 2 cutover (2026-06-11); migration 018 moved `messages`/`message_translations` from tenant-scoped to membership-scoped on prod in the Phase 3 cutover (2026-06-18). The anon key is now safe to ship — RLS is the boundary.
 - **Staging: RLS built and verified.** Migrations 007/008 enable RLS on all identity/content tables; the Step 3 adversarial gate (`scripts/rls-adversarial-test.mjs`) proves cross-user and cross-tenant isolation as real authenticated users.
 - **Column-level write guard (007, OPUS-FIX #2).** RLS scopes *rows*, not *columns* — so even with a correct row policy, a `authenticated` user could PostgREST-PATCH `is_verified=true` on their own row to self-verify. Mitigation: `REVOKE UPDATE ON profiles FROM authenticated; GRANT UPDATE (display_name) ON profiles TO authenticated;`. Everything else on `profiles` (`status`, `username`, `is_verified`, …) is mutated only via `SECURITY DEFINER` RPCs (e.g. `complete_onboarding`, `change_username`). The Step 3 gate includes a self-write escalation negative test for exactly this.
@@ -875,6 +876,17 @@ Safe to ship to the browser *once RLS is enabled*. Until then, treat the live UR
 
 The OpenAI API key never leaves the backend. Frontend never calls OpenAI directly.
 
+**API token auth (added 2026-06-23, Phase 2.1)** — `server/lib/auth.js` verifies user JWTs via
+`getClaims()`. It uses the **anon** key — `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` — which is
+**already present in both Vercel Preview and Production**, so **no new Vercel env var** and no
+service-role key on the hot path. (Server-side these are plain `process.env` values; the `VITE_`
+prefix only affects Vite's client bundling.) **Local dev** now needs those two in `server/.env`
+(previously only `OPENAI_API_KEY`). Plus a one-time Supabase config step: enable **asymmetric JWT
+signing keys** (Project Settings → JWT Keys → Migrate JWT secret → Rotate keys; do **not** revoke
+the legacy secret — that would force disabling the `anon`/`service_role` keys) so `getClaims()`
+verifies locally; verification works via network fallback until then. Config state outside
+`/migrations/` — see parking-lot.md "Other config state lives outside /migrations/".
+
 **Step 6 abandonment cron (added 2026-06-10)** — the `/api/v1/jobs/abandonment` route needs these
 backend env vars (Preview → staging, Production → prod), none `VITE_`-prefixed:
 - `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` — service-role client for the admin delete + the two Step 6 RPCs. The service-role key is a full-access secret; never ship it to the browser.
@@ -923,6 +935,7 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │   ├── lib/
 │   │   ├── inferProfile.js   Inference→profile update logic (explicit-wins, confidence gate)
 │   │   ├── events.js         user_profile_events writer
+│   │   ├── auth.js           Request auth (Phase 2.1): verify user JWT via getClaims() (anon key) -> {userId}; B2B API-key seam
 │   │   ├── abandonment.js    Step 6 abandonment sweep (delete aged-pending, release username, HMAC)
 │   │   └── deletion.js       Step 7 deletion sweep (claim→hash→admin-delete→complete; SET-NULL retain)
 │   └── .env                  Local OPENAI_API_KEY (not committed)

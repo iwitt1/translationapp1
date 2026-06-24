@@ -304,7 +304,7 @@ The `messages`-on-realtime-publication item was originally configured via the Su
 - RLS policies (none exist yet, but Phase 2 introduces many — they MUST live in migrations from day one)
 - Database functions / triggers (none currently expected, but worth checking)
 - Storage bucket policies (no Storage usage yet)
-- Auth provider config (will become relevant in Phase 2)
+- Auth provider config (will become relevant in Phase 2) — **now concrete:** Phase 2.1 token auth requires **asymmetric JWT signing keys** enabled in Supabase Auth (a UI/config setting, not a migration). Enable on staging then prod; record the date when done. Reversible. (decisions.md 2026-06-23 "Token auth on backend API calls".)
 - Edge functions (none currently)
 - Extensions enabled (e.g. `pg_cron`, `uuid-ossp` — defaults are usually safe but worth confirming)
 
