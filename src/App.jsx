@@ -142,13 +142,18 @@ export default function App() {
   }
 
   async function handleSignOut() {
+    // Confirmation guard — a mis-tap (esp. on mobile, where this sits near the
+    // conversation kebab) shouldn't force a logout + magic-link round-trip.
+    // Cheap first step; relocating sign-out into a menu is still deferred
+    // (roadmap Phase 2.2 / parking-lot "Sign-out control").
+    if (!window.confirm('Sign out of jistchat?')) return;
     await supabase.auth.signOut();
   }
 
   /* ====================== CONVERSATIONS ====================== */
   // Load + enrich the conversation list. Each row gets a display name, member
   // names, a snippet from the latest message, and an activity timestamp.
-  async function loadConversations() {
+  async function loadConversations(keepId = activeId) {
     const { data: convs, error } = await listConversations();
     if (error) { console.error('listConversations error:', error); return; }
     if (!convs?.length) { setConversations([]); return; }
@@ -182,12 +187,21 @@ export default function App() {
         memberNames,
         snippet: last?.original_text || '',
         lastActivity: last?.created_at || c.updated_at,
+        hasMessages: !!last,
         unread: 0,
       };
     }));
 
-    enriched.sort((a, b) => new Date(b.lastActivity) - new Date(a.lastActivity));
-    setConversations(enriched);
+    // Hide empty "ghost" conversations (created but no message sent yet) so they
+    // don't clutter the other member's list — EXCEPT the one the user is actively
+    // viewing (keepId), so a creator can still type into a fresh thread. Once a
+    // message exists it reappears for everyone on the next load. (Surfacing a
+    // brand-new conversation via realtime before a reload is a separate parked
+    // gap — parking-lot "No conversation-list realtime".)
+    const visible = enriched
+      .filter((c) => c.hasMessages || c.id === keepId)
+      .sort((a, b) => new Date(b.lastActivity) - new Date(a.lastActivity));
+    setConversations(visible);
   }
 
   // On entering chat: load conversations, redeem a pending ?join invite, and open
@@ -337,7 +351,7 @@ export default function App() {
     const { data: newId, error } = await createConversation({ kind, memberIds, title, contextType });
     if (error) throw error;
     setShowNew(false);
-    await loadConversations();
+    await loadConversations(newId); // keep the just-created (still empty) thread visible for the creator
     if (newId) openConversation(newId);
   }
 
