@@ -16,6 +16,27 @@
 
 ---
 
+## 2026-06-23 — Public demo on jistchat.com: domain, site structure, and case-study landing (Phase 2.2/2.3 plan)
+
+**Decision:** Get the app to a shareable-with-employers state on **`jistchat.com`**, structured as a **case-study/landing page at the root** (`jistchat.com`) with the **chat app on a subdomain** (`app.jistchat.com`), and write the case study at a **narrative + highlights** depth for a PM/hiring audience. Demo-readiness bar = "**demo-polished**": working email signup (no rate cap) + persistent login + a sign-out confirmation + hiding empty "ghost" conversations. Planning only for now (time-constrained); no build changes yet.
+
+**Context:** Isaac needs to (1) put the chat on a real domain so magic-link email works without the ~2/hr cap and it looks legitimate, (2) reach a state where interviewers/employers can create accounts and try it, and (3) have a webpage explaining what he built and how (incl. the AI/agent-driven process). These are time-sensitive for interviews.
+
+**Alternatives considered:**
+- *Domain choice.* `jistchat.com` chosen as a cheap, disposable placeholder — the concrete instance of the "Sending domain now, rebrand later" decision (2026-06-23). Waiting for a final brand would block sharing for no benefit; a domain change later is config, not a rewrite.
+- *Site structure — landing at root + app on subdomain* vs *app at root + write-up separate* vs *app only.* Chose **landing at root, app at `app.jistchat.com`**: a single link (`jistchat.com`) leads with the story and a "Try the live demo" button, which is the strongest artifact to share with employers; it also keeps the marketing page and the app as independent deploys (the SPA stays clean, the landing page can be a separate static project). Trade-off: one more subdomain + Supabase Auth Site-URL/redirect update pointing at `app.jistchat.com`.
+- *Write-up depth — narrative + highlights* vs deeper-technical vs light-teaser. Chose narrative + highlights: readable for a PM/hiring audience, showing the trojan-horse strategy, the phased build, and the AI/agent workflow, with a few selected technical highlights (architecture sketch, key decisions) — not a spec dump.
+- *Demo bar — demo-polished* vs functional-fastest vs polished+. Chose demo-polished: the small, high-impact fixes (persistent login, sign-out confirm, hide ghost conversations) that shape an evaluator's first impression, without the heavier Phase 3 UX follow-ups.
+
+**Implications:**
+- Maps to **Phase 2.2** (domain + SMTP + persistent login + sign-out + ghost-conversation hide) and a new **Phase 2.3** (case-study/landing site). Token auth (2.1) done is the prerequisite that clears widening signup.
+- Execution touches config + small isolated frontend tweaks + a new standalone landing page — no changes to the core app architecture.
+- Supabase Auth **Site URL / redirect URLs** must move to `https://app.jistchat.com` when the domain lands (same dashboard-only step that bit the Phase 2 cutover). Custom SMTP sends from `mail.jistchat.com`.
+
+**Revisit when:** a real brand is chosen (rebrand `jistchat.com` → new domain as a config migration per "Sending domain now, rebrand later"); or the demo graduates into a real product and the landing/app split needs revisiting.
+
+---
+
 ## 2026-06-23 — Token auth on backend API calls (Phase 2.1)
 
 **Decision:** Require a valid Supabase user token on every backend engine call (`/api/v1/translate` incl. detect, `/api/v1/infer-profile`), in both the Vercel handlers and the local Express mirror. Verification goes through one helper — `server/lib/auth.js` `authenticateRequest(req)` → `{ userId }` — that verifies the JWT with `supabase.auth.getClaims()` using the **anon** key (`VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`), not the service-role key. The three frontend call sites route through a new `apiFetch()` wrapper in `src/lib/translation.js` that attaches the session access token. `translation_events.user_id` (was hardcoded `null`) now comes from the verified principal; `tenant_id` stays the sole-tenant constant (already correct).
@@ -42,6 +63,8 @@
 ---
 
 ## 2026-06-23 — Sending domain now, rebrand later (no brand name yet)
+
+> **Status 2026-06-23:** Executed — `jistchat.com` registered; app live at `app.jistchat.com` (valid SSL, magic-link round-trip verified); transactional email via **Resend** verified on the domain, Supabase SMTP configured + rate limit raised. The built-in ~2/hr magic-link cap is gone; external signup works. Also **unblocks the parked re-prompt / CRM email** (a sending domain now exists).
 
 **Decision:** When the Phase 2.2 custom-SMTP work lands, set up email on a **cheap neutral/holding domain now** rather than waiting for a final brand, send from a **dedicated subdomain** (e.g. `mail.<domain>`), and keep every domain reference in **config, not code** — so an eventual rebrand to the real brand domain is a settings change, not a migration.
 

@@ -1717,6 +1717,20 @@ The core gate: **a translated message from another user causes that sender's pro
 
 ---
 
+## Phase 2.2 — Public demo readiness (domain + email + persistent login) — verified 2026-06-23
+
+**What shipped (config, no app-code change):** the app on a real domain, email off the built-in rate cap, and persistent sessions. This is the "shareable with interviewers" milestone (decisions.md 2026-06-23 "Public demo on jistchat.com").
+
+- [x] **Domain** — `https://app.jistchat.com` loads with valid SSL; Supabase Auth Site URL + redirect updated; magic-link round-trip verified landing on `app.jistchat.com`.
+- [x] **Email** — Resend on `jistchat.com`: DNS verified, Supabase SMTP configured, Auth email rate limit raised; test magic link delivered from the domain. *Deliverability watch:* on a brand-new sending domain, confirm the first external sends (Gmail/Outlook) land in the inbox, not spam; if not, check the DMARC record.
+- [x] **Persistent login** — sessions survive refresh / new tab via Supabase `persistSession` + `autoRefreshToken` defaults (no build).
+- [ ] **Sign-out confirmation** and [ ] **hide empty "ghost" conversations** — deferred (small frontend polish; roadmap Phase 2.2).
+- [ ] **Share-ready smoke** — sign up 3+ external accounts, run direct + group flows on prod (the flows the Phase 3 cutover deferred behind the old email cap).
+
+See roadmap.md Phase 2.2, decisions.md 2026-06-23, operations.md (topology + deploy runbook).
+
+---
+
 ## How to use this doc
 
 - Before shipping a feature, draft its verification section first. Easier than scrambling after.

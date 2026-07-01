@@ -119,9 +119,10 @@ For most changes:
 Set up 2026-05-18, pulled forward from Phase 2 to give Hermes (and us) a safe target to deploy and validate against before anything touches production. See decisions.md.
 
 **Topology:**
-- **Production:** Supabase project `translationapp1` + Vercel production environment. Deploys from `main` branch.
+- **Production:** Supabase project `translationapp1` + Vercel production environment. Deploys from `main` branch. **Live at `https://app.jistchat.com`** (custom domain added 2026-06-23; Supabase Auth Site URL + redirect updated to match; the `translationapp1.vercel.app` URL still resolves). Root `jistchat.com` reserved for the Phase 2.3 case-study landing page.
 - **Staging:** Supabase project `translationapp1-staging` (same region as prod, free tier) + Vercel Preview environment. Auto-deploys from any branch other than `main`.
 - **Local dev:** Unchanged. Your local Express server (`server/index.js`) and frontend dev (`npm run dev`) still talk to prod Supabase via the root `.env`. The local workflow isn't routed through staging.
+- **Email (magic links):** via **Resend**, sending from `jistchat.com`, configured in Supabase Auth → SMTP (2026-06-23). Replaces the built-in ~2/hr-capped sender; the rate limit was raised. SMTP creds live in the Supabase dashboard, not the repo. This is the unlock for real external signups.
 
 **How env-var routing works:**
 - Vercel's Preview environment has `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `OPENAI_API_KEY` set as Project-scoped env vars pointing at staging. Vercel applies them at build time to any Preview deployment.

@@ -2,6 +2,8 @@
 
 Real-time multilingual chat app backed by an LLM-powered contextual translation API. The chat app is the first-party client of its own translation API; the long-term business is the API itself (sold to dating apps, gaming platforms, legal/immigration tools, healthcare, support SaaS).
 
+**Live:** https://app.jistchat.com — sign in by email magic link (open for account creation).
+
 ## Project documentation
 
 The substantive documentation lives in [`/docs/`](docs/). Read these before touching the codebase:
@@ -51,9 +53,16 @@ Create `server/.env` for the local backend:
 
 ```
 OPENAI_API_KEY=sk-...
+# Required as of Phase 2.1 — the backend verifies user tokens (server/lib/auth.js):
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
+# Optional — enables server-side profile inference (no-ops if unset):
+# DATABASE_URL_PROFILE_WRITER=postgres://...
 ```
 
 Neither file is committed. Production secrets are set in Vercel's environment variables panel.
+
+> **Note (Phase 2.1):** every backend API call (`/api/v1/translate`, `/api/v1/infer-profile`) now requires a valid Supabase user token, so you must be signed in for translation to work — locally and in prod. See [`docs/architecture.md`](docs/architecture.md) §10.
 
 ### Run it
 
@@ -77,11 +86,13 @@ Vite serves the frontend at `http://localhost:5173` (or similar). The frontend a
 
 ## Deployment
 
-Push to `main`. Vercel auto-deploys both the Vite build (frontend) and the `/api/` folder (serverless functions). No manual deploy step.
+Push to `main`. Vercel auto-deploys both the Vite build (frontend) and the `/api/` folder (serverless functions). No manual deploy step. Production is served at **`https://app.jistchat.com`** (Vercel custom domain). Transactional/auth email (magic links) is sent via **Resend** from `jistchat.com`, configured in Supabase Auth → SMTP.
+
+For the staging-vs-prod git workflow (branch → Vercel Preview vs merge-to-`main` → prod), and how to avoid an accidental push to `main`, see the **"Git & deploy: staging vs prod"** runbook in [`docs/operations.md`](docs/operations.md) §3.
 
 ## Status
 
-Phase 2 (multi-tenant identity + social graph) shipped; identity cutover GREEN 2026-06-11. Phase 1.5 (Hermes Agent) online. Staging environment built 2026-05-18. Phase 3 (real conversation model) **shipped to prod 2026-06-18** — migrations 016–019 + the conversation-aware frontend; 2-user prod smoke GREEN (3rd-user/group flows + custom SMTP deferred — Supabase built-in email caps magic links ~2/hr). See Specs 6 & 7. See [`docs/roadmap.md`](docs/roadmap.md) for what's next and [`docs/architecture.md`](docs/architecture.md) §2 for what currently works versus what doesn't.
+Phase 2 (multi-tenant identity + social graph) shipped; identity cutover GREEN 2026-06-11. Phase 1.5 (Hermes Agent) online. Staging environment built 2026-05-18. Phase 3 (real conversation model) **shipped to prod 2026-06-18** — migrations 016–019 + the conversation-aware frontend. **Phase 2.1 (auth hardening): token auth on all backend API calls — DONE, prod-verified 2026-06-23.** **Phase 2.2 (public demo readiness): live on `app.jistchat.com`, custom email via Resend (magic-link rate cap removed), persistent login — DONE 2026-06-23; the app is open for external account creation.** Remaining before wide sharing: a sign-out confirmation, hiding empty "ghost" conversations, and a 3+-user smoke (all small). Phase 2.3 (case-study landing page at `jistchat.com` root) planned. See [`docs/roadmap.md`](docs/roadmap.md) for what's next and [`docs/architecture.md`](docs/architecture.md) §2 for what currently works versus what doesn't.
 
 ## Repo
 
