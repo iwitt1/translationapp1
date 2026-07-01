@@ -463,13 +463,23 @@ export default function App() {
 
   /* ====================== CHAT ====================== */
   return (
-    <main className="min-h-screen bg-slate-100">
+    <main className="h-screen bg-slate-100 flex flex-col">
       {/* Build marker — git commit hash stamped at deploy time */}
       <div className="fixed bottom-2 left-2 z-50 text-xs text-slate-400 font-mono select-none">
         {__COMMIT_HASH__}
       </div>
 
-      <div className="mx-auto max-w-6xl h-screen md:h-[92vh] md:my-[4vh] md:rounded-2xl md:shadow-xl bg-white overflow-hidden flex">
+      {/* Persistent top app bar (mobile + desktop). Sign-out lives here in its own
+          row, so it can never overlap the conversation list's "+" button. */}
+      <header className="shrink-0 flex items-center justify-between gap-2 px-4 h-12 bg-white border-b border-slate-200">
+        <span className="font-semibold text-slate-800 text-sm">jistchat</span>
+        <div className="flex items-center gap-3 text-xs text-slate-500">
+          <span className="hidden sm:inline truncate max-w-[12rem]">{profile?.display_name}</span>
+          <button onClick={handleSignOut} className="hover:text-slate-800" title="Sign out">Sign out</button>
+        </div>
+      </header>
+
+      <div className="flex-1 min-h-0 w-full max-w-6xl mx-auto bg-white overflow-hidden flex md:my-4 md:rounded-2xl md:shadow-xl">
         <ConversationList
           conversations={conversations}
           activeId={activeId}
@@ -498,12 +508,6 @@ export default function App() {
             Select a conversation, or start a new one.
           </section>
         )}
-      </div>
-
-      {/* signed-in identity + sign out, top-right corner */}
-      <div className="fixed top-3 right-4 z-50 flex items-center gap-2 text-xs text-slate-500">
-        <span className="hidden sm:inline truncate max-w-[12rem]">{profile?.display_name}</span>
-        <button onClick={handleSignOut} className="hover:text-slate-800" title="Sign out">Sign out</button>
       </div>
 
       <NewConversationModal

@@ -1724,7 +1724,7 @@ The core gate: **a translated message from another user causes that sender's pro
 - [x] **Domain** — `https://app.jistchat.com` loads with valid SSL; Supabase Auth Site URL + redirect updated; magic-link round-trip verified landing on `app.jistchat.com`.
 - [x] **Email** — Resend on `jistchat.com`: DNS verified, Supabase SMTP configured, Auth email rate limit raised; test magic link delivered from the domain. *Deliverability watch:* on a brand-new sending domain, confirm the first external sends (Gmail/Outlook) land in the inbox, not spam; if not, check the DMARC record.
 - [x] **Persistent login** — sessions survive refresh / new tab via Supabase `persistSession` + `autoRefreshToken` defaults (no build).
-- [~] **Sign-out confirmation** — BUILT 2026-06-23 (`handleSignOut` now `window.confirm`s first). Pending prod deploy + a quick check that signing out prompts. (Relocate-to-menu + mobile-overlap fix still deferred.)
+- [~] **Sign-out control** — BUILT 2026-06-23: (1) `handleSignOut` now `window.confirm`s first; (2) sign-out relocated into a persistent top app bar (mobile + desktop), fixing the "+"/kebab overlap. Pending prod deploy + checks: signing out prompts a confirm; on a narrow/mobile width the sign-out and the list "+" no longer overlap.
 - [~] **Hide empty "ghost" conversations** — BUILT 2026-06-23 (`loadConversations` filters message-less conversations except the actively-viewed one). Pending prod deploy + check: create a conversation, don't send → the other member doesn't see it on reload; the creator still can while viewing it; it appears for both once a message is sent.
 - [ ] **Share-ready smoke** — sign up 3+ external accounts, run direct + group flows on prod (the flows the Phase 3 cutover deferred behind the old email cap).
 

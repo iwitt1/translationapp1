@@ -97,7 +97,7 @@ A single holding pen for UI/UX adjustments surfaced while designing Phase 2 iden
 - **Trigger:** Phase 2 schema + auth land; UI build is the natural next pass.
 
 ### Sign-out control: relocate to a menu + confirm + fix mobile kebab overlap
-**→ PROMOTED to roadmap.md Phase 2.2 (2026-06-23).** Kept here for the full design detail.
+**→ RESOLVED 2026-06-23** (roadmap Phase 2.2): confirmation guard added + sign-out moved into a persistent top app bar (both viewports), which fixes the mobile overlap directly — chosen over the "relocate into a menu" option. Kept here for history.
 The sign-out button sits exposed in the top-right of the header. Two problems: (1) **bug — on phone widths it overlaps the conversation kebab (⋯) button**, so a tap meant for the overflow menu can hit sign-out and force an unintended logout; (2) it doesn't follow common pattern — destructive/account actions belong tucked into an account or overflow menu, not a one-tap header button.
 - **Minimum first step (cheap, do first):** add a **confirmation prompt** before signing out ("Sign out?") so an accidental tap can't force a logout — this defuses the bug's worst outcome even before the layout is fixed.
 - **Proper fix:** move sign-out into a standard account/avatar menu (or the overflow menu), following best-practice placement, which also resolves the mobile overlap by getting it out of the kebab's tap target.
