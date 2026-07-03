@@ -16,6 +16,28 @@
 
 ---
 
+## 2026-07-02 — Visual brand finalized: violet/teal wave-seam logo + Outfit wordmark
+
+**Decision:** Finalized jistchat's visual identity: a two-color "wave-seam" speech-bubble icon (violet `#7C3AED` / teal `#0D9488`, tints `#EDE9FE` / `#CCFBF1`) whose sinusoidal seam represents two languages converging on shared meaning, paired with an "Outfit" wordmark (black, weight 700, "Jistchat"). Applied to `jistchat-landing.html` (accent palette + header logo lockup, replacing the old plain-text brand span). Source SVGs (`jistchat-logo-violet-teal.svg`, `jistchat-lockup-icon-wordmark.svg`) live in the `Translation App` working folder, outside this repo.
+
+**Context:** The 2026-06-23 "Sending domain now, rebrand later (no brand name yet)" decision treated `jistchat` as a disposable placeholder name/domain pending a possible "real" future brand. This session did the opposite of picking a new name — it invested real, iterative design effort (icon, wordmark, color system) into `jistchat` as it stands. That's worth flagging explicitly rather than letting it happen silently: **is `jistchat` now the permanent product identity, or is this still a placeholder visual system for a name that might still change?** Not resolved here — open question for Isaac.
+
+**Alternatives considered:**
+- *Wait for a permanent name before investing in a logo.* The more conservative option given the 2026-06-23 "no brand name yet" framing; not chosen, since a working visual identity is useful for the case-study site regardless of whether the name is final.
+- *Single-color icon instead of a two-color split.* Tried and rejected across several design rounds — a flat single-color mark didn't carry the "two languages, one meaning" concept as directly as the color-split bubble with a sinusoidal (not straight) seam.
+- *Colored wordmark (violet, or split violet/teal per word) instead of solid black.* Rejected for the primary lockup — black is more flexible across contexts (print, dark backgrounds, embroidery) and doesn't compete visually with the colored icon; the colored/outlined variants were explored and kept as options, not adopted as default.
+
+**Reasoning:** A working visual identity was needed regardless of whether the name is final — the Phase 2.3 case-study landing page (2026-06-23 decision) shouldn't ship with a plain-text logo, and a consistent look is useful for any interim testing/sharing.
+
+**Implications:**
+- `jistchat-landing.html`'s `--accent` / `--accent-soft` changed from indigo (`#6366f1` / `#eef2ff`) to violet/teal (`--accent-2` / `--accent-2-soft` added for the secondary color); any future styling of that page should pull from the new variables, not hardcode the old indigo. Documented in architecture.md §14.
+- The product frontend (`/V1/src`, `tailwind.config.js`) does **not** yet reflect this brand — parked in parking-lot.md (Product features) as its own task, not assumed to happen automatically.
+- If `jistchat` is later replaced as the product name, this visual system (which leans on the specific letterforms and the "jist"/"chat" wordplay explored during design) would need real revisiting, not just a re-skin.
+
+**Revisit when:** Isaac confirms whether `jistchat` is the permanent name (closing the 2026-06-23 open question), or the brand rolls out to the actual product UI (promote the parking-lot item to roadmap.md then).
+
+---
+
 ## 2026-06-23 — Public demo on jistchat.com: domain, site structure, and case-study landing (Phase 2.2/2.3 plan)
 
 **Decision:** Get the app to a shareable-with-employers state on **`jistchat.com`**, structured as a **case-study/landing page at the root** (`jistchat.com`) with the **chat app on a subdomain** (`app.jistchat.com`), and write the case study at a **narrative + highlights** depth for a PM/hiring audience. Demo-readiness bar = "**demo-polished**": working email signup (no rate cap) + persistent login + a sign-out confirmation + hiding empty "ghost" conversations. Planning only for now (time-constrained); no build changes yet.

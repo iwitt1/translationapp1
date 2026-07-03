@@ -1012,7 +1012,16 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 
 ---
 
-## 14. Glossary
+## 14. Brand & visual identity
+
+- **Logo.** A rounded-square "wave-seam" speech-bubble icon split into two colors along a sinusoidal boundary — meant to represent two languages converging on one shared meaning — paired with an "Outfit" wordmark. Source files (`jistchat-logo-violet-teal.svg` icon-only, `jistchat-lockup-icon-wordmark.svg` icon+wordmark) live in the `Translation App` working folder, **not this repo** — not yet resolved whether they should move into `/V1` (see decisions.md 2026-07-02).
+- **Colors.** Primary violet `#7C3AED` (tint `#EDE9FE`), secondary teal `#0D9488` (tint `#CCFBF1`). Applied to `jistchat-landing.html`'s `--accent` / `--accent-soft` / `--accent-2` / `--accent-2-soft` (was indigo `#6366f1` / `#eef2ff`).
+- **Wordmark typeface.** Outfit (Google Fonts), weight 700, solid black fill, ~-0.01em tracking. Loaded on the landing page only.
+- **Status.** Visual identity finalized 2026-07-02, applied to `jistchat-landing.html` only. **Not applied** to the product frontend (`/V1/src`, `tailwind.config.js`) — that rollout is parked, not scheduled (parking-lot.md, Product features).
+
+---
+
+## 15. Glossary
 
 Plain-English definitions for jargon used here. Keeps the door open for non-technical contributors.
 
@@ -1057,7 +1066,7 @@ Plain-English definitions for jargon used here. Keeps the door open for non-tech
 
 ---
 
-## 15. Maintenance rules for this doc
+## 16. Maintenance rules for this doc
 
 - Update this file in the same commit as any architectural change. Doc drift is the failure mode we're explicitly designing against.
 - If a section is wrong, fix it. Don't append a "this is actually different now" caveat.
