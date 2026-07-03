@@ -399,7 +399,7 @@ export default function App() {
           ) : (
             <form onSubmit={handleMagicLink} className="space-y-3">
               <input
-                className="block w-full border border-slate-300 px-3 py-2 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="block w-full border border-slate-300 px-3 py-2 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
                 type="email"
                 placeholder="you@example.com"
                 value={authEmail}
@@ -407,7 +407,7 @@ export default function App() {
                 autoFocus
               />
               {authError && <p className="text-xs text-rose-500">{authError}</p>}
-              <button type="submit" className="w-full bg-indigo-600 text-white px-4 py-2 rounded-xl text-sm hover:bg-indigo-700">
+              <button type="submit" className="w-full bg-violet-600 text-white px-4 py-2 rounded-xl text-sm hover:bg-violet-700">
                 Send sign-in link
               </button>
             </form>
@@ -426,7 +426,7 @@ export default function App() {
             <div>
               <label className="block text-xs text-slate-600 mb-1">Display name</label>
               <input
-                className="block w-full border border-slate-300 px-3 py-2 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="block w-full border border-slate-300 px-3 py-2 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
                 type="text"
                 placeholder="How others will see you"
                 value={onboardingName}
@@ -438,7 +438,7 @@ export default function App() {
             <div>
               <label className="block text-xs text-slate-600 mb-1">Your language</label>
               <select
-                className="block w-full border border-slate-300 px-3 py-2 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="block w-full border border-slate-300 px-3 py-2 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-violet-500"
                 value={onboardingLang}
                 onChange={(e) => setOnboardingLang(e.target.value)}
               >
@@ -451,7 +451,7 @@ export default function App() {
             <button
               type="submit"
               disabled={onboardingLoading}
-              className="w-full bg-indigo-600 text-white px-4 py-2 rounded-xl text-sm hover:bg-indigo-700 disabled:opacity-50"
+              className="w-full bg-violet-600 text-white px-4 py-2 rounded-xl text-sm hover:bg-violet-700 disabled:opacity-50"
             >
               {onboardingLoading ? 'Saving…' : 'Continue'}
             </button>
@@ -472,7 +472,30 @@ export default function App() {
       {/* Persistent top app bar (mobile + desktop). Sign-out lives here in its own
           row, so it can never overlap the conversation list's "+" button. */}
       <header className="shrink-0 flex items-center justify-between gap-2 px-4 h-12 bg-white border-b border-slate-200">
-        <span className="font-semibold text-slate-800 text-sm">jistchat</span>
+        <div className="flex items-center gap-1.5">
+          <svg width="26" height="26" viewBox="0 0 512 512" aria-hidden="true" className="shrink-0">
+            <defs>
+              <clipPath id="app-bar-bubble-clip">
+                <path d="M153.6,83.78c-46.27,0-83.78,37.51-83.78,83.78h0v93.09c0,46.27,37.51,83.78,83.78,83.78h204.8c46.27,0,83.78-37.51,83.78-83.78h0v-93.09c0-46.27-37.51-83.78-83.78-83.78h-204.8ZM225,344.44l-75,60.56,30,-60.56h45Z"/>
+              </clipPath>
+            </defs>
+            <g clipPath="url(#app-bar-bubble-clip)">
+              <path fill="#7C3AED" d="M-46.55,46.55l302.55,18.62c74.47,65.16,74.47,130.33,0,190.84s-74.47,125.67,0,209.45H-46.55V46.55Z"/>
+              <path fill="#0D9488" d="M558.55,46.55l-302.55,18.62c74.47,65.16,74.47,130.33,0,190.84s-74.47,125.67,0,209.45h302.55V46.55Z"/>
+            </g>
+            <g fill="#EDE9FE">
+              <path d="M116.48,128.67h95.1c4.63,0,8.39,3.13,8.39,6.98h0c0,3.86-3.76,6.98-8.39,6.98h-95.1c-4.63,0-8.39-3.13-8.39-6.98h0c0-3.86,3.76-6.98,8.39-6.98Z"/>
+              <path d="M115.07,164.72h51.2c3.86,0,6.98,3.13,6.98,6.98h0c0,3.86-3.13,6.98-6.98,6.98h-51.2c-3.86,0-6.98-3.13-6.98-6.98h0c0-3.86,3.13-6.98,6.98-6.98Z"/>
+              <path d="M113.86,200.76h76.98c3.19,0,5.77,3.13,5.77,6.98h0c0,3.86-2.58,6.98-5.77,6.98h-76.98c-3.19,0-5.77-3.13-5.77-6.98h0c0-3.86,2.58-6.98,5.77-6.98Z"/>
+            </g>
+            <g fill="#fff">
+              <path d="M335.13,214.11h0c5.14,0,9.31,4.17,9.31,9.31v74.47c0,5.14-4.17,9.31-9.31,9.31h0c-5.14,0-9.31-4.17-9.31-9.31v-74.47c0-5.14,4.17-9.31,9.31-9.31Z"/>
+              <path d="M371.17,240.03h0c5.14,0,9.31,5.34,9.31,11.92v59.62c0,6.58-4.17,11.92-9.31,11.92h0c-5.14,0-9.31-5.34-9.31-11.92v-59.62c0-6.58,4.17-11.92,9.31-11.92Z"/>
+              <path d="M407.22,207.13h0c5.14,0,9.31,4.17,9.31,9.31v65.16c0,5.14-4.17,9.31-9.31,9.31h0c-5.14,0-9.31-4.17-9.31-9.31v-65.16c0-5.14,4.17-9.31,9.31-9.31Z"/>
+            </g>
+          </svg>
+          <span className="hidden sm:inline font-bold text-sm" style={{ fontFamily: "'Outfit', sans-serif" }}>Jistchat</span>
+        </div>
         <div className="flex items-center gap-3 text-xs text-slate-500">
           <span className="hidden sm:inline truncate max-w-[12rem]">{profile?.display_name}</span>
           <button onClick={handleSignOut} className="hover:text-slate-800" title="Sign out">Sign out</button>

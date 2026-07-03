@@ -189,7 +189,7 @@ export default function MessageBubble({
         <div
           className={`rounded-2xl px-3.5 py-2 ${
             isSender
-              ? 'bg-indigo-600 text-white rounded-br-md'
+              ? 'bg-violet-600 text-white rounded-br-md'
               : 'bg-white border border-slate-200 rounded-bl-md'
           }${message.pending ? ' opacity-60' : ''}${message.failed ? ' opacity-70' : ''}`}
         >

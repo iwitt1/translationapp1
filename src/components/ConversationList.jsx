@@ -23,7 +23,7 @@ export default function ConversationList({ conversations, activeId, onSelect, on
         <h1 className="text-lg font-semibold">Messages</h1>
         <button
           onClick={onNew}
-          className="h-9 w-9 grid place-items-center rounded-full bg-indigo-600 text-white hover:bg-indigo-700"
+          className="h-9 w-9 grid place-items-center rounded-full bg-violet-600 text-white hover:bg-violet-700"
           title="New conversation"
           aria-label="New conversation"
         >
@@ -44,7 +44,7 @@ export default function ConversationList({ conversations, activeId, onSelect, on
               key={c.id}
               onClick={() => onSelect(c.id)}
               className={`w-full text-left px-3 py-3 flex gap-3 items-center hover:bg-slate-50 ${
-                c.id === activeId ? 'md:bg-indigo-50' : ''
+                c.id === activeId ? 'md:bg-violet-50' : ''
               }`}
             >
               <div className="relative shrink-0">
@@ -66,7 +66,7 @@ export default function ConversationList({ conversations, activeId, onSelect, on
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-sm text-slate-500 truncate">{c.snippet || 'No messages yet'}</span>
                   {c.unread > 0 && (
-                    <span className="shrink-0 h-5 min-w-5 px-1 rounded-full bg-indigo-600 text-white text-[11px] grid place-items-center">
+                    <span className="shrink-0 h-5 min-w-5 px-1 rounded-full bg-violet-600 text-white text-[11px] grid place-items-center">
                       {c.unread}
                     </span>
                   )}
@@ -84,7 +84,7 @@ export default function ConversationList({ conversations, activeId, onSelect, on
 }
 
 // ── small presentational helpers (shared shape with the mockup) ──────────────
-const PALETTE = ['bg-rose-500', 'bg-indigo-500', 'bg-emerald-500', 'bg-amber-500', 'bg-sky-500', 'bg-fuchsia-500'];
+const PALETTE = ['bg-rose-500', 'bg-violet-500', 'bg-emerald-500', 'bg-amber-500', 'bg-sky-500', 'bg-fuchsia-500'];
 
 export function avatarColor(s = '') {
   const sum = [...s].reduce((a, c) => a + c.charCodeAt(0), 0);

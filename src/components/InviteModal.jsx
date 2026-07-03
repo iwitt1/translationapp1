@@ -81,7 +81,7 @@ export default function InviteModal({ open, conversationId, conversationName, on
           <button
             onClick={copy}
             disabled={!link}
-            className="px-3 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:bg-slate-300"
+            className="px-3 rounded-xl bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 disabled:bg-slate-300"
           >
             {copied ? 'Copied' : 'Copy'}
           </button>

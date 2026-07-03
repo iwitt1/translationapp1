@@ -102,7 +102,7 @@ export default function NewConversationModal({ open, onClose, onCreate }) {
           <button
             disabled={picked.length < 1 || creating}
             onClick={handleCreate}
-            className="text-sm font-medium text-indigo-600 disabled:text-slate-300"
+            className="text-sm font-medium text-violet-600 disabled:text-slate-300"
           >
             {creating ? 'Creating…' : 'Create'}
           </button>
@@ -114,9 +114,9 @@ export default function NewConversationModal({ open, onClose, onCreate }) {
             {picked.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mb-2">
                 {picked.map((p) => (
-                  <span key={p.account_id} className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 rounded-full pl-2 pr-1 py-0.5 text-xs">
+                  <span key={p.account_id} className="inline-flex items-center gap-1 bg-violet-50 text-violet-700 rounded-full pl-2 pr-1 py-0.5 text-xs">
                     {p.display_name}
-                    <button onClick={() => unpick(p.account_id)} className="h-4 w-4 grid place-items-center rounded-full hover:bg-indigo-100">×</button>
+                    <button onClick={() => unpick(p.account_id)} className="h-4 w-4 grid place-items-center rounded-full hover:bg-violet-100">×</button>
                   </span>
                 ))}
               </div>
@@ -126,7 +126,7 @@ export default function NewConversationModal({ open, onClose, onCreate }) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Add by username or email…"
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
               autoFocus
             />
 
@@ -164,7 +164,7 @@ export default function NewConversationModal({ open, onClose, onCreate }) {
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="e.g. Trip planning"
-                className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
               />
             </div>
           )}
@@ -175,7 +175,7 @@ export default function NewConversationModal({ open, onClose, onCreate }) {
             <select
               value={contextType}
               onChange={(e) => setContextType(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-violet-500"
             >
               {getContextTypes().map((c) => (
                 <option key={c.value} value={c.value}>{c.label}</option>

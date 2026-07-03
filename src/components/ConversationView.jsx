@@ -136,7 +136,7 @@ export default function ConversationView({
                 <select
                   value={conversation.context_type}
                   onChange={(e) => onSetContextType(e.target.value)}
-                  className="w-full text-xs rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full text-xs rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-violet-500"
                 >
                   {getContextTypes(conversation.tenant_id).map((c) => (
                     <option key={c.value} value={c.value}>{c.label}</option>
@@ -193,11 +193,11 @@ export default function ConversationView({
             }
           }}
           placeholder="Message…"
-          className="flex-1 resize-none rounded-2xl border border-slate-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          className="flex-1 resize-none rounded-2xl border border-slate-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
         />
         <button
           onClick={submit}
-          className="h-10 px-4 rounded-2xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700"
+          className="h-10 px-4 rounded-2xl bg-violet-600 text-white text-sm font-medium hover:bg-violet-700"
         >
           Send
         </button>

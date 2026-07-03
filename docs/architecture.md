@@ -1014,10 +1014,11 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 
 ## 14. Brand & visual identity
 
-- **Logo.** A rounded-square "wave-seam" speech-bubble icon split into two colors along a sinusoidal boundary — meant to represent two languages converging on one shared meaning — paired with an "Outfit" wordmark. Source files (`jistchat-logo-violet-teal.svg` icon-only, `jistchat-lockup-icon-wordmark.svg` icon+wordmark) live in the `Translation App` working folder, **not this repo** — not yet resolved whether they should move into `/V1` (see decisions.md 2026-07-02).
-- **Colors.** Primary violet `#7C3AED` (tint `#EDE9FE`), secondary teal `#0D9488` (tint `#CCFBF1`). Applied to `jistchat-landing.html`'s `--accent` / `--accent-soft` / `--accent-2` / `--accent-2-soft` (was indigo `#6366f1` / `#eef2ff`).
-- **Wordmark typeface.** Outfit (Google Fonts), weight 700, solid black fill, ~-0.01em tracking. Loaded on the landing page only.
-- **Status.** Visual identity finalized 2026-07-02, applied to `jistchat-landing.html` only. **Not applied** to the product frontend (`/V1/src`, `tailwind.config.js`) — that rollout is parked, not scheduled (parking-lot.md, Product features).
+- **Logo.** A rounded-square "wave-seam" speech-bubble icon split into two colors along a sinusoidal boundary — meant to represent two languages converging on one shared meaning — paired with an "Outfit" wordmark. Source files (`jistchat-logo-violet-teal.svg` icon-only, `jistchat-lockup-icon-wordmark.svg` icon+wordmark) live in the `Translation App` working folder, **not this repo** — not yet resolved whether they should move into `/V1` (see decisions.md 2026-07-02). The app's in-header SVG (App.jsx top app bar) is a hand-inlined copy of the same paths, not an import of those source files — keep both in sync manually if the mark changes.
+- **Colors.** Primary violet `#7C3AED`, secondary teal `#0D9488` (tints `#EDE9FE` / `#CCFBF1`). These happen to equal Tailwind's built-in `violet-600`/`violet-100` and `teal-600`/`teal-100` exactly, so the product frontend needed **no `tailwind.config.js` changes** — every former `indigo-*` utility class across `src/App.jsx` and `src/components/*.jsx` was swapped to the equivalent `violet-*` shade (2026-07-02). The landing page (`jistchat-landing.html`, separate repo) uses its own `--accent`/`--accent-soft`/`--accent-2`/`--accent-2-soft` CSS variables set to the same hex values.
+- **Wordmark typeface.** Outfit (Google Fonts), weight 700, solid black fill, ~-0.01em tracking. Loaded via `<link>` in both `index.html` (product app) and the landing page.
+- **In-app lockup.** Top app bar (`src/App.jsx`) shows the icon always; the "Jistchat" wordmark is hidden below the `sm` Tailwind breakpoint (space-constrained mobile bar) and shown at `sm:` and up.
+- **Status.** Visual identity finalized 2026-07-02; rolled out to `jistchat-landing.html` same day and to the product frontend (colors + in-app logo) 2026-07-02.
 
 ---
 

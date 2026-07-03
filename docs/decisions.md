@@ -16,6 +16,28 @@
 
 ---
 
+## 2026-07-02 — Brand rollout to the product frontend: colors via existing Tailwind palette, icon-only-on-mobile lockup
+
+**Decision:** Applied the finalized violet/teal brand (see same-day "Visual brand finalized" entry below) to `/V1`'s product frontend. Every `indigo-*` Tailwind utility class across `src/App.jsx` and `src/components/*.jsx` (~40 instances: buttons, focus rings, sent-message bubbles, selected-conversation highlight, one avatar-color-cycle entry) was swapped to the equivalent `violet-*` shade — **no `tailwind.config.js` changes needed**, because Tailwind's built-in `violet-600`/`violet-100` and `teal-600`/`teal-100` happen to equal our chosen brand hex values exactly. The in-app top bar's plain-text "jistchat" was replaced with the icon (hand-inlined SVG, always visible) plus the "Jistchat" wordmark in Outfit, hidden below the `sm` breakpoint. `index.html` gained the Outfit font `<link>` and its stale `<title>` ("Translation Chat") was corrected to "jistchat".
+
+**Context:** Isaac confirmed `jistchat` is still not the permanent product name, but wants consistent branding behind it in the meantime since he's actively using it for interviews. The landing page got the brand first (same day); this is the follow-up to bring the live app in line so the "Try the live demo" link doesn't drop into a visually different, unbranded product.
+
+**Alternatives considered:**
+- *Custom `brand`/`accent2` Tailwind color scale in `tailwind.config.js`* instead of reusing `violet-*`/`teal-*` directly. Rejected once the hex match was discovered — an extra layer of indirection with zero benefit when the stock palette already matches. If the brand color ever changes to something Tailwind doesn't stock, revisit this.
+- *In-app logo: icon+wordmark always, icon-only always, or responsive (icon always, wordmark ≥`sm`).* Chose responsive per Isaac's explicit call — the 48px top app bar is too tight for the full lockup on mobile widths.
+- *Recolor plain text only, defer the graphic mark in-app.* Considered as the lowest-risk option; not chosen since the logo mark was already validated on the landing page and the app bar had room for at least the icon.
+
+**Reasoning:** Reusing Tailwind's stock palette instead of inventing custom tokens is the simpler, more maintainable choice — one less thing to keep in sync, and it's a straightforward global find-and-replace (`indigo-` → `violet-`) rather than a config change plus a rename pass. Verified with a clean `vite build` (in an isolated copy, since this sandbox's mounted filesystem has flaky lock/unlink behavior that intermittently blocks git and file reads in place) before committing.
+
+**Implications:**
+- Any *new* UI code should reach for `violet-*` (primary) and `teal-*` (secondary, not yet used anywhere in the app) rather than `indigo-*`, to stay consistent.
+- The app-bar SVG is a hand-copied duplicate of the logo source paths, not a shared import — if the mark's geometry changes, both copies (this one and `jistchat-lockup-icon-wordmark.svg`) need updating. Worth a shared source-of-truth (e.g., import the SVG as a component) if the mark churns again; not worth building for a single duplicate today.
+- Work happened on a `branding/violet-teal-outfit` branch, not `main` — staged for Isaac to review via Vercel Preview and merge himself, same caution as the landing-page push.
+
+**Revisit when:** the app-bar and landing-page copies of the icon drift out of sync, or `jistchat` is confirmed/replaced as the permanent name (see the same-day "Visual brand finalized" entry's open question).
+
+---
+
 ## 2026-07-02 — Visual brand finalized: violet/teal wave-seam logo + Outfit wordmark
 
 **Decision:** Finalized jistchat's visual identity: a two-color "wave-seam" speech-bubble icon (violet `#7C3AED` / teal `#0D9488`, tints `#EDE9FE` / `#CCFBF1`) whose sinusoidal seam represents two languages converging on shared meaning, paired with an "Outfit" wordmark (black, weight 700, "Jistchat"). Applied to `jistchat-landing.html` (accent palette + header logo lockup, replacing the old plain-text brand span). Source SVGs (`jistchat-logo-violet-teal.svg`, `jistchat-lockup-icon-wordmark.svg`) live in the `Translation App` working folder, outside this repo.
