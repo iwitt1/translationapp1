@@ -58,7 +58,9 @@ export default async function handler(req, res) {
         }
       : {
           model: TRANSLATE_MODEL,
-          reasoning: { effort: TRANSLATE_REASONING_EFFORT },
+          // Chat Completions uses flat `reasoning_effort`; the nested
+          // `reasoning: { effort }` shape is Responses-API-only.
+          reasoning_effort: TRANSLATE_REASONING_EFFORT,
           messages,
           response_format: { type: 'json_object' },
         };

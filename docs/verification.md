@@ -1734,7 +1734,7 @@ See roadmap.md Phase 2.2, decisions.md 2026-06-23, operations.md (topology + dep
 
 ## Translate model swap: gpt-5.4 + prompt v2.0.0 (2026-07-05) — ⏳ gate PENDING on staging
 
-**What shipped:** translate calls moved to `gpt-5.4` (`reasoning: { effort: 'medium' }`, no temperature, JSON mode); detect stays `gpt-4o-mini`; naturalness-first prompt rewrite (`PROMPT_VERSION` 2.0.0); model config centralized in `lib/translatePrompt.js`; `vercel.json` `maxDuration: 60` for the translate function; dev-server translate timeout 30s. See decisions.md 2026-07-05.
+**What shipped:** translate calls moved to `gpt-5.4` (`reasoning_effort: 'medium'` — flat Chat Completions param, not the nested Responses-API shape; no temperature; JSON mode); detect stays `gpt-4o-mini`; naturalness-first prompt rewrite (`PROMPT_VERSION` 2.0.0); model config centralized in `lib/translatePrompt.js`; `vercel.json` `maxDuration: 60` for the translate function; dev-server translate timeout 30s. See decisions.md 2026-07-05.
 
 **Staging gate (branch push → Vercel Preview against staging Supabase):**
 
