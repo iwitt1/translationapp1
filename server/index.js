@@ -1,7 +1,13 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
-import { buildMessages, PROMPT_VERSION } from '../lib/translatePrompt.js';
+import {
+  buildMessages,
+  PROMPT_VERSION,
+  TRANSLATE_MODEL,
+  TRANSLATE_REASONING_EFFORT,
+  DETECT_MODEL,
+} from '../lib/translatePrompt.js';
 import { logTranslationEvent } from './lib/events.js';
 import { inferProfile } from './lib/inferProfile.js';
 import { requireAuth } from './lib/auth.js';
@@ -63,20 +69,30 @@ app.post('/api/v1/translate', async (req, res) => {
       history,
     });
 
-    const requestBody = {
-      model: 'gpt-4o-mini',
-      messages,
-      temperature: 0,
-    };
+    // Mode-based model selection (see lib/translatePrompt.js for rationale):
+    // - detect: gpt-4o-mini, temperature 0 — trivial classification, cheap + fast.
+    // - translate: gpt-5.4 with reasoning effort — no temperature (unsupported
+    //   on reasoning calls) and JSON mode for guaranteed-parseable output.
+    const isDetect = mode === 'detect';
+    const modelUsed = isDetect ? DETECT_MODEL : TRANSLATE_MODEL;
 
-    // JSON mode: guarantees parseable output for translate calls.
-    if (mode !== 'detect') {
-      requestBody.response_format = { type: 'json_object' };
-    }
+    const requestBody = isDetect
+      ? {
+          model: DETECT_MODEL,
+          messages,
+          temperature: 0,
+        }
+      : {
+          model: TRANSLATE_MODEL,
+          reasoning: { effort: TRANSLATE_REASONING_EFFORT },
+          messages,
+          response_format: { type: 'json_object' },
+        };
 
-    // Timeout protection: abort if OpenAI takes > 10s
+    // Timeout protection: 10s for detect; 30s for translate (gpt-5.4 reasoning
+    // calls can exceed 10s at medium effort).
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
+    const timeout = setTimeout(() => controller.abort(), isDetect ? 10000 : 30000);
 
     const startTime = Date.now();
 
@@ -124,7 +140,7 @@ app.post('/api/v1/translate', async (req, res) => {
       user_id: principal.userId,
       target_language: targetLanguage ?? 'detect',
       was_cached: false,
-      model_used: 'gpt-4o-mini',
+      model_used: modelUsed,
       prompt_version: PROMPT_VERSION,
       latency_ms,
       character_count: text.length,

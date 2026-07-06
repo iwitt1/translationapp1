@@ -1,4 +1,9 @@
 {
+  "functions": {
+    "api/v1/translate.js": {
+      "maxDuration": 60
+    }
+  },
   "crons": [
     {
       "path": "/api/v1/jobs/abandonment",

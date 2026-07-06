@@ -322,7 +322,9 @@ The `messages`-on-realtime-publication item was originally configured via the Su
 
 ## Translation quality and intelligence
 
-### Punctuation and formatting fidelity in translations
+### Punctuation and formatting fidelity in translations — RESOLVED 2026-07-05
+**RESOLVED:** shipped as part of prompt v2.0.0 (gpt-5.4 swap). The rewritten system prompt includes a texting-conventions rule (mirror missing final periods/capitals, convert casual laughter, pass emoji through, never make a message more formal or "correct" than the original). See decisions.md 2026-07-05. Original item below for history.
+
 The translation output should preserve the sender's punctuation style exactly — if they didn't end a sentence with a period, the translation shouldn't add one; if they used an ellipsis mid-thought, that carries emotional meaning and should be preserved. More broadly, the model should not introduce punctuation or formatting that wasn't in the source (em dashes are a common AI tell). This is a prompt-level fix: explicit instructions not to add, remove, or substitute punctuation beyond what's grammatically required in the target language.
 - **Why interesting:** Punctuation is a register and tone signal. A missing period is casual; a period makes it formal. Unauthorised em dashes make translations feel AI-generated rather than human. Both undermine the product's core promise.
 - **Implementation sketch:** Add a rule to the translate system prompt: "Preserve the sender's punctuation exactly. Do not add terminal punctuation if absent in the source. Do not introduce em dashes, ellipses, or other punctuation not present in the original." Bump PROMPT_VERSION on change.

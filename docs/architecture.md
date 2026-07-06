@@ -19,7 +19,7 @@ A real-time multilingual chat application backed by an LLM-powered translation A
 - Backend (prod): Vercel serverless functions
 - Backend (local dev): Node + Express on localhost:3001
 - Database: Supabase (Postgres + Realtime)
-- AI: OpenAI (`gpt-4o-mini` currently)
+- AI: OpenAI (`gpt-5.4` medium reasoning for translate; `gpt-4o-mini` for detect — since 2026-07-05)
 
 ---
 
@@ -787,10 +787,11 @@ Convention: increment the version in the same commit as the prompt change. The v
 
 ### Model strategy
 
-- **MVP:** `gpt-4o-mini` for everything. Cost-effective, sufficient for early translation quality.
-- **Small scale:** Consider routing — `gpt-4o-mini` for simple messages, `gpt-4o` for idiomatically dense or context-heavy ones. 15x cost delta makes routing logic worth building.
-- **Funded:** Evaluate DeepSeek ($0.14/M tokens vs. ~$3/M for Claude Sonnet) for cost; consider fine-tuning on corrections data once thousands of high-quality pairs exist.
-- **Always:** Keep backend model-agnostic. The model name lives in one configuration point, never hardcoded in business logic.
+- **Current (2026-07-05):** mode-based split, configured in `lib/translatePrompt.js` (`TRANSLATE_MODEL`, `TRANSLATE_REASONING_EFFORT`, `DETECT_MODEL`) and consumed by both call sites. Translate runs `gpt-5.4` with `reasoning: { effort: 'medium' }`; detect stays `gpt-4o-mini` (trivial classification, runs on every send — reasoning would add cost/latency for nothing). No `temperature` on translate calls: unsupported on gpt-5.4 reasoning calls. The effort constant is the cost/latency dial — drop to `low`/`none` if chat latency hurts (OpenAI's guidance for latency-sensitive paths).
+- **History:** MVP ran `gpt-4o-mini` for everything (prompt v1.x). Replaced after observed literal-translation failures (decisions.md 2026-07-05).
+- **Small scale:** Consider per-message routing — cheap model for simple messages, gpt-5.4 for idiomatically dense or context-heavy ones. The ~25x cost delta makes routing logic worth building (parking lot).
+- **Funded:** Evaluate cheaper providers for cost; consider fine-tuning on corrections data once thousands of high-quality pairs exist.
+- **Always:** Keep backend model-agnostic. The model names live in one configuration point (`lib/translatePrompt.js`), never hardcoded in business logic.
 
 ### Fine-tuning (deferred, parking lot)
 
@@ -1046,7 +1047,7 @@ Plain-English definitions for jargon used here. Keeps the door open for non-tech
 - **Inference (in this context).** What the model can tell about a user or conversation from the text alone — their dialect, register, gender signal, etc.
 - **Inferred vs explicit.** Inferred = the system guessed it. Explicit = the user set it. Explicit always wins.
 - **NMT.** Neural Machine Translation — the previous generation of translation systems before LLMs (DeepL, Google Translate). Generally faster and cheaper than LLMs but less context-aware.
-- **OpenAI.** The company whose API we use for translation. `gpt-4o-mini` is the specific model currently.
+- **OpenAI.** The company whose API we use for translation. `gpt-5.4` (medium reasoning effort) for translate calls, `gpt-4o-mini` for detect calls, as of 2026-07-05.
 - **Optimistic UI.** Showing a result immediately, before the server confirms — a UX trick to make things feel fast.
 - **Postgres.** The relational database under Supabase.
 - **Provenance (in the contact graph).** A record of *how* a connection was made (`via_identifier_type`: email / username / phone / friend_code / invite_link), captured at add-time and read by the DM-initiation policy.

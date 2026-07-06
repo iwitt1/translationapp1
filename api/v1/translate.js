@@ -1,4 +1,10 @@
-import { buildMessages, PROMPT_VERSION } from '../../lib/translatePrompt.js';
+import {
+  buildMessages,
+  PROMPT_VERSION,
+  TRANSLATE_MODEL,
+  TRANSLATE_REASONING_EFFORT,
+  DETECT_MODEL,
+} from '../../lib/translatePrompt.js';
 import { logTranslationEvent } from '../../server/lib/events.js';
 import { requireAuth } from '../../server/lib/auth.js';
 
@@ -37,19 +43,25 @@ export default async function handler(req, res) {
       history,
     });
 
-    const requestBody = {
-      model: 'gpt-4o-mini',
-      messages,
-      temperature: 0,
-    };
+    // Mode-based model selection (see lib/translatePrompt.js for rationale):
+    // - detect: gpt-4o-mini, temperature 0 — trivial classification, cheap + fast.
+    // - translate: gpt-5.4 with reasoning effort — no temperature (unsupported
+    //   on reasoning calls) and JSON mode for guaranteed-parseable output.
+    const isDetect = mode === 'detect';
+    const modelUsed = isDetect ? DETECT_MODEL : TRANSLATE_MODEL;
 
-    // JSON mode guarantees parseable output for translate calls.
-    // Not used for detect: the detect prompt is intentionally minimal and
-    // JSON mode requires the prompt to explicitly mention JSON (ours does,
-    // but keeping detect simple avoids any edge cases).
-    if (mode !== 'detect') {
-      requestBody.response_format = { type: 'json_object' };
-    }
+    const requestBody = isDetect
+      ? {
+          model: DETECT_MODEL,
+          messages,
+          temperature: 0,
+        }
+      : {
+          model: TRANSLATE_MODEL,
+          reasoning: { effort: TRANSLATE_REASONING_EFFORT },
+          messages,
+          response_format: { type: 'json_object' },
+        };
 
     const startTime = Date.now();
 
@@ -96,7 +108,7 @@ export default async function handler(req, res) {
       user_id: principal.userId,
       target_language: targetLanguage ?? 'detect',
       was_cached: false,
-      model_used: 'gpt-4o-mini',
+      model_used: modelUsed,
       prompt_version: PROMPT_VERSION,
       latency_ms,
       character_count: text.length,

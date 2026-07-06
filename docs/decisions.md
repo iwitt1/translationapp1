@@ -16,6 +16,26 @@
 
 ---
 
+## 2026-07-05 — Translate model → gpt-5.4 (medium reasoning) + naturalness-first prompt rewrite (v2.0.0)
+
+**Decision:** Translate calls move from `gpt-4o-mini` (temperature 0) to `gpt-5.4` with `reasoning: { effort: 'medium' }`; detect calls stay on `gpt-4o-mini`. In the same change, the translate system prompt was rewritten naturalness-first: bilingual-native-speaker persona (replacing "precision translation engine"), explicit idiom/slang rule with a worked example, a cultural-items rule (keep original names, never literal glosses), a texting-conventions rule (mirror missing periods/capitals, convert laughter, pass emoji; resolves the parking-lot "Punctuation and formatting fidelity" item), and an explicit T-V formality rule. `PROMPT_VERSION` → `2.0.0`. Model config centralized as exports in `lib/translatePrompt.js` (`TRANSLATE_MODEL`, `TRANSLATE_REASONING_EFFORT`, `DETECT_MODEL`) consumed by both call sites; `model_used` in event logging is now dynamic. Supporting changes: `vercel.json` gains `maxDuration: 60` for `api/v1/translate.js`; dev-server timeout 10s → 30s for translate calls; `temperature` removed from translate calls (unsupported on gpt-5.4 reasoning calls).
+
+**Context:** Observed production quality failures: "no seas payaso" translated literally as "don't be a clown", "tacos de canasta" as "basket tacos", and casual messages gaining sentence-final periods (register mismatch). Assessment attributed this to (1) a mini-class model, (2) a literalness-biased persona/rules with no naturalness instruction, (3) temperature 0, (4) one call splitting attention across translation + inference schema.
+
+**Alternatives considered:**
+- *Prompt rewrite only, stay on gpt-4o-mini.* Cheaper, but mini-class models underperform on exactly the idiom/register judgment the product promises; prompt alone was judged unlikely to fix the observed failures.
+- *gpt-5.4 at `low`/`none` effort.* Better latency and cost; Isaac chose `medium` to start to first find the quality ceiling, then tune down. The effort constant makes this a one-line change.
+- *Split translation and inference into two calls.* Addresses the attention-split problem directly but doubles calls and latency; parked unless the model+prompt change is insufficient.
+- *Per-message model routing.* The right long-term shape (already in parking lot); premature before corrections data can measure quality differences.
+
+**Reasoning:** Model capability was assessed as the dominant lever for the observed failures; the prompt rewrite attacks the same failures from the instruction side, and doing both in one PROMPT_VERSION bump (per Isaac's explicit call) gives a clean before/after line in `translation_events` for future corrections analysis, at the cost of not being able to attribute improvement between model and prompt individually.
+
+**Implications:** Per-translate cost rises ~25–40x (~$0.007–0.012/call; operations.md cost model updated). Latency rises noticeably at medium effort — OpenAI's own guidance is `low`/`none` for real-time chat, so tuning down is the expected follow-up if chat feel suffers. Detect stays cheap. `translation_events.model_used` now records which model served each call, and rows with `prompt_version = '2.0.0'` mark the changeover.
+
+**Revisit when:** Chat latency feels bad (drop effort to `low`/`none`); monthly OpenAI spend approaches the tools budget (routing or effort cut); corrections capture ships (A/B effort levels and prompt variants with data instead of judgment).
+
+---
+
 ## 2026-07-02 — Brand rollout to the product frontend: colors via existing Tailwind palette, icon-only-on-mobile lockup
 
 **Decision:** Applied the finalized violet/teal brand (see same-day "Visual brand finalized" entry below) to `/V1`'s product frontend. Every `indigo-*` Tailwind utility class across `src/App.jsx` and `src/components/*.jsx` (~40 instances: buttons, focus rings, sent-message bubbles, selected-conversation highlight, one avatar-color-cycle entry) was swapped to the equivalent `violet-*` shade — **no `tailwind.config.js` changes needed**, because Tailwind's built-in `violet-600`/`violet-100` and `teal-600`/`teal-100` happen to equal our chosen brand hex values exactly. The in-app top bar's plain-text "jistchat" was replaced with the icon (hand-inlined SVG, always visible) plus the "Jistchat" wordmark in Outfit, hidden below the `sm` breakpoint. `index.html` gained the Outfit font `<link>` and its stale `<title>` ("Translation Chat") was corrected to "jistchat".

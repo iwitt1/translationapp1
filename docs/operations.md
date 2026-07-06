@@ -16,25 +16,25 @@
 
 | Service | Cost |
 |---|---|
-| OpenAI API (`gpt-4o-mini`, low volume) | ~$1–2/month |
+| OpenAI API (`gpt-5.4` medium translate + `gpt-4o-mini` detect, low volume) | ~$5–15/month |
 | Supabase | Free tier |
 | Vercel | Free tier |
 | GitHub | Free |
-| **Total** | **~$0–5/month** |
+| **Total** | **~$5–20/month** |
 
-Below the $30/month tools budget by an order of magnitude. Translation message tokens are small; the binding constraint at MVP is not cost.
+Within the $30/month tools budget at MVP volume, but no longer negligible: a gpt-5.4 medium-reasoning translate call costs roughly $0.007–0.012 (input ~$2.50/M, output incl. billed reasoning tokens ~$15/M) vs ~$0.0003 on gpt-4o-mini — a ~25–40x per-call increase (2026-07-05 model swap; decisions.md same date). The reasoning-effort constant in `lib/translatePrompt.js` is the cost dial.
 
 ### Small scale (1,000–10,000 active users, ~60% cache hit rate)
 
 | Service | Cost |
 |---|---|
-| OpenAI (`gpt-4o-mini` only) | ~$15–40/month |
-| OpenAI (with `gpt-4o` routing for idiomatic cases) | ~$200–500/month |
+| OpenAI (`gpt-5.4` medium for all translates — current config) | ~$400–1,500/month |
+| OpenAI (with per-message routing: cheap model for simple messages) | ~$100–400/month |
 | Supabase Pro | $25/month |
 | Vercel Pro | $20/month |
-| **Total** | **~$60–600/month** |
+| **Total** | **~$150–1,550/month** |
 
-Model choice becomes the dominant cost variable. The 15x cost delta between `gpt-4o-mini` and `gpt-4o` is what makes Phase 2's per-message model-routing logic worth building.
+Model choice is now decisively the dominant cost variable. The ~25x cost delta between `gpt-4o-mini`-class and `gpt-5.4` translate calls is what makes per-message model routing (parking lot) worth building before any real scale, and the reasoning-effort dial (`medium` → `low`/`none`) is the cheapest first lever.
 
 ### Funded / large scale (100k–1M+ users)
 
