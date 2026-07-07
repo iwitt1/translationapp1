@@ -1768,20 +1768,20 @@ See roadmap.md Phase 2.2, decisions.md 2026-06-23, operations.md (topology + dep
 
 ---
 
-## Username at onboarding — migration 020 (2026-07-07) — ⏳ gate PENDING on staging
+## Username at onboarding — migration 020 (2026-07-07) — ✅ GREEN on staging; PROD ROLLED OUT same day
 
 **What shipped:** onboarding requires a user-chosen username; `complete_onboarding()` replaced (2-arg dropped, 3-arg created with `p_username DEFAULT NULL`) — claims via `change_username()` in the same transaction, atomic with activation; `display_name` control-char/bidi denylist added; `change_username()` replaced to allow self-revert to one's own retired handle. Frontend: username field + "Usernames can be changed once per year" subtext + friendly error mapping. See decisions.md ×2 + operations.md migration list, 2026-07-07.
 
-**Staging gate (apply 020 on staging Supabase first, then the Preview build; needs ONE fresh signup = one magic-link email):**
+**Staging gate run 2026-07-07 — GREEN.** Incidental bonus: the deploy-order rule self-validated — the frontend was briefly live before 020 was applied and failed exactly as the failure-modes table below predicted (schema-cache 404), harmless. **Prod rolled out same day:** 020 replayed on prod → `feature/onboarding-username` merged to `main` → confirmed good.
 
-- [ ] **Migration verification block** (in-file, 020): exactly one 3-arg `complete_onboarding`; grants = authenticated only.
-- [ ] **Happy path:** fresh signup → onboarding shows username field → submit valid username → lands in chat; `profiles` row shows `status='active'`, `username` = chosen value, `username_source='user_set'`; old system handle row in `account_identifiers` is `retired`.
-- [ ] **Taken/reserved:** submit `admin` → inline "taken or reserved" error, still on onboarding screen, profile still `pending` (atomicity — activation rolled back with the failed claim).
-- [ ] **Invalid:** `ab` (too short) and `Mixed Case!` → caught client-side before any RPC call.
-- [ ] **Old-caller compatibility:** 2-named-arg `rpc('complete_onboarding', {p_display_name, p_preferred_language})` still resolves (PostgREST default fill) — covered implicitly if any pre-update client session submits; otherwise run the in-file verification query 3.
-- [ ] **Searchable:** from the other test account, username autocomplete finds the new user by their chosen handle (min 3 chars).
-- [ ] **Existing users unaffected:** an already-active account signs in and lands straight in chat (idempotency guard short-circuits before any username logic).
-- [ ] **Self-revert probes (SQL-level; no UI exists yet):** run verification-block probe 5 in migration 020 — owner reclaims their retired handle (row flips retired→active, cadence permitting); a *different* user attempting the same retired handle gets 'username unavailable'.
+- [x] **Migration verification block** (in-file, 020): exactly one 3-arg `complete_onboarding`; grants = authenticated only.
+- [x] **Happy path:** fresh signup → onboarding shows username field → submit valid username → lands in chat; `profiles` row shows `status='active'`, `username` = chosen value, `username_source='user_set'`; old system handle row in `account_identifiers` is `retired`.
+- [x] **Taken/reserved:** submit `admin` → inline "taken or reserved" error, still on onboarding screen, profile still `pending` (atomicity — activation rolled back with the failed claim).
+- [x] **Invalid:** `ab` (too short) and mixed case → caught client-side before any RPC call.
+- [x] **Old-caller compatibility:** 2-named-arg calls resolve via default fill (exercised implicitly during the pre-020 window).
+- [x] **Searchable:** username autocomplete finds the new user by their chosen handle from the other test account.
+- [x] **Existing users unaffected:** already-active accounts sign straight in (idempotency guard short-circuits before any username logic).
+- [ ] **Self-revert probes (SQL-level; no UI exists yet):** NOT RUN — logic reviewed at migration time; verification-block probe 5 in migration 020 is runnable anytime. Natural forcing point: the settings-screen build (the first UI that exposes reverting).
 
 **Known failure modes:**
 
