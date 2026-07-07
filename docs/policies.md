@@ -13,7 +13,7 @@
 > **Audit cadence:** review at the start of each phase, and at minimum quarterly. Each review
 > updates "Last reviewed" and logs material changes in `decisions.md`.
 
-**Last reviewed:** 2026-06-11 (§6 added "Data deletion / Right to Erasure (GDPR Art. 17)" subsection at Step 7 build — two-phase 30-day grace; content de-identified via `messages.sender_id` ON DELETE SET NULL not deleted; audit row survives via `data_deletion_requests.user_id` ON DELETE SET NULL; abuse HMAC recorded on voluntary erasure too, source split parked. Gate PASSED on staging 37/37. See decisions.md 2026-06-11. Prior 2026-06-10: §6 Abandonment resolved at Step 6 build — hash-over-plaintext confirmed; HMAC pepper in env not Postgres, `key_version=1`; username release is automatic via FK cascade, no release function; re-prompt emails parked to a future CRM. Prior: 2026-06-09 initial draft — Phase 2 identity/discovery/lifecycle design.)
+**Last reviewed:** 2026-07-07 (§1 display-name charset flipped from allowlist sketch to enforced denylist — control/bidi characters rejected, international names allowed (migration 020); §6 P3 now requires a user-chosen username at onboarding, claimed atomically with activation via `complete_onboarding()` → `change_username()`. See decisions.md 2026-07-07 "Username chosen at onboarding". Prior 2026-06-11: §6 added "Data deletion / Right to Erasure (GDPR Art. 17)" subsection at Step 7 build — two-phase 30-day grace; content de-identified via `messages.sender_id` ON DELETE SET NULL not deleted; audit row survives via `data_deletion_requests.user_id` ON DELETE SET NULL; abuse HMAC recorded on voluntary erasure too, source split parked. Gate PASSED on staging 37/37. See decisions.md 2026-06-11. Prior 2026-06-10: §6 Abandonment resolved at Step 6 build — hash-over-plaintext confirmed; HMAC pepper in env not Postgres, `key_version=1`; username release is automatic via FK cascade, no release function; re-prompt emails parked to a future CRM. Prior: 2026-06-09 initial draft — Phase 2 identity/discovery/lifecycle design.)
 
 ---
 
@@ -25,13 +25,17 @@
   *ASCII-only is deliberate — it removes homoglyph impersonation (e.g. Cyrillic "а" vs Latin "a").*
 - **Length:** 3–20 characters. *(Confirm bounds at build.)*
 - **Uniqueness:** unique **within a tenant** (`(tenant_id, canonical_username)`).
-- **Non-reuse:** once claimed, a username is never reissued — even after the holder changes
-  theirs. Enforced by never hard-deleting `account_identifiers` rows; retired rows keep the
-  value locked. (Exception: a system-generated username from a *deleted abandoned signup* is
-  released — see §6.)
-- **Change cadence:** at most one change per 365 days. The first change from a system-generated
-  handle to a user-chosen one is **free** and starts the clock from that point. Enforcement may
-  lag the UI note; the rule is stated in the UI from launch.
+- **Non-reuse:** once claimed, a username is never reissued **to anyone else** — even after the
+  holder changes theirs. Enforced by never hard-deleting `account_identifiers` rows; retired rows
+  keep the value locked. **Self-revert exception (2026-07-07, migration 020):** the previous
+  holder may reclaim their *own* retired username — the retired row flips back to `active`;
+  everyone else stays blocked permanently. (Other exception: a system-generated username from a
+  *deleted abandoned signup* is released — see §6.)
+- **Change cadence:** at most one change per 365 days; applies to self-reverts like any other
+  change. The first change from a system-generated handle to a user-chosen one is **free** and
+  starts the clock — **since 2026-07-07 this free change is consumed at onboarding** (the user
+  picks their handle on the onboarding screen). Stated in the UI as "Usernames can be changed
+  once per year."
 - **System-generated default:** every account gets a random `system_generated` username at
   signup (P1, see §6), drawn to avoid reserved words and retired values.
 - **Reserved words (blocklist):** role/system terms (`admin`, `root`, `support`, `help`,
@@ -41,8 +45,13 @@
   brand/figure reservation is not attempted at this scale.
 
 ### Display name
-- **Charset:** alphanumeric + space + hyphen + apostrophe. Trimmed; no leading/trailing space.
-- **Length:** 1–50 characters. *(Confirm bounds at build.)*
+- **Charset:** enforced as a **denylist** since migration 020 (2026-07-07): control characters,
+  DEL, and Unicode bidi override/isolate characters are rejected; everything else — including
+  accented and non-Latin names ("José", "Nguyễn", "李") — is allowed. The original allowlist
+  sketch (alphanumeric + space + hyphen + apostrophe) was consciously loosened at build: it would
+  have blocked legitimate international names, and the actual risk was invisible characters.
+  See decisions.md 2026-07-07 "Username chosen at onboarding".
+- **Length:** 1–50 characters (enforced in `complete_onboarding()` since 008).
 - **Not unique** anywhere. This is "the name other people see." Nothing keys off it.
 
 ### Deferred (parked, not built)
@@ -137,7 +146,10 @@ the DB but is non-functional). Hard deletion goes through `data_deletion_request
 ### Base requirements for a pending account
 uuid (mandatory) · email identifier (mandatory) · `tenant_id` (mandatory) · random
 `system_generated` username (yes — every profile has one) · `status='pending'`. Display name +
-language are required to flip to `active`.
+language + a user-chosen username are required to flip to `active` (username added 2026-07-07,
+migration 020 — claimed via `change_username()` inside `complete_onboarding()`'s transaction, so
+the claim and activation are atomic; the free system→user-chosen change is consumed here and the
+365-day clock starts at onboarding).
 
 ### Abandonment
 *Built in Step 6 (migration 012, `server/lib/abandonment.js`, Vercel cron `/api/v1/jobs/abandonment`, daily 08:00 UTC). See decisions.md 2026-06-10 "Step 6 abandonment + abuse monitoring".*

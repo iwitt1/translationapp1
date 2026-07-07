@@ -16,6 +16,43 @@
 
 ---
 
+## 2026-07-07 — Username non-reuse softened: self-revert to your own prior handle (migration 020)
+
+**Decision:** `change_username()` (010) is replaced in migration 020 (same signature, grants survive) so the non-reuse rule reads "never reissued *to anyone else*": a user may reclaim their **own** retired username — the retired `account_identifiers` row flips back to `active` (no new row; the `(tenant_id, type, value)` unique constraint makes an insert impossible anyway). Reserved values, other people's retired handles, and anyone's active handles stay unavailable exactly as before. The 365-day cadence applies to a revert like any other change.
+
+**Context:** Isaac's call while reviewing the username-at-onboarding subtext: blocking a person from a handle *they themselves held* serves nobody — non-reuse exists to stop strangers inheriting a handle (impersonation/confusion), not to punish the original owner for experimenting.
+
+**Alternatives considered:** keep strict non-reuse (rejected — no threat model covers self-reclaim); exempt reverts from the 365-day cadence (rejected for now — an unlimited revert loop between two handles is a mild flip-flop/squatting vector and the cadence is the existing, simplest guard; revisit with the settings screen).
+
+**Implications:** The identifier-row lifecycle gains one transition (retired→active, same owner only). Abandonment/deletion cascades are unaffected (rows still vanish with the account). The future settings screen should surface "your previous usernames" as one-tap revert options. policies.md §1 updated.
+
+**Revisit when:** the settings screen ships (revert UX + whether cadence should exempt reverts); any impersonation report involves a reverted handle.
+
+---
+
+## 2026-07-07 — Username chosen at onboarding, atomically with activation (migration 020)
+
+**Decision:** The onboarding screen now requires a user-chosen username alongside display name + language. Implemented by extending `complete_onboarding()` with an optional `p_username` parameter (migration 020: DROP the 2-arg version, CREATE the 3-arg with `DEFAULT NULL` — drop-then-create, not overload, because PostgREST named-arg resolution is ambiguous across overloads; grants reissued). When provided, the function calls `change_username()` inside the same transaction, so the username claim and the P1→P3 activation are atomic. All username policy (charset/length/reserved/non-reuse/365-day cadence) stays enforced solely by `change_username()` (010) — no duplicated rules. The 365-day change policy is kept as-is, surfaced in UI subtext ("Usernames can be changed once per year"). The onboarding claim consumes the free system→user-chosen change and starts the 365-day clock. Also folded in: `display_name` control-char/bidi **denylist** validation (closes parking-lot "Phase 2 RLS / validation gaps" item 3) — denylist rather than policies.md §1's strict allowlist so international names ("José", "Nguyễn", "李") keep working; §1 updated to match.
+
+**Context:** Isaac flagged that onboarding collects only a display name, leaving users unsearchable-by-intent (username autocomplete is the only search; every account holds only its random system handle). All backend plumbing existed since Steps 1–4 (system-username trigger, `account_identifiers`, discovery RPCs, `change_username`); only the UI moment was missing. Docs had envisioned choose-in-settings-later; Isaac chose choose-at-onboarding.
+
+**Alternatives considered:**
+- *Two RPC calls from the frontend (`change_username` then `complete_onboarding`).* No migration, but partial failure strands a *pending* account holding a *user-chosen* username — which the abandonment sweep would hard-delete and **release**, violating the never-reuse policy (the exact "revisit when usernames become user-chosen" tripwire in the 2026-06-10 Step 6 decision). Rejected.
+- *Choose-in-settings-later (the original plan).* Zero onboarding friction but users stay unsearchable until a settings screen exists (still parked). Rejected by product call: searchability from day one matters more than one extra field.
+- *Strict §1 allowlist for display_name charset.* Blocks legitimate international names; the actual risk named in the debt item was invisibles (control/bidi chars). Denylist chosen.
+
+**Reasoning:** Atomicity by construction beats atomicity by luck: because username and activation land in one transaction, pending accounts can only ever hold system-generated handles, so the abandonment hard-delete + automatic handle release (Step 6) remains safe **unchanged** — its founding assumption is preserved rather than revisited.
+
+**Implications / flagged debt:**
+- **UX debt (flagged deliberately):** the subtext promises a future change, but the settings screen where changes happen is still parked ("Settings home for identity attributes") — users who regret a hasty signup choice have no self-serve path until it ships. Its priority rises accordingly.
+- **Tech debt (minor):** availability feedback is submit-and-see-error; the discovery search RPC can't honestly answer "is this taken" (it filters by discoverability). A dedicated availability-check RPC is parked as polish.
+- Abandoned pending accounts continue to release only system-generated handles — hard-delete logic untouched.
+- Old 2-named-arg `rpc()` calls still resolve (default fills p_username), so the migration is deploy-order-safe: DB first, frontend after.
+
+**Revisit when:** the settings screen ships (revisit the 365-day cadence message); real users hit the availability-feedback friction; or any flow ever lets a pending account call `change_username` directly (would reopen the abandonment tripwire).
+
+---
+
 ## 2026-07-07 — Translate effort → low + prompt v2.1.0, chosen via model-comparison harness
 
 **Decision:** `TRANSLATE_REASONING_EFFORT` `'medium'` → `'low'` (model stays `gpt-5.4`). `PROMPT_VERSION` → `2.1.0` with three rule changes: (1) two-way casing fidelity — mirror the sender's actual casing in both directions, slang ≠ lowercase; (2) history-referent resolution — reactions/pronouns/elliptical replies keep their true referent from prior messages; (3) no invented gender forms — when speaker gender is unknown, prefer agreement-avoiding phrasings, never "emocionad@"/"emocionade" unless the profile explicitly says nonbinary. Also built `scripts/model-comparison-test.mjs`: a local harness (23 frozen cases × 6 model configs) that imports the production `buildMessages` and calls OpenAI directly — no app, no auth, no staging deploys, no magic-link rate limits. Both runs' results committed alongside in `scripts/`.

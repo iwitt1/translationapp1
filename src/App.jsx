@@ -53,6 +53,7 @@ export default function App() {
 
   // ── onboarding ──
   const [onboardingName, setOnboardingName] = useState('');
+  const [onboardingUsername, setOnboardingUsername] = useState('');
   const [onboardingLang, setOnboardingLang] = useState('en');
   const [onboardingError, setOnboardingError] = useState('');
   const [onboardingLoading, setOnboardingLoading] = useState(false);
@@ -131,13 +132,36 @@ export default function App() {
     if (!onboardingName.trim()) { setOnboardingError('Display name is required.'); return; }
     if (onboardingName.trim().length > 50) { setOnboardingError('Display name must be 50 characters or fewer.'); return; }
 
+    // Username: required at onboarding (product call 2026-07-07). Client-side
+    // pre-check mirrors change_username()'s rules for fast feedback; the RPC
+    // remains the enforcement point (reserved words, taken handles, etc.).
+    const username = onboardingUsername.trim();
+    if (!username) { setOnboardingError('Username is required.'); return; }
+    if (!/^[a-z0-9_]{3,20}$/.test(username)) {
+      setOnboardingError('Username must be 3–20 characters: lowercase letters, numbers, and underscores only.');
+      return;
+    }
+
     setOnboardingLoading(true);
     const { error } = await supabase.rpc('complete_onboarding', {
       p_display_name: onboardingName.trim(),
       p_preferred_language: onboardingLang,
+      p_username: username,
     });
     setOnboardingLoading(false);
-    if (error) { console.error('complete_onboarding error:', error); setOnboardingError(error.message || 'Something went wrong. Please try again.'); return; }
+    if (error) {
+      console.error('complete_onboarding error:', error);
+      // Map change_username()'s exceptions to friendly copy.
+      const msg = error.message || '';
+      if (msg.includes('username unavailable')) {
+        setOnboardingError('That username is taken or reserved. Try another.');
+      } else if (msg.includes('invalid characters') || msg.includes('length must be')) {
+        setOnboardingError('Username must be 3–20 characters: lowercase letters, numbers, and underscores only.');
+      } else {
+        setOnboardingError(msg || 'Something went wrong. Please try again.');
+      }
+      return;
+    }
     await loadProfile(session.user.id);
   }
 
@@ -434,6 +458,21 @@ export default function App() {
                 maxLength={50}
                 autoFocus
               />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">Username</label>
+              <input
+                className="block w-full border border-slate-300 px-3 py-2 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+                type="text"
+                placeholder="how_people_find_you"
+                value={onboardingUsername}
+                onChange={(e) => setOnboardingUsername(e.target.value.toLowerCase().replace(/\s/g, '_'))}
+                maxLength={20}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+              />
+              <p className="text-[11px] text-slate-500 mt-1">Usernames can be changed once per year.</p>
             </div>
             <div>
               <label className="block text-xs text-slate-600 mb-1">Your language</label>
