@@ -1738,6 +1738,8 @@ See roadmap.md Phase 2.2, decisions.md 2026-06-23, operations.md (topology + dep
 
 **Updated 2026-07-07:** effort tuned `medium` → `low` and prompt bumped to **v2.1.0** (two-way casing fidelity, history-referent resolution, no invented gender forms) after two runs of the model-comparison harness (`scripts/model-comparison-test.mjs`; decisions.md 2026-07-07). The gate below covers the combined change; three checks added for the v2.1.0 rules.
 
+**Staging gate run 2026-07-07 — GREEN with one noted flake. Prod rollout complete same day.** Full regression conversation re-run on the Preview (all rows `prompt_version = 2.1.0`, `model_used = 'gpt-5.4'`): casing fidelity confirmed on all five capitalized originals including per-sentence mirroring ("For once in my life!! stop clowning" matches the sender's cap/lowercase split); "tacos de canasta" kept; "no manches" idiom; missing "¿" mirrored; unknown-gender check passed ("¡Qué emoción lo de mañana!" — no forced agreement). Perceived latency ~4s per translation (vs 7–10s at medium). **Known limitation:** the "una vez en la vida" referent case resolves inconsistently at low effort — passed in the harness, missed on staging ("my life" for "your life"). Judged a probabilistic miss on a genuinely ambiguous standalone exclamation, not a broken rule (novel referent probes passed on every candidate). Not a ship blocker; natural Phase 4 corrections-capture target. Merged to `main` 2026-07-07; **regression cases re-run on prod — PASSED.**
+
 **Staging gate (branch push → Vercel Preview against staging Supabase):**
 
 - [ ] **Regression cases (the failures that prompted this).** Two accounts, ES↔EN casual conversation:

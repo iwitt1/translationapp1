@@ -21,7 +21,7 @@
 
 - [x] **Model/effort analysis.** DONE 2026-07-07 via `scripts/model-comparison-test.mjs` (23 frozen cases × 6 configs, run under prompt v2.0.0 and v2.1.0 — results committed in `scripts/`). **Winner: `gpt-5.4:low`** — keeps every differentiator (professional usted, keigo, neutral-gender) at ~2.6s median, $6.5/1k. mini:low is the routing candidate for casual messages later. See decisions.md 2026-07-07.
 - [x] **Capitalization-fidelity prompt fix.** DONE in prompt v2.1.0 (plus two bonus rules from run-1 findings: history-referent resolution, no invented gender forms). Run 2 confirmed all three landed on every model, including novel anti-memorization probes.
-- [ ] **Prod rollout** of `gpt-5.4:low` + prompt v2.1.0 via the verification.md gate (staging Preview → regression cases → merge to main → re-run on prod).
+- [x] **Prod rollout** of `gpt-5.4:low` + prompt v2.1.0. DONE 2026-07-07: staging gate GREEN (one noted flake — "una vez en la vida" referent, logged as a known limitation → Phase 4 target), merged to main, regression cases re-run on prod PASSED. Perceived latency ~4s, down from 7–10s. See verification.md + decisions.md 2026-07-07.
 - [ ] **Docs legibility cleanup (review with Isaac before changing anything).** The doc set has drifted toward write-only: the "Last updated" headers on roadmap.md/verification.md are giant single-paragraph blobs that are (Isaac, 2026-07-05) "incredibly difficult to decipher." Goal: legible, MECE, and understandable by a lay reader — likely means moving update history into a dated changelog list, tightening section structure, and cutting duplication across docs. **Process note: this is a review-together session, not a solo sweep — propose the new structure to Isaac first, adjust, then execute.**
 
 ---
