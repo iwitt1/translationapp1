@@ -49,6 +49,12 @@ jobs:
           sudo apt-get install -y postgresql-common
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get install -y postgresql-client-17
+          # ubuntu-latest ships pg_dump 16, which refuses to dump a v17+ server.
+          # Force the freshly-installed v17 binary to the front of PATH for later steps.
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+
+      - name: Confirm pg_dump version
+        run: pg_dump --version   # expect 17.x — must be >= the Supabase server version
 
       - name: Dump public schema
         run: |
