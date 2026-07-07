@@ -16,6 +16,25 @@
 
 ---
 
+## 2026-07-07 — Translate effort → low + prompt v2.1.0, chosen via model-comparison harness
+
+**Decision:** `TRANSLATE_REASONING_EFFORT` `'medium'` → `'low'` (model stays `gpt-5.4`). `PROMPT_VERSION` → `2.1.0` with three rule changes: (1) two-way casing fidelity — mirror the sender's actual casing in both directions, slang ≠ lowercase; (2) history-referent resolution — reactions/pronouns/elliptical replies keep their true referent from prior messages; (3) no invented gender forms — when speaker gender is unknown, prefer agreement-avoiding phrasings, never "emocionad@"/"emocionade" unless the profile explicitly says nonbinary. Also built `scripts/model-comparison-test.mjs`: a local harness (23 frozen cases × 6 model configs) that imports the production `buildMessages` and calls OpenAI directly — no app, no auth, no staging deploys, no magic-link rate limits. Both runs' results committed alongside in `scripts/`.
+
+**Context:** The 2026-07-05 swap to gpt-5.4 medium fixed translation quality but cost ~7–10s per translation. Harness run 1 (prompt v2.0.0) showed the casing and referent failures occurred at *every* effort level (prompt-side, not model-side), and that medium had no quality edge over low. Run 2 (prompt v2.1.0) confirmed the prompt fixes landed on every candidate — including two novel referent probes (cases 22–23) the prompt never quotes, i.e. the rule generalized rather than memorized.
+
+**Alternatives considered:**
+- *Stay at medium.* 11.8s average in run 2, and it was the only config still failing the case-3 referent. No remaining wins over low.
+- *gpt-5.4-mini:low.* 2.5s with a tight distribution, $1.63/1k messages, and it passes everything **except** professional register (still "puedes" where usted is required, case 14) with weaker keigo. Rejected on strategy: register/context handling is precisely what the Phase-2 B2B API sells; shipping a model that can't do usted undercuts the core claim.
+- *gpt-5.4:none.* Passed most checks but erratic tail latency (one 57s call) and lost register consistency in run 1.
+
+**Reasoning:** Low passes every ES/EN and CJK check including professional usted and the best keigo in the set; median latency ~2.6s (the 5.3s mean is three API-side outliers); $6.47/1k messages pre-cache — half of medium.
+
+**Implications:** Tail latency is real (occasional 15–30s calls) — mitigations are the parked wait-state UI (show original while translation pends) and eventually caching. The harness is now the standing regression suite: frozen cases are append-only, results files are stamped with prompt version, and every future prompt/model change should run it before staging. Run 2 also produced a data-backed candidate policy for the parked per-message routing item: casual → mini:low, professional/formal → 5.4:low. Separately observed: `ambiguity.detected` fires nondeterministically on every candidate across runs — do not rely on it until Phase 4 corrections data can measure it.
+
+**Revisit when:** Phase 4 corrections capture exists (A/B effort levels and prompt variants with real data); latency complaints persist after the wait-state UI ships; the routing item gets built.
+
+---
+
 ## 2026-07-05 — Translate model → gpt-5.4 (medium reasoning) + naturalness-first prompt rewrite (v2.0.0)
 
 **Decision:** Translate calls move from `gpt-4o-mini` (temperature 0) to `gpt-5.4` with `reasoning_effort: 'medium'`; detect calls stay on `gpt-4o-mini`. *(Correction, same day: the first commit used the nested `reasoning: { effort }` shape, which is Responses-API-only — Chat Completions takes flat `reasoning_effort`. Caught on the first staging gate run: every translate call 400'd. Fixed in the follow-up commit.)* In the same change, the translate system prompt was rewritten naturalness-first: bilingual-native-speaker persona (replacing "precision translation engine"), explicit idiom/slang rule with a worked example, a cultural-items rule (keep original names, never literal glosses), a texting-conventions rule (mirror missing periods/capitals, convert laughter, pass emoji; resolves the parking-lot "Punctuation and formatting fidelity" item), and an explicit T-V formality rule. `PROMPT_VERSION` → `2.0.0`. Model config centralized as exports in `lib/translatePrompt.js` (`TRANSLATE_MODEL`, `TRANSLATE_REASONING_EFFORT`, `DETECT_MODEL`) consumed by both call sites; `model_used` in event logging is now dynamic. Supporting changes: `vercel.json` gains `maxDuration: 60` for `api/v1/translate.js`; dev-server timeout 10s → 30s for translate calls; `temperature` removed from translate calls (unsupported on gpt-5.4 reasoning calls).

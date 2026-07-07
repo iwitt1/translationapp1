@@ -342,7 +342,7 @@ Once `prompt_version` is flowing on every cached translation, the next step is r
 - **Trigger:** Phase 4 is underway and we have enough translation volume to get statistically meaningful split-test results.
 
 ### Multi-model AI routing
-Per-message routing between cheap and expensive models. Short literal messages go to `gpt-4o-mini`. Long, idiomatic, or context-heavy messages go to `gpt-4o` or a fine-tuned model. 15x cost delta makes this real money at scale.
+Per-message routing between cheap and expensive models. Short literal messages go to a cheap model; long, idiomatic, or context-heavy messages go to a stronger one. **Update 2026-07-07:** the model-comparison harness produced a data-backed candidate policy — casual messages → `gpt-5.4-mini:low` (passed everything except professional register, 4x cheaper, tight ~2.5s latency), professional/formal contextType → `gpt-5.4:low` (the only tier that produces usted forms and full keigo). The 4x cost delta makes this real money at scale; contextType is already in every request, so the routing key exists.
 - **Why interesting:** Cost reduction without quality reduction.
 - **Trigger:** Small-scale stage; volume makes the cost difference matter financially.
 

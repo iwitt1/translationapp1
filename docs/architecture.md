@@ -19,7 +19,7 @@ A real-time multilingual chat application backed by an LLM-powered translation A
 - Backend (prod): Vercel serverless functions
 - Backend (local dev): Node + Express on localhost:3001
 - Database: Supabase (Postgres + Realtime)
-- AI: OpenAI (`gpt-5.4` medium reasoning for translate; `gpt-4o-mini` for detect — since 2026-07-05)
+- AI: OpenAI (`gpt-5.4` low reasoning for translate — since 2026-07-07, medium 07-05→07-07; `gpt-4o-mini` for detect)
 
 ---
 
@@ -787,9 +787,9 @@ Convention: increment the version in the same commit as the prompt change. The v
 
 ### Model strategy
 
-- **Current (2026-07-05):** mode-based split, configured in `lib/translatePrompt.js` (`TRANSLATE_MODEL`, `TRANSLATE_REASONING_EFFORT`, `DETECT_MODEL`) and consumed by both call sites. Translate runs `gpt-5.4` with `reasoning_effort: 'medium'` (flat param — Chat Completions shape; the nested `reasoning: { effort }` is Responses-API-only); detect stays `gpt-4o-mini` (trivial classification, runs on every send — reasoning would add cost/latency for nothing). No `temperature` on translate calls: unsupported on gpt-5.4 reasoning calls. The effort constant is the cost/latency dial — drop to `low`/`none` if chat latency hurts (OpenAI's guidance for latency-sensitive paths).
-- **History:** MVP ran `gpt-4o-mini` for everything (prompt v1.x). Replaced after observed literal-translation failures (decisions.md 2026-07-05).
-- **Small scale:** Consider per-message routing — cheap model for simple messages, gpt-5.4 for idiomatically dense or context-heavy ones. The ~25x cost delta makes routing logic worth building (parking lot).
+- **Current (2026-07-07):** mode-based split, configured in `lib/translatePrompt.js` (`TRANSLATE_MODEL`, `TRANSLATE_REASONING_EFFORT`, `DETECT_MODEL`) and consumed by both call sites. Translate runs `gpt-5.4` with `reasoning_effort: 'low'` (flat param — Chat Completions shape; the nested `reasoning: { effort }` is Responses-API-only); detect stays `gpt-4o-mini` (trivial classification, runs on every send — reasoning would add cost/latency for nothing). No `temperature` on translate calls: unsupported on gpt-5.4 reasoning calls. Effort chosen via the model-comparison harness (`scripts/model-comparison-test.mjs`, decisions.md 2026-07-07): low keeps every quality differentiator (professional usted register, keigo, neutral-gender handling) at ~2.6s median.
+- **History:** MVP ran `gpt-4o-mini` for everything (prompt v1.x) — replaced after literal-translation failures (decisions.md 2026-07-05). Medium effort 07-05→07-07 — dropped after the harness showed no quality edge over low at 2–4x the latency (decisions.md 2026-07-07).
+- **Small scale:** Per-message routing, now with a data-backed candidate policy from the 2026-07-07 harness runs: casual → `gpt-5.4-mini:low` (passes everything but professional register, 4x cheaper), professional/formal → `gpt-5.4:low`. Parking lot.
 - **Funded:** Evaluate cheaper providers for cost; consider fine-tuning on corrections data once thousands of high-quality pairs exist.
 - **Always:** Keep backend model-agnostic. The model names live in one configuration point (`lib/translatePrompt.js`), never hardcoded in business logic.
 

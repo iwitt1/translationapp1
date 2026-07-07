@@ -16,23 +16,23 @@
 
 | Service | Cost |
 |---|---|
-| OpenAI API (`gpt-5.4` medium translate + `gpt-4o-mini` detect, low volume) | ~$5–15/month |
+| OpenAI API (`gpt-5.4` low translate + `gpt-4o-mini` detect, low volume) | ~$3–10/month |
 | Supabase | Free tier |
 | Vercel | Free tier |
 | GitHub | Free |
-| **Total** | **~$5–20/month** |
+| **Total** | **~$3–15/month** |
 
-Within the $30/month tools budget at MVP volume, but no longer negligible: a gpt-5.4 medium-reasoning translate call costs roughly $0.007–0.012 (input ~$2.50/M, output incl. billed reasoning tokens ~$15/M) vs ~$0.0003 on gpt-4o-mini — a ~25–40x per-call increase (2026-07-05 model swap; decisions.md same date). The reasoning-effort constant in `lib/translatePrompt.js` is the cost dial.
+Within the $30/month tools budget at MVP volume, but no longer negligible: a gpt-5.4 low-reasoning translate call costs ~$0.0065 measured (harness average, decisions.md 2026-07-07; was ~$0.012 at medium) vs ~$0.0003 on gpt-4o-mini — a ~20x per-call increase over the pre-2026-07-05 setup. The reasoning-effort constant in `lib/translatePrompt.js` is the cost dial.
 
 ### Small scale (1,000–10,000 active users, ~60% cache hit rate)
 
 | Service | Cost |
 |---|---|
-| OpenAI (`gpt-5.4` medium for all translates — current config) | ~$400–1,500/month |
-| OpenAI (with per-message routing: cheap model for simple messages) | ~$100–400/month |
+| OpenAI (`gpt-5.4` low for all translates — current config, ~$6.5/1k msgs measured) | ~$200–800/month |
+| OpenAI (with per-message routing: casual → mini:low, formal → 5.4:low) | ~$75–300/month |
 | Supabase Pro | $25/month |
 | Vercel Pro | $20/month |
-| **Total** | **~$150–1,550/month** |
+| **Total** | **~$120–850/month** |
 
 Model choice is now decisively the dominant cost variable. The ~25x cost delta between `gpt-4o-mini`-class and `gpt-5.4` translate calls is what makes per-message model routing (parking lot) worth building before any real scale, and the reasoning-effort dial (`medium` → `low`/`none`) is the cheapest first lever.
 

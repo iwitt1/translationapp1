@@ -1734,7 +1734,9 @@ See roadmap.md Phase 2.2, decisions.md 2026-06-23, operations.md (topology + dep
 
 ## Translate model swap: gpt-5.4 + prompt v2.0.0 (2026-07-05) — ⏳ gate PENDING on staging
 
-**What shipped:** translate calls moved to `gpt-5.4` (`reasoning_effort: 'medium'` — flat Chat Completions param, not the nested Responses-API shape; no temperature; JSON mode); detect stays `gpt-4o-mini`; naturalness-first prompt rewrite (`PROMPT_VERSION` 2.0.0); model config centralized in `lib/translatePrompt.js`; `vercel.json` `maxDuration: 60` for the translate function; dev-server translate timeout 30s. See decisions.md 2026-07-05.
+**What shipped:** translate calls moved to `gpt-5.4` (`reasoning_effort` — flat Chat Completions param, not the nested Responses-API shape; no temperature; JSON mode); detect stays `gpt-4o-mini`; naturalness-first prompt rewrite (`PROMPT_VERSION` 2.0.0); model config centralized in `lib/translatePrompt.js`; `vercel.json` `maxDuration: 60` for the translate function; dev-server translate timeout 30s. See decisions.md 2026-07-05.
+
+**Updated 2026-07-07:** effort tuned `medium` → `low` and prompt bumped to **v2.1.0** (two-way casing fidelity, history-referent resolution, no invented gender forms) after two runs of the model-comparison harness (`scripts/model-comparison-test.mjs`; decisions.md 2026-07-07). The gate below covers the combined change; three checks added for the v2.1.0 rules.
 
 **Staging gate (branch push → Vercel Preview against staging Supabase):**
 
@@ -1743,6 +1745,9 @@ See roadmap.md Phase 2.2, decisions.md 2026-06-23, operations.md (topology + dep
   - "te pedí los tacos de canasta" → keeps "tacos de canasta", NOT "basket tacos".
   - Send 3+ casual English messages without final periods/capitals → Spanish output mirrors the style (no added periods, no formalizing).
   - "jajaja" / "lol" convert to the target-language casual laughter equivalent.
+  - **(v2.1.0)** Send properly-capitalized casual/slang messages → output keeps the caps (no "dude i got..." lowercasing).
+  - **(v2.1.0)** Send a reaction to the other user's message ("about time!!" style) → translation keeps the referent (about *them*, not the sender).
+  - **(v2.1.0)** From an account with no gender set, send "I'm so excited" → Spanish output avoids forced agreement (no "emocionado" default, no "emocionad@"/"emocionade").
 - [ ] **JSON contract intact** — translations render in the UI (schema unchanged: translated_text + inferences + ambiguity all parse).
 - [ ] **Model routing correct** — `translation_events`: translate rows show `model_used = 'gpt-5.4'`, detect rows show `model_used = 'gpt-4o-mini'`, both with `prompt_version = '2.0.0'`.
 - [ ] **Latency acceptable** — check `latency_ms` on translate events; if p50 feels bad in the UI at `medium`, drop `TRANSLATE_REASONING_EFFORT` to `'low'` and re-run this gate.
