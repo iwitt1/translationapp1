@@ -22,6 +22,7 @@
 - [ ] **Model/effort analysis.** Build a small fixed test set from real staging traffic (the Peter/Diego conversation: payaso, tacos de canasta, no-periods casual style, plus 5–10 more cases). Run it across candidates — `gpt-5.4` at `low` and `none`, `gpt-5.4-mini` at `medium`/`low`, `gpt-4o-mini` as the floor — recording quality (nuance kept?), `latency_ms`, and per-call cost. Pick the best point on the curve; target conversational feel (~2–3s).
 - [ ] **Capitalization-fidelity prompt fix.** v2.0.0 overcorrects casing: drops sentence-initial capitals and renders "I'm" as "i'm" even when the sender capitalized properly. Sharpen the mirror-the-sender rule: mirror the sender's *actual* casing, never impose lowercase. One PROMPT_VERSION bump together with the model change.
 - [ ] **Prod rollout** of the chosen model + prompt via the verification.md gate (re-run the regression cases on prod).
+- [ ] **Docs legibility cleanup (review with Isaac before changing anything).** The doc set has drifted toward write-only: the "Last updated" headers on roadmap.md/verification.md are giant single-paragraph blobs that are (Isaac, 2026-07-05) "incredibly difficult to decipher." Goal: legible, MECE, and understandable by a lay reader — likely means moving update history into a dated changelog list, tightening section structure, and cutting duplication across docs. **Process note: this is a review-together session, not a solo sweep — propose the new structure to Isaac first, adjust, then execute.**
 
 ---
 
