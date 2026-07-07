@@ -2,40 +2,11 @@
 
 > Living technical document. Describes what the system is, the principles it's built on, and what we're migrating toward. Updated in the same commit as any architectural change.
 
-**Last updated:** 2026-07-07 — docs legibility cleanup (added Contents TOC; §7 now points to the generated `schema.sql`; update history moved to the Changelog). Substantive prior update 2026-06-23 (Phase 2.1 token auth; Phase 2.2 domain/email/sessions). Full history in [Changelog](#changelog).
+**Last updated:** 2026-06-23 (Phase 2.1 token auth on backend API calls — §10/§11/§13; anon-key `getClaims()` verification. Phase 2.2 public-demo readiness — added §11 "Production domain, email & sessions": app live at `app.jistchat.com` (Vercel custom domain on `jistchat.com`), magic-link email via Resend, persistent sessions via Supabase defaults; Auth Site URL moved to the new domain. Config + the token-auth code; no schema change. See decisions.md 2026-06-23. Prior 2026-06-18: **Phase 3 production cutover EXECUTED.** Migrations 016→019 replayed on prod `translationapp1` (high-water mark was 015): 016 no-op (already CASCADE), 017 conversations schema + `messages.conversation_id` promotion, sentinel purge a no-op (messages=0), 018 membership-scoped `messages`/`message_translations` RLS, 019 context_type vocab unify — each verified against its embedded block; then `phase3/step1-conversations` merged → `main` (`5251669..c13f8ae`) and Vercel auto-deployed the conversation-aware frontend, closing the broken-sends window. 2-user prod smoke GREEN; 3rd-user/group flows + custom SMTP deferred. Reconciled this pass: §2 item 5 (conversation model now on prod), §7 (017/018/019 rows → prod-applied), §10 (prod RLS now live, membership-scoped) — the last three had carried stale "prod has no RLS / pre-007" prose left over from before the 2026-06-11 Phase 2 cutover. See decisions.md/operations.md/verification.md 2026-06-18. Prior 2026-06-11: **Phase 2 production cutover EXECUTED.** The coordinated wipe-then-replay ran against prod `translationapp1`: prod (previously at migration 006, pre-auth/no-RLS) was wiped (8 data tables truncated, `tenants` sentinel kept; **no snapshot** — free tier, disposable data) and migrations **007→015 replayed clean**, each verified against its in-file block. `profile_writer` `LOGIN` enabled out of band; `DATABASE_URL_PROD_WRITER` + `DATABASE_URL_PROFILE_WRITER` set in Vercel Production on **port 6543**; manual redeploy to pick up env vars (`main` auto-deploys code but not env changes). Supabase prod **Site URL** had to be set to `https://translationapp1.vercel.app` (+ `/**` redirect) — magic links were falling back to `localhost`. Single-user smoke GREEN (signup → onboard → ULP row → message). **Two-user inference path PASSED live on prod 2026-06-11** (es-AR + casual written to the sender's row, two `user_profile_events` rows, trust boundary held under the `profile_writer` role; first attempt 500'd on a special-char password in `DATABASE_URL_PROFILE_WRITER` — fixed by an alphanumeric reset + redeploy; migration 015's connection-string comment corrected). Vercel crons confirmed registered on prod (abandonment 08:00, deletion 09:00). **Cutover FULLY GREEN — prod now matches the shipped Phase 2 app with no pending verification.** See decisions.md 2026-06-11 "Phase 2 production cutover executed" + verification.md "Phase 2 production cutover". Prior same-day: **Pre-cutover schema + role hardening.** Migration **014 `forward_schema_prep`** verified on staging (4/4 GREEN): adds `messages.conversation_id` (nullable, default global-conversation sentinel `…0002`, no FK — Phase 3 adds the FK + NOT NULL with zero backfill), drops the 7 vestigial `messages` columns (all superseded — see §7), converts four naive `timestamp` columns → `timestamptz` (interpreted AS UTC), and adds the missing FK indexes. Migration **015 `profile_writer_role`** (applied on staging + **prod 2026-06-11**) adds a least-privilege `profile_writer` Postgres role for `server/lib/inferProfile.js` — **scoped GRANTs + RLS policies `TO profile_writer`, not BYPASSRLS** (the DB authorizes the operation, app code authorizes the row via the message-derived trust boundary; deny-by-default everywhere else); role is `NOLOGIN` so the migration carries no secret — operator enables login + sets `DATABASE_URL_PROFILE_WRITER` out of band before the inference gate (#12). §7 (messages/conversation_id + vestigial drop + timestamptz notes), §10 (profile_writer role posture), §13 file map all reconciled; decisions.md 2026-06-11 ×2 ("Forward-schema prep before prod cutover", "profile_writer role: scoped RLS, not BYPASSRLS"). Prod replay sequence is now 007→015. Prior 2026-06-11: Phase 2 **Step 7 (data deletion / GDPR erasure) gate PASSED on staging — 37/37 GREEN** (first run 5/15 before migration 013 was applied — PostgREST "function not found in schema cache"). Migration 013 adds the net-new `data_deletion_requests` table + RLS + 6 RPCs (`request_account_deletion`/`cancel_account_deletion` user-facing; `list_due_deletion_requests`/`claim_deletion_request`/`complete_deletion_request` service_role); the Node sweep is `server/lib/deletion.js` + `api/v1/jobs/deletion.js` (daily 09:00 UTC cron) + a second `vercel.json` cron. **Two-phase** erasure: `request` soft-deletes (`status='deactivated'`) + enqueues with a 30-day `grace_until`; `cancel` reverses within grace; the sweep hard-deletes due requests via the admin API and the 007/008 FK chain anonymizes (profile/identifiers/settings/ULP/events cascade; `messages.sender_id`→NULL retains content). Audit row survives the cascade (`user_id` FK = SET NULL). Records the keyed email HMAC reusing `email_hash_abuse` (no schema change). Schema extends §7's sketch with `grace_until`/`requested_by`/`cancelled` (decisions.md 2026-06-11). §7 status + table, §10 retention, §13 file map, DB-functions list all reconciled. Prod replay of 013 pending the Phase 2 cutover. Earlier 2026-06-11: Phase 2 **Step 6** gate ✅ **PASSED on staging — 19/19 GREEN**; §7 status flipped. The sweep code (`server/lib/abandonment.js`) is unchanged in shape — a dry-run counter bug was fixed (the `summary.deleted`/`summary.hashed` increments moved inside the `if (!dryRun)` guards; no live-sweep behavior change). Prod replay of 012 pending the Phase 2 cutover (after Step 7). Prior 2026-06-10: §7/§8/§11/§13 reconciled to Phase 2 **Step 6** — migration 012 (abandonment support functions `list_abandoned_pending_accounts()` + `record_abandoned_email_hash()`, service_role-only) **written, pending gate on staging**; the sweep itself is Node — `server/lib/abandonment.js` run by a Vercel cron (`api/v1/jobs/abandonment.js` + `vercel.json`). Username release is automatic via the auth.users→profiles→identifiers FK cascade — no release RPC (decisions.md 2026-06-10 "Step 6 abandonment"). Prior 2026-06-10: §7/§10/§13 reconciled to Phase 2 **Step 5** — migration 011 (social graph + safety primitives) **gate PASSED on staging, 40/40 GREEN** (Step 4 discovery gate re-passed 22/22 after the block-filter amend): `relationships` adopts the **canonical-pair** model — `account_lo`/`account_hi`/`initiator_id` rather than the originally-sketched `requester_id`/`addressee_id` (decisions.md 2026-06-10 "Contact-graph representation"); adds `blocks`/`reports`/`invites`/`invite_redemptions`/`email_hash_abuse`, nine SECURITY DEFINER RPCs, and amends the two Step 4 discovery RPCs to filter active blocks. Prior 2026-06-10: §2, §7, §10, §13 reconciled to the Phase 2 build: migrations 007 (identity foundation) + 008 (identity cutover) are LIVE ON STAGING — `profiles`/`account_identifiers`/`account_settings` exist, `user_profiles` dropped, `messages.sender_id` + `user_linguistic_profiles`/`user_profile_events` cut over to uuid, RLS enabled on the Phase 2 tables, and `auth_tenant_id()`/`handle_new_user()`/`complete_onboarding()` added. Server-side profile inference shipped + verified on staging. **Prod is untouched** — it still runs the pre-auth no-RLS app; the cutover is a coordinated wipe-staging-then-prod event (see §10). Prior 2026-05-18: §7 vestigial-column reconciliation.)
 **Repo:** https://github.com/iwitt1/translationapp1
 **Owner:** Isaac (iwitt1)
 
 > **Read first:** `/docs/strategy.md` for product context, `/docs/roadmap.md` for what we're building when, `/docs/decisions.md` for why specific calls were made.
-
----
-
-## Contents
-
-- [1. What this is](#1-what-this-is)
-- [2. Current state — what works today](#2-current-state--what-works-today)
-- [What does NOT work today (in priority order to fix)](#what-does-not-work-today-in-priority-order-to-fix)
-- [3. Architectural principles (never violate)](#3-architectural-principles-never-violate)
-- [4. The layer separation](#4-the-layer-separation)
-- [5. The translation API contract](#5-the-translation-api-contract)
-- [6. The context object — the personalization mechanism](#6-the-context-object--the-personalization-mechanism)
-- [7. Database schema](#7-database-schema)
-  - [Tables that exist today (MVP)](#tables-that-exist-today-mvp)
-  - [Tables to add in Phase 0 (cheap structural prep)](#tables-to-add-in-phase-0-cheap-structural-prep)
-  - [Tables to add in Phase 1 (with the contextual-translation feature)](#tables-to-add-in-phase-1-with-the-contextual-translation-feature)
-  - [Tables to add in Phase 1–2 (build the schema even before features fill them)](#tables-to-add-in-phase-12-build-the-schema-even-before-features-fill-them)
-  - [Phase 2 tables (identity, discovery, social graph)](#phase-2-tables-identity-discovery-social-graph)
-  - [Phase 2 DB functions (live on staging, 007/008)](#phase-2-db-functions-live-on-staging-007008)
-- [8. How a translation moves through the system](#8-how-a-translation-moves-through-the-system)
-- [9. AI integration — how it actually works](#9-ai-integration--how-it-actually-works)
-- [10. Security and privacy posture](#10-security-and-privacy-posture)
-- [11. Environments and config](#11-environments-and-config)
-- [12. Deployment](#12-deployment)
-- [13. File map](#13-file-map)
-- [14. Brand & visual identity](#14-brand--visual-identity)
-- [15. Glossary](#15-glossary)
-- [16. Maintenance rules for this doc](#16-maintenance-rules-for-this-doc)
-- [Changelog](#changelog)
 
 ---
 
@@ -226,8 +197,6 @@ The `_source` fields in `user_linguistic_profiles` (e.g., `dialect_source: 'expl
 ---
 
 ## 7. Database schema
-
-> **Source of truth for the *what*:** exact current DDL lives in **`docs/schema.sql`** (a generated `supabase db dump --schema-only` snapshot, regenerated per migration — operations.md §3) and in **`/migrations/`** (000–020, replayable in order). This section owns the ***why***: what each table is for, the relationships, and the constraints that carry meaning. *(2026-07-07: `schema.sql` is set up but pending its first real generation — see that file's header — so the column-level detail below is retained for now; it can be slimmed to rationale once the dump is committed.)*
 
 > **Migration status (2026-06-10).** The "Phase N — to add" framing below is partly historical: a
 > chunk of it has now shipped to **staging** (not prod). Quick map:
@@ -977,7 +946,7 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │   │   ├── abandonment.js    Step 6 abandonment sweep (delete aged-pending, release username, HMAC)
 │   │   └── deletion.js       Step 7 deletion sweep (claim→hash→admin-delete→complete; SET-NULL retain)
 │   └── .env                  Local OPENAI_API_KEY (not committed)
-├── migrations/               Run in Supabase SQL editor, manually for now (000–020; 000–020 live on prod as of 2026-07-07)
+├── migrations/               Run in Supabase SQL editor, manually for now (000–019; 000–019 live on prod as of 2026-06-18)
 │   ├── 000_base_schema.sql … 006_user_profile_events_task_id.sql
 │   ├── 007_phase2_identity_foundation.sql   profiles/identifiers/settings, auth_tenant_id(), trigger
 │   ├── 008_phase2_step2_identity_cutover.sql  text→uuid cutover, RLS, complete_onboarding()
@@ -991,8 +960,7 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │   ├── 016_fix_message_translations_cascade.sql  Reconcile message_translations.message_id FK → ON DELETE CASCADE on both envs (staging had drifted to NO ACTION vs prod); also corrects migration 000
 │   ├── 017_phase3_conversations.sql          Phase 3 Step 1: conversations + conversation_members tables + RLS + dedupe; promotes messages.conversation_id to a real FK; adds conversation_contexts RLS+FK; create_conversation/leave_conversation/set_conversation_context_type/is_active_member RPCs; amends create_invite/redeem_invite for conversation-kind; adds tenants.conversation_policy
 │   ├── 018_phase3_messages_rls.sql           Phase 3 Step 2 / Spec 7: flips messages + message_translations RLS tenant-scoped → membership-scoped (is_active_member). Drops+recreates the same 5 policy names from 008; policies-only, no DDL/data change; messages stay immutable; replay to prod AFTER 017
-│   ├── 019_unify_context_type_vocab.sql       Unify conversations.context_type CHECK + create_conversation/set_conversation_context_type inline guards on the engine vocab (casual/dating/professional/academic). ALTER + CREATE OR REPLACE; defensive remap; does NOT touch detected_register
-│   └── 020_onboarding_username.sql       Onboarding requires a user-chosen username; complete_onboarding() (3-arg) claims it atomically with activation; change_username() allows self-revert; display_name denylist
+│   └── 019_unify_context_type_vocab.sql       Unify conversations.context_type CHECK + create_conversation/set_conversation_context_type inline guards on the engine vocab (casual/dating/professional/academic). ALTER + CREATE OR REPLACE; defensive remap; does NOT touch detected_register
 ├── scripts/
 │   ├── rls-adversarial-test.mjs   Phase 2 Step 3 RLS gate (run on staging)
 │   ├── discovery-gate-test.mjs    Phase 2 Step 4 discovery gate (run on staging)
@@ -1020,18 +988,17 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │       └── conversations.js  Data-access layer for Phase 3 conversations: RPC wrappers (create/leave/setContextType/invite/redeem) + list/read/insert queries
 ├── docs/
 │   ├── architecture.md       This file
-│   ├── schema.sql            Generated current-state schema snapshot (the *what*; §7 owns the *why*)
 │   ├── strategy.md           Product vision, two-phase plan, market
 │   ├── operations.md         Cost model, hiring, workflow
 │   ├── roadmap.md            Phased roadmap with checklists
+│   ├── phase2-implementation.md  Phase 2 step-by-step build spec
 │   ├── parking-lot.md        Uncommitted ideas
 │   ├── decisions.md          Dated decisions log
 │   ├── policies.md           Trust & safety / identity governance (living, audited)
 │   ├── specs.md              Hermes spec archive
 │   ├── verification.md       Verification and debugging checklists
 │   ├── hermes.md             Hermes Agent charter (VPS execution agent)
-│   ├── cowork-handoff.md     Weekly Hermes→Cowork briefing (⏸ paused)
-│   └── archive/              Frozen pre-cleanup snapshots + retired docs (see archive/README.md)
+│   └── cowork-handoff.md     Weekly Hermes→Cowork briefing
 ├── .cursorrules              Cursor rules and pointer to /docs
 ├── .env                      Frontend env vars
 ├── .env.rls-test.example     Template for the Step 3 RLS gate config (committed; real one gitignored)
@@ -1108,17 +1075,3 @@ Plain-English definitions for jargon used here. Keeps the door open for non-tech
 - Keep it concise; over 800 lines means we're documenting things the code should make obvious.
 - New non-trivial decisions go in `decisions.md` with a date and reasoning, not into this doc.
 - New ideas that aren't being built yet go in `parking-lot.md`, not into this doc.
-
-
----
-
-## Changelog
-
-*Reverse chronological. One line per change; project events link to `decisions.md`.*
-
-- **2026-07-07** — Docs legibility cleanup: added Contents TOC; header de-blobbed; §7 wired to the new generated `docs/schema.sql`; §13 file map updated (migration 020, `schema.sql`, `archive/`; phase2-implementation retired). (→ decisions.md 2026-07-07 "Docs legibility cleanup + new conventions")
-- **2026-06-23** — Phase 2.1 token auth (§10/§11/§13) + Phase 2.2 production domain/email/sessions (§11). (→ decisions.md 2026-06-23)
-- **2026-06-18** — Phase 3 production cutover reconciled: §2/§7/§10 (016→019 on prod; membership-scoped RLS live). (→ decisions.md 2026-06-18)
-- **2026-06-11** — Phase 2 production cutover; forward-schema prep (014) + profile_writer role (015); §7/§10/§13 reconciled. (→ decisions.md 2026-06-11)
-- **2026-06-10** — §2/§7/§10/§13 reconciled to Phase 2 Steps 2–7 (identity cutover, discovery, social graph, abandonment, deletion). (→ decisions.md 2026-06-10)
-- **2026-05-18** — §7 vestigial-column reconciliation; staging added.

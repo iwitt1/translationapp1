@@ -6,17 +6,38 @@ Real-time multilingual chat app backed by an LLM-powered contextual translation 
 
 ## Project documentation
 
-The substantive documentation lives in [`/docs/`](docs/). Read these before touching the codebase:
+The substantive documentation lives in [`/docs/`](docs/). **New here? Read in this order:**
+[strategy](docs/strategy.md) → [architecture](docs/architecture.md) → [roadmap](docs/roadmap.md) → [decisions](docs/decisions.md).
 
-- [`docs/architecture.md`](docs/architecture.md) — Technical system design
-- [`docs/strategy.md`](docs/strategy.md) — Product vision and two-phase plan
-- [`docs/operations.md`](docs/operations.md) — Cost model, hiring, workflow, staging environment
-- [`docs/roadmap.md`](docs/roadmap.md) — Phased roadmap with checklists
-- [`docs/parking-lot.md`](docs/parking-lot.md) — Ideas not currently committed
-- [`docs/decisions.md`](docs/decisions.md) — Decisions log
-- [`docs/verification.md`](docs/verification.md) — Post-feature verification and debugging checklists
-- [`docs/hermes.md`](docs/hermes.md) — Operating charter for the Hermes Agent (operational AI executor)
-- [`docs/specs.md`](docs/specs.md) — Active and recent feature specs in flight
+**Strategy & product**
+
+- [`docs/strategy.md`](docs/strategy.md) — Product vision, two-phase (trojan-horse) plan, target verticals
+
+**Build & architecture**
+
+- [`docs/architecture.md`](docs/architecture.md) — Technical system design: principles, layer separation, API contract, schema
+- [`docs/schema.sql`](docs/schema.sql) — Generated current-state DB schema snapshot (the *what*; architecture §7 owns the *why*)
+- [`docs/roadmap.md`](docs/roadmap.md) — Phased roadmap with checklists + per-phase status
+- [`docs/specs.md`](docs/specs.md) — Feature specs (mostly historical / Hermes-era)
+
+**Process & ops**
+
+- [`docs/operations.md`](docs/operations.md) — Cost model, hiring, dev workflow, staging, migration runbook
+- [`docs/verification.md`](docs/verification.md) — Post-feature verification & debugging checklists
+- [`docs/policies.md`](docs/policies.md) — Trust & safety / identity governance (living, audited)
+
+**History & reference**
+
+- [`docs/decisions.md`](docs/decisions.md) — Append-only dated decisions log (the canonical "why")
+- [`docs/parking-lot.md`](docs/parking-lot.md) — Ideas not currently committed (Priority/Blocks tagged)
+
+**Paused / historical**
+
+- [`docs/hermes.md`](docs/hermes.md) — Hermes Agent charter — ⏸ paused (not currently in use)
+- [`docs/cowork-handoff.md`](docs/cowork-handoff.md) — Hermes→Cowork weekly briefing — ⏸ paused
+- [`docs/archive/`](docs/archive/) — Frozen doc snapshots + retired docs (e.g. `phase2-implementation.md`); see [`docs/archive/README.md`](docs/archive/README.md)
+
+**Conventions:** each doc keeps a **Changelog** at its bottom (one line per change); `decisions.md` is the canonical dated record of *why*.
 
 If you're using Cursor, [`.cursorrules`](.cursorrules) at the repo root encodes the project's never-violate rules and points at `/docs/`.
 
@@ -26,10 +47,10 @@ If you're using Cursor, [`.cursorrules`](.cursorrules) at the repo root encodes 
 - **Backend (prod):** Vercel serverless functions (`/api/`)
 - **Backend (local dev):** Node + Express (`/server/`)
 - **Database + realtime:** Supabase (Postgres), region `us-east-1`
-- **AI (translation):** OpenAI (`gpt-4o-mini` currently)
+- **AI (translation):** `gpt-5.4` (reasoning effort `low`) for translate + `gpt-4o-mini` for language detect (as of 2026-07-07)
 - **Deployment:** GitHub → Vercel auto-deploy
 - **Environments:** Production (`main` branch → prod Supabase) and Staging (any non-main branch → `translationapp1-staging` Supabase via Vercel Preview)
-- **Build agents:** Cowork (Claude Opus desktop app — strategy + planning), Hermes Agent (NousResearch framework on VPS — operational execution; Phase 1.5 setup pending). See [`docs/hermes.md`](docs/hermes.md).
+- **Build agents:** Cowork (Claude desktop app — strategy, architecture, planning) + Cursor (line-level edits, local dev loop). Hermes Agent (VPS execution agent) was set up but is **not currently in use** — see [`docs/hermes.md`](docs/hermes.md).
 
 ## Local development
 
@@ -92,7 +113,7 @@ For the staging-vs-prod git workflow (branch → Vercel Preview vs merge-to-`mai
 
 ## Status
 
-Phase 2 (multi-tenant identity + social graph) shipped; identity cutover GREEN 2026-06-11. Phase 1.5 (Hermes Agent) online. Staging environment built 2026-05-18. Phase 3 (real conversation model) **shipped to prod 2026-06-18** — migrations 016–019 + the conversation-aware frontend. **Phase 2.1 (auth hardening): token auth on all backend API calls — DONE, prod-verified 2026-06-23.** **Phase 2.2 (public demo readiness): live on `app.jistchat.com`, custom email via Resend (magic-link rate cap removed), persistent login — DONE 2026-06-23; the app is open for external account creation.** Remaining before wide sharing: a sign-out confirmation, hiding empty "ghost" conversations, and a 3+-user smoke (all small). Phase 2.3 (case-study landing page at `jistchat.com` root) planned. See [`docs/roadmap.md`](docs/roadmap.md) for what's next and [`docs/architecture.md`](docs/architecture.md) §2 for what currently works versus what doesn't.
+Phase 2 (multi-tenant identity + social graph) shipped; identity cutover GREEN 2026-06-11. Phase 1.5 (Hermes Agent) was set up but is **paused** — Cowork + Cursor is the working toolchain. Staging environment built 2026-05-18. Phase 3 (real conversation model) **shipped to prod 2026-06-18** — migrations 016–019 + the conversation-aware frontend. **Phase 2.1 (auth hardening): token auth on all backend API calls — DONE, prod-verified 2026-06-23.** **Phase 2.2 (public demo readiness): live on `app.jistchat.com`, custom email via Resend (magic-link rate cap removed), persistent login — DONE 2026-06-23; the app is open for external account creation.** Remaining before wide sharing: a sign-out confirmation, hiding empty "ghost" conversations, and a 3+-user smoke (all small). Phase 2.3 (case-study landing page at `jistchat.com` root) planned. See [`docs/roadmap.md`](docs/roadmap.md) for what's next and [`docs/architecture.md`](docs/architecture.md) §2 for what currently works versus what doesn't. **Most recent (2026-07-07):** translate model moved to `gpt-5.4` effort `low` + prompt v2.1.0, and username choice moved into onboarding (migration 020) — both on prod.
 
 ## Repo
 

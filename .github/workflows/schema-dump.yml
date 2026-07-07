@@ -1,0 +1,72 @@
+# Regenerates docs/schema.sql (the flattened current-state DB schema) from the live database.
+# Runs pg_dump in the cloud, so nothing needs to be installed locally.
+#
+# Triggers:
+#   - push to main touching migrations/**  → the moment the schema actually changes
+#   - workflow_dispatch                     → a manual "Run" button in the Actions tab
+#   - schedule (weekly)                     → safety net that catches out-of-band / dashboard
+#                                             changes not captured in a migration file
+#
+# One-time setup required:
+#   Add a repo secret named SUPABASE_DB_URL = the prod Postgres connection string
+#   (Supabase dashboard → Project Settings → Database → Connection string → "Session pooler",
+#   port 5432, with the password filled in and percent-encoded). Prefer the least-privilege
+#   read-only role if it can read the catalog; otherwise the standard postgres connection.
+#   GitHub: Settings → Secrets and variables → Actions → New repository secret.
+#
+# See decisions.md 2026-07-07 "Automated schema.sql via CI" and operations.md §3.
+
+name: Dump DB schema
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'migrations/**'
+  workflow_dispatch: {}
+  schedule:
+    - cron: '0 9 * * 1'   # Mondays 09:00 UTC — weekly drift safety net
+
+# Allow the workflow to commit the regenerated file back to the repo.
+permissions:
+  contents: write
+
+# Never run two dumps at once; cancel an in-flight run if a newer one starts.
+concurrency:
+  group: schema-dump
+  cancel-in-progress: true
+
+jobs:
+  dump-schema:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Install pg_dump (PostgreSQL 17 client)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-17
+
+      - name: Dump public schema
+        run: |
+          pg_dump \
+            --schema-only \
+            --schema=public \
+            --no-owner \
+            "${{ secrets.SUPABASE_DB_URL }}" \
+            -f docs/schema.sql
+
+      - name: Commit if the schema changed
+        run: |
+          if git diff --quiet -- docs/schema.sql; then
+            echo "schema.sql unchanged — nothing to commit."
+          else
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add docs/schema.sql
+            git commit -m "chore(docs): regenerate schema.sql [skip ci]"
+            git push
+          fi

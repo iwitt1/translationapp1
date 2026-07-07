@@ -2,7 +2,7 @@
 
 > Living document. Owns product vision, business strategy, competitive positioning, target markets, and the differentiation thesis.
 
-**Last updated:** 2026-07-07 (structure only; substantive content dated 2026-05-12) · full history in [Changelog](#changelog)
+**Last updated:** 2026-05-12
 **Owner:** Isaac (iwitt1)
 
 ---
@@ -163,12 +163,3 @@ All of these are catalogued in `/docs/parking-lot.md` so they aren't forgotten.
 - A second vertical landed (likely gaming or legal).
 - Fine-tuned model that demonstrably outperforms baseline on our internal benchmark.
 - Revenue path that can sustain a small team.
-
----
-
-## Changelog
-
-*Reverse chronological. One line per change; project-level events link to `decisions.md`.*
-
-- **2026-07-07** — Docs legibility pass: standardized header + added this Changelog. No content changes. (→ decisions.md 2026-07-07 "Docs legibility cleanup + new conventions")
-- **2026-05-12** — Initial strategy doc created.

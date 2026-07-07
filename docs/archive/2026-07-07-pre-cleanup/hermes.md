@@ -1,7 +1,5 @@
 # Translation App — Hermes Agent Charter
 
-> ⏸️ **PAUSED — Hermes is not currently in use (2026-07-07).** The working toolchain is Cowork + Cursor; Hermes was never adopted in practice. This charter is kept as the reference design for if/when Hermes is reactivated. Content below is unchanged from when Hermes was last active. See decisions.md 2026-07-05.
-
 > Living document. Owns the operating contract for the Hermes agent: what it does, what it must never do, how it communicates, when it stops and asks, and the failure modes we're explicitly designing against. Updated in the same commit as any change to that contract.
 
 **Last updated:** 2026-06-01

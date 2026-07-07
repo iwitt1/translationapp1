@@ -1,7 +1,5 @@
 # Translation App — Cowork ↔ Hermes Handoff
 
-> ⏸️ **PAUSED — not currently active (2026-07-07).** Hermes is not in use; the working toolchain is Cowork + Cursor. This is a historical briefing (last written 2026-06-10). The "read this at session start" instruction below applied while Hermes was running. Kept for reference; will resume if Hermes is reactivated. See decisions.md 2026-07-05.
-
 > **Read this first at every Cowork session start** (after `git pull --ff-only`).
 > Format per `hermes.md` §17: reverse chronological, weekly sections.
 > Maintained by Hermes. Last written: 2026-06-10.

@@ -2,8 +2,11 @@
 
 > Living document. Owns cost model, hiring plan, development workflow, and vendor decisions.
 
-**Last updated:** 2026-07-07 — docs legibility cleanup; §3 migration workflow now includes a `schema.sql` regen step. Substantive prior update 2026-06-23 (§3 git/deploy runbook). Full history in [Changelog](#changelog).
-**Owner:** Isaac (iwitt1)
+**Last updated:** 2026-06-23 (Added §3 **"Git & deploy: staging vs prod — command-line runbook"** — a plain-English, copy-paste terminal guide to branch→Preview (staging) vs merge-to-`main` (prod), how to avoid an accidental push to `main`, and recovery if it happens. Added after the Phase 2.1 token-auth code reached prod via an accidental `main` merge (2026-06-23; accepted, no users — see decisions.md). Prior 2026-06-18: **Phase 3 production cutover EXECUTED** — replayed migrations 016→019 on prod `translationapp1` (high-water mark was 015), each verified against its embedded block, then merged `phase3/step1-conversations` → `main` (`5251669..c13f8ae`) and Vercel auto-deployed the conversation-aware frontend. 2-user prod smoke GREEN; 3rd-user/group smoke + custom SMTP deferred (Supabase built-in email caps magic links ~2/hr — also a real production blocker, logged in parking-lot). Migrations-list statuses for 016–019 + the "what's in /migrations/" paragraph flipped to prod-applied; added the "Prod cutover — Phase 3 EXECUTED 2026-06-18" §3 notes. See decisions.md/verification.md 2026-06-18. Prior 2026-06-12: migration 016 — FK-cascade drift fix: `message_translations.message_id → messages(id)` was ON DELETE CASCADE on prod but NO ACTION on staging, because migration 000's hand-reconstruction of the base tables dropped the clause the Studio-UI-built prod actually carried. 016 re-adds CASCADE on both environments + corrects 000 so fresh builds stay right. A full FK/default/constraint audit of the three 000-era tables found this the **only** drift. Independent of the Phase 3 conversations work — ships first; the two Phase 3 specs renumbered to migrations 017 (Spec 6 schema) / 018 (Spec 7 messages RLS). See decisions.md 2026-06-12 "FK drift: message_translations → messages cascade". Prior, 2026-06-11: migration 013 — Phase 2 Step 7 data deletion / GDPR Right to Erasure: net-new `data_deletion_requests` table + RLS + 6 RPCs (`request_account_deletion`, `cancel_account_deletion`, `list_due_deletion_requests`, `claim_deletion_request`, `complete_deletion_request`); two-phase soft-delete → 30-day grace → daily cron hard-delete via `server/lib/deletion.js` + `api/v1/jobs/deletion.js` (second Vercel cron, 09:00 UTC). **Gate PASSED on staging — 37/37 GREEN** (`scripts/deletion-gate-test.mjs`; first run 5/15 before 013 was applied). 007–013 staging-only; prod replay pending the Phase 2 cutover. Same-day prior: migration 012 **gate PASSED on staging — 19/19 GREEN** (first run 18/19; a dry-run counter bug in `server/lib/abandonment.js` was fixed — increments moved inside the `if (!dryRun)` guards — and the gate summary wording clarified; prod replay of 012 pending the Phase 2 cutover after Step 7). Prior 2026-06-10: migration 012 added — Phase 2 Step 6 abandonment + abuse monitoring: two service_role-only `SECURITY DEFINER` helpers, **written, gate pending on staging**; 007–012 flagged staging-only (prod replay pending the Phase 2 cutover, which lands after Step 7). Earlier same-day: 011 Step 5 social graph **gate PASSED 40/40**; Step 4 gate re-passed 22/22 after the 011 block-filter amend; 010 Step 4 discovery RPCs; 005–008 list, the `nonbinary` gender-enum regression in 008, post-008 test-user note.)
+
+**Prior update:** 2026-06-09 (added §6 "Trust & safety / identity policy review" ritual pointing at the new policies.md review cadence — start of each phase + quarterly, in sync with lib/policies.js and tenants.dm_initiation_policy)
+
+**Prior update:** 2026-05-18 (staging environment added; §3 expanded with "Staging environment" subsection; §3 toolchain updated to three agents — Cowork + Cursor + Hermes; §4 Supabase region confirmed as us-east-1)
 
 ---
 
@@ -195,8 +198,7 @@ This triggers a **Vercel Preview** build against **staging**. Find the Preview U
 3. Verify on staging using the verification queries embedded in each migration.
 4. Run the same migration against prod Supabase.
 5. Verify on prod.
-6. **`docs/schema.sql` regenerates automatically** via the `schema-dump` GitHub Action (`.github/workflows/schema-dump.yml`) — it runs on every migration merged to `main`, weekly, and on demand, then commits the refreshed dump. No manual step needed. Manual fallback if CI is unavailable: `pg_dump --schema-only --schema=public "<prod-connection-string>" -f docs/schema.sql` (needs `brew install libpq`). It's the drift-proof snapshot of *what* the schema is; architecture §7 owns the *why*. (2026-07-07.)
-7. The migration file lives in the repo as the canonical record. Any future fresh deploy can replay all migrations in order to reach the same state.
+6. The migration file lives in the repo as the canonical record. Any future fresh deploy can replay all migrations in order to reach the same state.
 
 **Prod cutover — Phase 3 EXECUTED 2026-06-18 (replay 016→019 + frontend merge).** The project's second prod cutover; far lower-risk than Phase 2 (additive schema + a policy swap, and prod held no real data). Ran in one Cowork-guided session with a verification gate after every migration.
 - **Prod high-water mark was 015** (the Phase 2 cutover). Replayed **016 → 017 → [sentinel purge] → 018 → 019**, each verified against its embedded block (all green).
@@ -300,7 +302,7 @@ Cursor has its own AI built in (`Cmd-K` for inline edits, the chat panel for que
 
 ---
 
-## 5. Operational rituals
+## 6. Operational rituals
 
 ### Trust & safety / identity policy review
 
@@ -329,23 +331,8 @@ Full rotation procedure lives in `/docs/verification.md` "Hermes access credenti
 
 ---
 
-## 6. Time budget
+## 5. Time budget
 
 - Isaac targets 10–15 hours per week on the project.
 - No hard deadline. Goal: working MVP-quality contextual translation faster than a month; "meaningful AI fluency" as a personal outcome within roughly the same window.
 - Phase order is firm (see roadmap.md): Phase 0 → Phase 1 → Phase 2 → Phase 3.
-
----
-
-## Changelog
-
-*Reverse chronological. One line per change; migration/project events link to `decisions.md`.*
-
-- **2026-07-07** — Docs legibility cleanup: header de-blobbed; added this Changelog; §3 migration workflow gained a `docs/schema.sql` regen step; §5/§6 numbering fixed (were swapped). (→ decisions.md 2026-07-07 "Docs legibility cleanup + new conventions")
-- **2026-06-23** — Added §3 "Git & deploy: staging vs prod" command-line runbook (after the accidental `main` merge of the token-auth code). (→ decisions.md 2026-06-23)
-- **2026-06-18** — Phase 3 prod cutover: replayed migrations 016→019; migrations-list statuses flipped to prod-applied; added the Phase 3 cutover §3 notes. (→ decisions.md 2026-06-18)
-- **2026-06-12** — Documented migration 016 (FK-cascade drift fix); Phase 3 specs renumbered to migrations 017/018. (→ decisions.md 2026-06-12)
-- **2026-06-11** — Migrations 012 (abandonment) + 013 (data deletion) gates GREEN on staging; migrations list + prod-cutover notes updated. (→ decisions.md 2026-06-11)
-- **2026-06-10** — Migration 012 added (Step 6 abandonment); 011 Step 5 social-graph gate 40/40; 010 Step 4 discovery RPCs. (→ decisions.md 2026-06-10)
-- **2026-06-09** — Added §6 "Trust & safety / identity policy review" ritual (policies.md review cadence).
-- **2026-05-18** — Staging environment added; §3 expanded (Staging subsection); toolchain updated to three agents; §4 region confirmed `us-east-1`.

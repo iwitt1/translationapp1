@@ -13,29 +13,11 @@
 > **Audit cadence:** review at the start of each phase, and at minimum quarterly. Each review
 > updates "Last reviewed" and logs material changes in `decisions.md`.
 
-**Last reviewed:** 2026-07-07 — §1 display-name denylist enforced + §6 username-at-onboarding (migration 020). Review history in [Review log](#review-log).
-**Owner:** Isaac (iwitt1)
-
----
-
-## Contents
-
-| # | Policy | Status |
-|---|--------|--------|
-| 1 | [Username & display-name](#1-username--display-name-policy) | ✅ Enacted (some sub-items parked) |
-| 2 | [Discovery](#2-discovery-policy-how-users-find--add-each-other) | ✅ Enacted |
-| 3 | [DM-initiation (tenant-level)](#3-dm-initiation-policy-tenant-level-swappable) | 🔶 Partial — defined; enforcement pending DM surface |
-| 4 | [Blocking & reporting](#4-blocking--reporting) | ✅ Enacted (moderation UI parked) |
-| 5 | [Anti-abuse](#5-anti-abuse-layered-defense--not-handle-type-alone) | 🔶 Partial — block/report live; rate limits & verification planned |
-| 6 | [Account lifecycle](#6-account-lifecycle-signup--active--abandonment) | ✅ Enacted |
-
-**Status legend:** ✅ Enacted (live in code/schema) · 🔶 Partial (some live, some planned/parked) · 🅿️ Planned/Parked (designed, not built).
+**Last reviewed:** 2026-07-07 (§1 display-name charset flipped from allowlist sketch to enforced denylist — control/bidi characters rejected, international names allowed (migration 020); §6 P3 now requires a user-chosen username at onboarding, claimed atomically with activation via `complete_onboarding()` → `change_username()`. See decisions.md 2026-07-07 "Username chosen at onboarding". Prior 2026-06-11: §6 added "Data deletion / Right to Erasure (GDPR Art. 17)" subsection at Step 7 build — two-phase 30-day grace; content de-identified via `messages.sender_id` ON DELETE SET NULL not deleted; audit row survives via `data_deletion_requests.user_id` ON DELETE SET NULL; abuse HMAC recorded on voluntary erasure too, source split parked. Gate PASSED on staging 37/37. See decisions.md 2026-06-11. Prior 2026-06-10: §6 Abandonment resolved at Step 6 build — hash-over-plaintext confirmed; HMAC pepper in env not Postgres, `key_version=1`; username release is automatic via FK cascade, no release function; re-prompt emails parked to a future CRM. Prior: 2026-06-09 initial draft — Phase 2 identity/discovery/lifecycle design.)
 
 ---
 
 ## 1. Username & display-name policy
-
-> **Status: ✅ Enacted** (migrations 008 + 020). Deferred sub-items are parked.
 
 ### Username
 - **Charset:** ASCII lowercase alphanumeric + underscore (`[a-z0-9_]`). Stored canonical
@@ -78,8 +60,6 @@
 
 ## 2. Discovery policy (how users find / add each other)
 
-> **Status: ✅ Enacted** (migration 010 discovery RPCs).
-
 - **No open search by email.** Email is **exact-match add only** — you must already know the full
   address. No autocomplete, no enumeration.
 - **Username:** autocomplete/search permitted, subject to the target's discoverability setting.
@@ -102,8 +82,6 @@
 
 ## 3. DM-initiation policy (tenant-level, swappable)
 
-> **Status: 🔶 Partial** — policy values + `lib/policies.js` defaults defined; unilateral-DM enforcement lands with the DM surface. *(confirm current enforcement state)*
-
 - Conversations are **independent of the contact graph** (membership-based).
 - DM-initiation is gated by a **tenant-level policy** enforced in the application layer, reading
   global defaults from `lib/policies.js` and per-tenant overrides from `tenants.dm_initiation_policy`.
@@ -122,8 +100,6 @@
 
 ## 4. Blocking & reporting
 
-> **Status: ✅ Enacted** (migration 011 block/report RPCs). Moderation-queue UI parked.
-
 - **Block** is stored directionally (`blocks` table records who blocked whom) but **enforced
   bidirectionally**: a block prevents contact/DM initiation in both directions and hides each party
   from the other **symmetrically** — discovery (both the email and username RPCs) returns neither
@@ -138,16 +114,12 @@
 
 ## 5. Anti-abuse (layered defense — not handle-type alone)
 
-> **Status: 🔶 Partial** — block/report live; rate limits + verification badge planned.
-
 The handle→DM matrix is one signal. The real levers are: verification (future), rate limits on
 adds / DM-initiation / username changes / signups (parked, but the raw timestamped data to compute
 rates already exists on every action table), and the block/report system. Do not treat "knows my
 email" as strong trust.
 
 ## 6. Account lifecycle (signup → active → abandonment)
-
-> **Status: ✅ Enacted** (signup/abandonment/deletion: migrations 007/008/012/013).
 
 ### Signup stages
 - **P1 — email submitted, "Sign up" clicked:** magic link sent. `auth.users` row (uuid) created
@@ -220,14 +192,3 @@ the claim and activation are atomic; the free system→user-chosen change is con
   `email_hash_abuse` (shared pepper + `key_version`) *before* the delete — a delete-then-resignup is the
   same weak signal regardless of why the prior account went away. The source split (abandonment vs.
   erasure) is **parked** (parking-lot.md "`email_hash_abuse` source split").
-
----
-
-## Review log
-
-*Reverse chronological. One line per review; material changes link to `decisions.md`.*
-
-- **2026-07-07** — §1 display-name charset flipped allowlist→enforced denylist; §6 P3 now requires a user-chosen username at onboarding, claimed atomically with activation (migration 020). (→ decisions.md 2026-07-07 "Username chosen at onboarding")
-- **2026-06-11** — §6 added "Data deletion / Right to Erasure (GDPR Art. 17)" at Step 7; two-phase 30-day grace, content de-identified not deleted; gate 37/37 GREEN. (→ decisions.md 2026-06-11 "Step 7 data deletion")
-- **2026-06-10** — §6 Abandonment resolved at Step 6: hash-over-plaintext confirmed; HMAC pepper in env not Postgres, key_version=1; username release automatic via FK cascade. (→ decisions.md 2026-06-10 "Step 6 abandonment")
-- **2026-06-09** — Initial draft: Phase 2 identity / discovery / lifecycle design.

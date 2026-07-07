@@ -1,0 +1,46 @@
+-- ============================================================================
+-- Translation App — Database Schema (flattened current-state snapshot)
+-- ============================================================================
+-- Purpose: the single, always-current representation of *what* the schema is.
+--   architecture.md §7 owns the *why* (rationale, relationships, and the
+--   constraints that carry meaning). This file owns the *what* (exact DDL).
+--
+-- HOW THIS FILE IS PRODUCED (do NOT hand-edit):
+--   Automatically, by the GitHub Action .github/workflows/schema-dump.yml, which runs
+--   pg_dump against the live database (on every migration merge, weekly, and on demand)
+--   and commits the result here. No local tooling needed.
+--   Manual fallback (needs the Postgres client — `brew install libpq`):
+--       pg_dump --schema-only --schema=public "<prod-connection-string>" -f docs/schema.sql
+--   Either way it stays current — see operations.md §3 "Migration workflow".
+--
+-- STATUS:  PENDING FIRST CI RUN (set up 2026-07-07).
+--   The GitHub Action above populates the real dump on its first run, once the
+--   SUPABASE_DB_URL repo secret is added (see the workflow file's header). Until then
+--   the table inventory below is accurate but is NOT a substitute for the generated DDL.
+--   (Docs legibility cleanup — decisions.md 2026-07-07 + "Automated schema.sql via CI".)
+--
+-- NOTE: this file is auto-overwritten by the dump. A failed local `-f docs/schema.sql`
+--   run will truncate it (that happened once on 2026-07-07); the next CI run restores it.
+--
+-- ----------------------------------------------------------------------------
+-- CURRENT TABLE INVENTORY (public schema; derived from migrations 000–020, net
+-- of drops — accurate as of 2026-07-07, but NOT a substitute for the real dump):
+--
+--   Core translation ......... tenants, messages, message_translations,
+--                              user_linguistic_profiles, conversation_contexts,
+--                              user_profile_events
+--   Event log ................ translation_events, agent_events
+--   Identity & discovery ..... profiles, account_identifiers, account_settings
+--   Social graph & safety .... relationships, blocks, reports, invites,
+--                              invite_redemptions, email_hash_abuse
+--   Lifecycle ................ data_deletion_requests
+--   Conversations (Phase 3) .. conversations, conversation_members
+--
+--   Dropped / not current .... user_profiles (dropped in migration 008)
+--
+-- Functions/RPCs, RLS policies, triggers, roles, GRANTs, and CHECK constraints
+-- are defined across the migrations; the generated dump will include them all
+-- explicitly. See architecture.md §7 for what each table is for and why.
+-- ============================================================================
+
+-- >>> The GitHub Action replaces everything below this line with the pg_dump output. <<<

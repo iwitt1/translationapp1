@@ -4,12 +4,9 @@
 >
 > Spec lifecycle: **draft** → **approved** → **in-flight** → **shipped** → **archived**. When a spec ships, mark it `shipped` here with the commit reference and move the verification details to `/docs/verification.md`. Archive specs after one cycle of "shipped" review (typically 2-4 weeks) — move them to a future `/docs/specs-archive.md` if/when this file exceeds ~600 lines.
 
-**Last updated:** 2026-07-07 — docs legibility cleanup (header de-blobbed). Substantive prior update 2026-06-18 (Specs 6 & 7 shipped). Full history in [Changelog](#changelog).
-**Owner:** Isaac (iwitt1)
+**Last updated:** 2026-06-18 (**Specs 6 & 7 SHIPPED to prod.** The Phase 3 cutover replayed migrations 016→019 on prod and merged the conversation-aware frontend (`5251669..c13f8ae`) 2026-06-18; Spec 6 (migration 017) and Spec 7 (migration 018) are now `shipped`. 2-user prod smoke GREEN; 3rd-user/group smoke + custom SMTP deferred (Supabase built-in email caps magic links ~2/hr). See decisions.md/operations.md/verification.md 2026-06-18. Prior 2026-06-12: Migration renumber — a newly-discovered FK-cascade drift fix takes **migration 016** (`016_fix_message_translations_cascade.sql` — staging's `message_translations.message_id` FK was NO ACTION vs prod's CASCADE; see decisions.md + operations.md 2026-06-12), so the two Phase 3 specs shifted up one — Spec 6 conversations schema is now **migration 017**, Spec 7 messages RLS is now **migration 018**. Apply order: 016 (FK fix, independent — can ship first) → 017 → 018. Prior same-day: Spec 6 drafted + open question resolved — Phase 3 Step 1 conversations schema, migration 017. Dedupe is policy-driven (direct dedupe / group always-new, per-tenant overridable, no user-facing toggle). Spec 6 is **Cowork-executed** (Isaac is implementing Phase 3 in Cowork directly, not via Hermes). Gated by the 2026-06-12 decisions.md data-model entry. Spec 7 — membership-scoped messages RLS (migration 018) — drafted; flips messages + message_translations from tenant-scoped to membership-scoped via is_active_member, with realtime + cache-leak coverage and its own adversarial gate. Both Phase 3 specs now drafted; awaiting Isaac's approval to implement (017 then 018, staging-first).)
 
 ---
-
-> **Mostly historical.** Specs 1–4b are Hermes-era infrastructure (Hermes is currently **paused** — see decisions.md 2026-07-05); Specs 6–7 were Cowork-executed and shipped. This file is a spec archive — a fuller review/prune is deferred (a follow-up to the 2026-07-07 docs cleanup).
 
 ## Spec 6 — Phase 3 Step 1: Conversations schema + write RPCs (migration 017) — Cowork-executed
 
@@ -591,13 +588,3 @@ The earlier Resume notes section (session 1, 2026-05-21) was built on a misdiagn
 ---
 
 *(Future specs will be added below as drafted. Newest at top within a section; section order: draft → approved → in-flight → shipped.)*
-
----
-
-## Changelog
-
-*Reverse chronological. One line per change; project events link to `decisions.md`.*
-
-- **2026-07-07** — Docs legibility cleanup: header de-blobbed; added this Changelog + a "mostly historical" banner. (→ decisions.md 2026-07-07 "Docs legibility cleanup + new conventions")
-- **2026-06-18** — Specs 6 & 7 marked shipped to prod (Phase 3 cutover, migrations 017/018). (→ decisions.md 2026-06-18)
-- **2026-06-12** — Migration renumber: Phase 3 specs shifted to 017/018 after the FK-cascade fix took 016; Spec 6 drafted (Cowork-executed); Spec 7 drafted. (→ decisions.md 2026-06-12)
