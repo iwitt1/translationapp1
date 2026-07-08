@@ -24,6 +24,7 @@
 
 **Roadmap & security**
 
+- [2026-07-07 — Spec 8 + 9 shipped: expanded language list + lucide-react UI icons (Phase 2.4)](#2026-07-07--spec-8--9-shipped-expanded-language-list--lucide-react-ui-icons-phase-24)
 - [2026-07-07 — Roadmap promotions (Phase 2.4) + RLS gap on tenants/event tables](#2026-07-07--roadmap-promotions-phase-24--rls-gap-on-tenantsevent-tables)
 
 **Docs & process**
@@ -151,6 +152,15 @@
 
 
 ---
+
+## 2026-07-07 — Spec 8 + 9 shipped: expanded language list + lucide-react UI icons (Phase 2.4)
+
+**Decision:** Shipped Spec 8 (onboarding language list expanded from 10 to ~40 entries, endonym-first labels e.g. `Español (Spanish)`) and Spec 9 (lucide-react icons added to core controls: back, overflow/register menu, send, new-conversation, invite, copy, close, sign-out, Original-expander, search) on branch `spec-8-9-demo-polish` (commits `69dc68b`, `c4eacbc`); staging gate GREEN 2026-07-07, prod merge pending. Deviated from Spec 8's technical sketch by keeping the existing `code` field name on `LANGUAGES` entries rather than switching to `value` — the sketch's `value` key would have broken `App.jsx`'s `l.code` call site and `languageLabel()`, contradicting the spec's own "call sites untouched" acceptance criterion.
+**Context:** Both specs were drafted 2026-07-07 as part of the Phase 2.4 demo-readiness cluster (see the Roadmap promotions entry directly below) and approved for Cursor/Sonnet execution; executed instead in this same Cowork session since Isaac was already here and the changes were small.
+**Alternatives considered:** Spec 8 field name — rename to `value` and update the two call sites (rejected; larger diff than necessary for a cosmetic list expansion, and the spec's own acceptance criteria explicitly forbade touching call sites). Icon library — lucide-react, the spec's pick (chosen; tree-shakeable, `currentColor`-based, matches the existing hand-inlined SVG styling) vs. hand-inlining more SVGs (rejected; inconsistent coverage was the problem being solved).
+**Reasoning:** Endonym labels + icons are the two lowest-effort, highest-impact steps toward a demo that's navigable by a non-English-reading first-time user, without touching the schema or committing to full UI localization (still parked).
+**Implications:** `package.json`/`package-lock.json` gained `lucide-react` (^1.23.0) as a new frontend dependency. No schema/API changes. Settings-entry icon (Spec 9) deferred — that screen doesn't exist yet (Phase 2.4's first checklist item). Full UI localization and the "language not in the list" question remain parked (parking-lot.md).
+**Revisit when:** the account-settings screen (Phase 2.4, next item) is built — natural place to add a settings-entry icon and to expose the language picker again outside onboarding.
 
 ## 2026-07-07 — Roadmap promotions (Phase 2.4) + RLS gap on tenants/event tables
 

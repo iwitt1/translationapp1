@@ -292,8 +292,8 @@
 **Goal:** The app is pleasant and navigable for a first-time demo user (including one who doesn't read English), and the repo is safe to share publicly.
 
 - [ ] **Account settings screen** (High). One place to change **language preference**, **username** (the once-a-year change the onboarding subtext already promises), and **discoverability** toggles. Moves language out of the chat header — stops accidental full-history re-translation / credit burn. Bundles three previously-parked items. *(Promoted from parking-lot 2026-07-07.)*
-- [ ] **Onboarding language list — native names + expanded set** (High). Show endonyms (Español, 日本語, Deutsch, …) not English exonyms, and offer more languages, so a non-English speaker can find theirs. *(Promoted from parking-lot.)*
-- [ ] **UI symbology for non-English navigation** (High). Icons/symbols on the core controls so the app is navigable without reading English — a lighter first step than full UI localization (which stays parked). *(Added 2026-07-07, Isaac.)*
+- [x] **Onboarding language list — native names + expanded set** (High). Show endonyms (Español, 日本語, Deutsch, …) not English exonyms, and offer more languages, so a non-English speaker can find theirs. *(Promoted from parking-lot.)* **Shipped 2026-07-07** (Spec 8, commit `69dc68b` on branch `spec-8-9-demo-polish`) — staging gate GREEN; prod merge pending. See verification.md "Spec 8 + 9 — Demo-readiness polish (2026-07-07)".
+- [x] **UI symbology for non-English navigation** (High). Icons/symbols on the core controls so the app is navigable without reading English — a lighter first step than full UI localization (which stays parked). *(Added 2026-07-07, Isaac.)* **Shipped 2026-07-07** (Spec 9, commit `c4eacbc` on branch `spec-8-9-demo-polish`) — staging gate GREEN; prod merge pending. See verification.md.
 - [ ] **Conversation-list realtime** (Med). A conversation someone creates-with-you or invites-you-to should appear without a manual reload. Needs `conversation_members`/`conversations` added to the Supabase realtime publication + a second channel in `App.jsx`; intersects the realtime-RLS gap (parking-lot). A real demo friction point. *(Promoted from parking-lot.)*
 - [ ] **Repo cleanup for public sharing.** Scrub git history for secrets (e.g. gitleaks), decide public vs private, and confirm nothing sensitive (internal `/docs/`, infra details, keys) is exposed — folds in the Phase 2.3 "nothing sensitive" check. Current blocker on sharing the repo / docs-screenshot link.
 
@@ -406,6 +406,7 @@ This phase will get detailed when we're approaching it. High-level items:
 
 *Reverse chronological. One line per change; details live in `decisions.md`.*
 
+- **2026-07-07** — Phase 2.4: Spec 8 (onboarding language list, ~40 endonym-first entries) + Spec 9 (lucide-react icons on core controls) shipped to staging, gate GREEN, prod merge pending. (→ decisions.md 2026-07-07 "Spec 8 + 9 shipped")
 - **2026-07-07** — Promoted a pre-demo UX cluster from parking-lot into new **Phase 2.4** (account settings screen, native-name + expanded languages, non-English symbology, conversation-list realtime) + repo cleanup; checked off Phase 2.3 landing/content/CTA/hosting and added an own-voice copy-rewrite item. (→ decisions.md 2026-07-07 "Roadmap promotions + RLS gap")
 - **2026-07-07** — Docs legibility cleanup: added Contents TOC + per-phase statuses; header de-blobbed; this Changelog added. (→ decisions.md 2026-07-07 "Docs legibility cleanup + new conventions")
 - **2026-07-05** — Added "Next up — translate model selection"; parked 4 UI/language items. (→ decisions.md 2026-07-05)

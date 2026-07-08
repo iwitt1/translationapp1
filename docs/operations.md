@@ -2,7 +2,7 @@
 
 > Living document. Owns cost model, hiring plan, development workflow, and vendor decisions.
 
-**Last updated:** 2026-07-07 — docs legibility cleanup; §3 migration workflow now includes a `schema.sql` regen step. Substantive prior update 2026-06-23 (§3 git/deploy runbook). Full history in [Changelog](#changelog).
+**Last updated:** 2026-07-07 — §3 git runbook: added the recurring "index.lock"/"packed-refs.lock" false-failure note. Prior same-day update: docs legibility cleanup; §3 migration workflow now includes a `schema.sql` regen step. Substantive prior update 2026-06-23 (§3 git/deploy runbook). Full history in [Changelog](#changelog).
 **Owner:** Isaac (iwitt1)
 
 ---
@@ -189,6 +189,8 @@ This triggers a **Vercel Preview** build against **staging**. Find the Preview U
   ```
   Or, given no users yet, it's often fine to just move forward (as we did 2026-06-23 with the token-auth merge — see decisions.md). Force-pushing/hard-resetting a pushed `main` is possible but riskier; prefer `git revert` unless you know why you need otherwise.
 
+**"Unable to create '.../index.lock'" or "packed-refs.lock: File exists" — usually harmless, keep going.** First seen in the Cowork sandbox, then on Isaac's own Mac terminal 2026-07-07 mid-`git checkout -b`/`commit`/`branch -D` (Spec 8 + 9 session). Git prints the scary "Another git process seems to be running... remove the file manually to continue" error, but the command frequently **still completes** — it's a stale `.lock` file left behind by an *earlier* command that couldn't clean up after itself (root cause not fully diagnosed; possibly an editor/IDE git integration or a sync tool holding a handle open). Don't assume failure from the error text alone: run `git log --oneline -1` / `git status` / `git branch` to check whether the operation actually landed before retrying or manually removing anything. If a command visibly did *not* take effect, quit any open editors/Git GUIs first, then remove the named `.lock` file by hand and retry.
+
 **Migration workflow:**
 1. New schema changes are written as new `.sql` files in `/migrations/` with a sequential number prefix.
 2. Run the migration against staging Supabase first (SQL Editor → New query → paste → run).
@@ -341,6 +343,7 @@ Full rotation procedure lives in `/docs/verification.md` "Hermes access credenti
 
 *Reverse chronological. One line per change; migration/project events link to `decisions.md`.*
 
+- **2026-07-07** — §3 git runbook: documented the recurring "index.lock"/"packed-refs.lock: File exists" false-failure (seen in the Cowork sandbox and on Isaac's own Mac terminal during the Spec 8 + 9 session). (→ decisions.md 2026-07-07 "Spec 8 + 9 shipped")
 - **2026-07-07** — Docs legibility cleanup: header de-blobbed; added this Changelog; §3 migration workflow gained a `docs/schema.sql` regen step; §5/§6 numbering fixed (were swapped). (→ decisions.md 2026-07-07 "Docs legibility cleanup + new conventions")
 - **2026-06-23** — Added §3 "Git & deploy: staging vs prod" command-line runbook (after the accidental `main` merge of the token-auth code). (→ decisions.md 2026-06-23)
 - **2026-06-18** — Phase 3 prod cutover: replayed migrations 016→019; migrations-list statuses flipped to prod-applied; added the Phase 3 cutover §3 notes. (→ decisions.md 2026-06-18)
