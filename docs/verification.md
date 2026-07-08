@@ -64,7 +64,7 @@
 
 - [Translate model swap: gpt-5.4 + prompt v2.0.0 (2026-07-05) — ⏳ gate PENDING on staging](#translate-model-swap-gpt-54--prompt-v200-2026-07-05---gate-pending-on-staging)
 - [Username at onboarding — migration 020 (2026-07-07) — ✅ GREEN on staging; PROD ROLLED OUT same day](#username-at-onboarding--migration-020-2026-07-07---green-on-staging-prod-rolled-out-same-day)
-- [Spec 8 + 9 — Demo-readiness polish (2026-07-07) — ✅ GREEN on staging; prod merge pending](#spec-8--9--demo-readiness-polish-2026-07-07---green-on-staging-prod-merge-pending)
+- [Spec 8 + 9 — Demo-readiness polish (2026-07-07) — ✅ GREEN on staging; merged to main, prod smoke pending](#spec-8--9--demo-readiness-polish-2026-07-07---green-on-staging-merged-to-main-prod-smoke-pending)
 
 **Meta**
 
@@ -1856,7 +1856,7 @@ See roadmap.md Phase 2.2, decisions.md 2026-06-23, operations.md (topology + dep
 
 ---
 
-## Spec 8 + 9 — Demo-readiness polish (2026-07-07) — ✅ GREEN on staging; prod merge pending
+## Spec 8 + 9 — Demo-readiness polish (2026-07-07) — ✅ GREEN on staging; merged to main, prod smoke pending
 
 **What shipped:** Spec 8 — `LANGUAGES` in `src/lib/vocabularies.js` expanded from 10 English-exonym entries to ~40, each labeled endonym-first with English in parentheses (e.g. `Español (Spanish)`); wire values (ISO codes) and the `code` field name unchanged, so `App.jsx` and `languageLabel()` needed no edits. Spec 9 — `lucide-react` installed; icons added to core controls across `App.jsx`, `ConversationView.jsx`, `ConversationList.jsx`, `MessageBubble.jsx`, `InviteModal.jsx`, `NewConversationModal.jsx` (back, overflow/register menu, invite, send, new-conversation, Original-expander chevron, invite-modal close/copy, new-conversation-modal close/search, sign-out), existing text labels kept alongside icons. Frontend-only; no schema/migration/API changes. Branch `spec-8-9-demo-polish`, commits `69dc68b` (Spec 8) and `c4eacbc` (Spec 9). See decisions.md 2026-07-07 "Spec 8 + 9 shipped".
 
@@ -1865,7 +1865,8 @@ See roadmap.md Phase 2.2, decisions.md 2026-06-23, operations.md (topology + dep
 - [x] **Icons render:** back / overflow (⋯) / send / new-conversation / invite / copy / close (both modals) / sign-out / Original-expander all show a lucide icon at consistent size/stroke.
 - [x] **Existing labels/tooltips intact:** text-labelled controls (Send, Sign out, Cancel, Copy) kept their text alongside the new icon; no behavior change.
 - [x] **All controls still function:** send, new conversation, invite-link copy, back navigation, modal close, sign-out, register/context menu, Original expand/collapse all verified working on the staging Preview.
-- [ ] **Prod merge + prod smoke:** NOT YET RUN — staging-only gate as of this entry; see roadmap.md Phase 2.4 for merge status.
+- [x] **Prod merge:** `spec-8-9-demo-polish` merged (fast-forward) into `main` 2026-07-07, commit `1c37b14`, pushed — Vercel auto-deploying to prod.
+- [ ] **Prod smoke:** NOT YET RUN — repeat the two checks above against `https://app.jistchat.com` once the deploy completes.
 
 **Known deviations (not failures):**
 
@@ -1892,7 +1893,7 @@ See roadmap.md Phase 2.2, decisions.md 2026-06-23, operations.md (topology + dep
 
 *Reverse chronological. One line per change; project events link to `decisions.md`.*
 
-- **2026-07-07** — Added "Spec 8 + 9 — Demo-readiness polish" section (language-list + lucide icons, staging gate GREEN, prod merge pending). (→ decisions.md 2026-07-07 "Spec 8 + 9 shipped")
+- **2026-07-07** — Added "Spec 8 + 9 — Demo-readiness polish" section (language-list + lucide icons, staging gate GREEN); updated same day once merged to `main` (commit `1c37b14`). (→ decisions.md 2026-07-07 "Spec 8 + 9 shipped")
 - **2026-07-07** — Docs legibility cleanup: added Contents TOC; header de-blobbed; this Changelog added. Also added the "Username at onboarding — migration 020" section (gate GREEN + prod). (→ decisions.md 2026-07-07)
 - **2026-07-05** — Added "Translate model swap: gpt-5.4 + prompt v2.0.0" section. (→ decisions.md 2026-07-05)
 - **2026-06-23** — Added "Phase 2.1 — Token auth" + "Phase 2.2 — Public demo readiness" sections. (→ decisions.md 2026-06-23)

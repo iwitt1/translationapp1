@@ -14,7 +14,7 @@
 **Linked roadmap item:** Phase 2.4 — Demo-readiness polish
 **Author:** Isaac (drafted with Cowork)
 **Drafted:** 2026-07-07
-**Status:** **shipped to staging** 2026-07-07 (commit `69dc68b` on branch `spec-8-9-demo-polish`); staging gate GREEN. Prod merge pending. Verification: verification.md "Spec 8 + 9 — Demo-readiness polish (2026-07-07)". Executed in-session by Cowork rather than Cursor (Isaac was already in the session). One deviation from the technical sketch below: `LANGUAGES` entries kept the existing `code` field name instead of switching to `value` — `value` would have broken `App.jsx`'s `l.code` call site and `languageLabel()`, contradicting this spec's own "call sites untouched" acceptance criterion. See decisions.md 2026-07-07.
+**Status:** **shipped** — staging gate GREEN 2026-07-07 (commit `69dc68b`); **merged to `main` 2026-07-07** (commit `1c37b14`), deploying to prod via Vercel; prod smoke still pending. Verification: verification.md "Spec 8 + 9 — Demo-readiness polish (2026-07-07)". Executed in-session by Cowork rather than Cursor (Isaac was already in the session). One deviation from the technical sketch below: `LANGUAGES` entries kept the existing `code` field name instead of switching to `value` — `value` would have broken `App.jsx`'s `l.code` call site and `languageLabel()`, contradicting this spec's own "call sites untouched" acceptance criterion. See decisions.md 2026-07-07.
 
 ### Goal
 A first-time user who doesn't read English should be able to find their language at onboarding. Today the picker is a short, English-labelled (exonym) `LANGUAGES` array in `src/lib/vocabularies.js`, rendered as a native `<select>` in `App.jsx`. Expand it to ~40 of the most-spoken languages and label each **endonym-first with English in parentheses** — e.g. `Español (Spanish)` — so both a native speaker and an English speaker (and text search) can find it.
@@ -98,7 +98,7 @@ export const LANGUAGES = [
 **Linked roadmap item:** Phase 2.4 — Demo-readiness polish
 **Author:** Isaac (drafted with Cowork)
 **Drafted:** 2026-07-07
-**Status:** **shipped to staging** 2026-07-07 (commit `c4eacbc` on branch `spec-8-9-demo-polish`); staging gate GREEN. Prod merge pending. Verification: verification.md "Spec 8 + 9 — Demo-readiness polish (2026-07-07)". Executed in-session by Cowork rather than Cursor (Isaac was already in the session). Settings-entry icon skipped — that screen doesn't exist yet (Phase 2.4's first checklist item); the spec allows deferring it as a placeholder. See decisions.md 2026-07-07.
+**Status:** **shipped** — staging gate GREEN 2026-07-07 (commit `c4eacbc`); **merged to `main` 2026-07-07** (commit `1c37b14`), deploying to prod via Vercel; prod smoke still pending. Verification: verification.md "Spec 8 + 9 — Demo-readiness polish (2026-07-07)". Executed in-session by Cowork rather than Cursor (Isaac was already in the session). Settings-entry icon skipped — that screen doesn't exist yet (Phase 2.4's first checklist item); the spec allows deferring it as a placeholder. See decisions.md 2026-07-07.
 
 ### Goal
 Make the app navigable by a first-time user who doesn't read English. Icons today are hand-inlined SVGs with inconsistent coverage (some controls are icon-buttons, others text-only). Add `lucide-react` and put a clear icon on each **core** control, **keeping** existing text labels/tooltips (icons aid non-English users without removing info from English ones).
