@@ -74,7 +74,7 @@ A real-time multilingual chat application backed by an LLM-powered translation A
 9. ~~**Prompt drift between prod and local.** Local `server/index.js` has an extra prompt line that production `api/translate.js` lacks. Reconciled in Phase 0.~~ Done 2026-05-12.
 10. **Wasteful detect-on-every-send.** Every message triggers an OpenAI detect call even when the sender's language is known.
 11. **No error UX.** Translation failures silently fall back to the original text.
-12. ~~**No way for users to set preferred language in the UI.**~~ **Resolved.** Set at onboarding via `complete_onboarding(...)`, and **changeable later in the settings screen** via `set_preferred_language()` (migration 021, 2026-07-08) — no longer a header control, so changing it can't accidentally re-translate all history. (Settings screen staging-first pending prod.)
+12. ~~**No way for users to set preferred language in the UI.**~~ **Resolved.** Set at onboarding via `complete_onboarding(...)`, and **changeable later in the settings screen** via `set_preferred_language()` (migration 021, 2026-07-08) — no longer a header control, so changing it can't accidentally re-translate all history. (Settings screen on prod 2026-07-08.)
 13. ~~**Stray files at repo root** (`Bash`, `echo`, `which`). Gitignored but ugly; delete in Phase 0.~~ Done 2026-05-12.
 
 ---

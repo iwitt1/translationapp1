@@ -65,7 +65,7 @@
 - [Translate model swap: gpt-5.4 + prompt v2.0.0 (2026-07-05) — ⏳ gate PENDING on staging](#translate-model-swap-gpt-54--prompt-v200-2026-07-05---gate-pending-on-staging)
 - [Username at onboarding — migration 020 (2026-07-07) — ✅ GREEN on staging; PROD ROLLED OUT same day](#username-at-onboarding--migration-020-2026-07-07---green-on-staging-prod-rolled-out-same-day)
 - [Spec 8 + 9 — Demo-readiness polish (2026-07-07) — ✅ GREEN on staging; merged to main, prod smoke pending](#spec-8--9--demo-readiness-polish-2026-07-07---green-on-staging-merged-to-main-prod-smoke-pending)
-- [Spec 10 — Account settings screen (2026-07-08) — ⏳ staging-first pending](#spec-10--account-settings-screen-2026-07-08--️-staging-first-pending)
+- [Spec 10 — Account settings screen (2026-07-08) — ✅ on prod, smoke GREEN](#spec-10--account-settings-screen-2026-07-08--️-on-prod-2026-07-08-smoke-green)
 
 **Meta**
 
@@ -1880,11 +1880,11 @@ See roadmap.md Phase 2.2, decisions.md 2026-06-23, operations.md (topology + dep
 
 ---
 
-## Spec 10 — Account settings screen (2026-07-08) — ⏳ staging-first pending
+## Spec 10 — Account settings screen (2026-07-08) — ✅ on prod 2026-07-08, smoke GREEN
 
 **What shipped:** `SettingsModal.jsx` (app-bar gear → modal: username-change gated drop-down, display name, language, discoverability checkboxes, relocated sign-out) + `lib/settings.js` data layer + `App.jsx` wiring (gear replaces the app-bar sign-out button). Migration `021_settings_screen.sql`: `set_preferred_language()` + `set_display_name()` RPCs; `account_settings.discoverable_by_email` default true→false + `handle_new_user` trigger + backfill. See decisions.md / specs.md 2026-07-08.
 
-**Run 021 on `translationapp1-staging` first, then this smoke, then replay to prod.**
+**Shipped staging → prod:** staging GREEN; 021 applied prod-first, then the frontend merged to `main`; prod smoke GREEN 2026-07-08.
 
 Migration (embedded verification block covers these — run after applying):
 

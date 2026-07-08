@@ -14,7 +14,7 @@
 **Linked roadmap item:** Phase 2.4 — Demo-readiness polish → Account settings screen
 **Author:** Isaac (drafted with Cowork, mockup iterated in-session)
 **Drafted / built:** 2026-07-08
-**Status:** **built — staging-first pending.** Code + migration 021 written in Cowork this session (Isaac's call to build here rather than hand to Cursor). Isaac commits, runs 021 on `translationapp1-staging`, smoke-tests, then replays to prod. Verification: verification.md "Spec 10 — Account settings screen (2026-07-08)".
+**Status:** **shipped — on prod 2026-07-08.** Code + migration 021 written in Cowork this session (Isaac's call to build here rather than hand to Cursor). Staging GREEN, then 021 applied prod-first and the frontend merged to `main`; prod smoke GREEN. Verification: verification.md "Spec 10 — Account settings screen (2026-07-08)".
 
 ### Goal
 One screen to manage the account: change **username** (the once-a-year `change_username`), **display name**, **preferred language**, and **discoverability** — moving language out of the chat header (stops accidental full-history re-translation). Opened from an **app-bar gear**; **sign-out relocated** into it.
