@@ -11,3 +11,5 @@ which
 !.env.rls-test.example
 # Vite writes ephemeral config-load shims; never commit them
 vite.config.js.timestamp-*.mjs
+supabase/.temp/
+supabase/.temp/
