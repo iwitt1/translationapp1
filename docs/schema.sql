@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict lS8H7E824dXTtVxS8ZWnbSMmN0kL4boDrzbZmSrts0ODuGL5HO5h5eo9lY0Qurc
+\restrict lo6UnZm0kfwIMQNP7cP1F9R1lQgqKdebdahRmNVCjQtdFnZHZDYXqlgXFCMwHV8
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.10 (Ubuntu 17.10-1.pgdg24.04+1)
@@ -699,12 +699,10 @@ DECLARE
   v_is_taken   boolean;
   v_attempts   integer := 0;
 BEGIN
-  -- Guard: skip non-email rows (e.g., anonymous auth users have no email)
   IF NEW.email IS NULL THEN
     RETURN NEW;
   END IF;
 
-  -- Generate a unique system-generated username
   LOOP
     v_attempts := v_attempts + 1;
     IF v_attempts > 10 THEN
@@ -713,11 +711,8 @@ BEGIN
         NEW.id;
     END IF;
 
-    -- 'user_' + encode(4 random bytes, 'hex') = 'user_' + 8 hex chars = 13 chars total
-    -- [OPUS-FIX #1] schema-qualified: pgcrypto is in `extensions`, search_path is public.
     v_username := 'user_' || encode(extensions.gen_random_bytes(4), 'hex');
 
-    -- Check account_identifiers — covers active, retired, AND reserved in one query
     SELECT EXISTS (
       SELECT 1
       FROM public.account_identifiers
@@ -729,7 +724,6 @@ BEGIN
     EXIT WHEN NOT v_is_taken;
   END LOOP;
 
-  -- Create pending profile (P1 lifecycle state)
   INSERT INTO public.profiles (
     id, tenant_id, display_name, username, username_source,
     status, created_at, updated_at
@@ -738,28 +732,26 @@ BEGIN
     'pending', now(), now()
   );
 
-  -- Record email identifier (private; exact-match add only per policies.md §2)
   INSERT INTO public.account_identifiers (
     account_id, tenant_id, type, value, status, verified, created_at
   ) VALUES (
     NEW.id, v_tenant_id, 'email', lower(NEW.email), 'active', false, now()
   );
 
-  -- Record username identifier (public-facing discovery handle)
   INSERT INTO public.account_identifiers (
     account_id, tenant_id, type, value, status, verified, created_at
   ) VALUES (
     NEW.id, v_tenant_id, 'username', v_username, 'active', false, now()
   );
 
-  -- Create default account settings
+  -- Default account settings — discoverable_by_email now FALSE (021).
   INSERT INTO public.account_settings (
     account_id, tenant_id,
     discoverable_by_email, discoverable_by_username, allow_dms_from,
     updated_at
   ) VALUES (
     NEW.id, v_tenant_id,
-    true, true, 'contacts',
+    false, true, 'contacts',
     now()
   );
 
@@ -772,7 +764,7 @@ $$;
 -- Name: FUNCTION handle_new_user(); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.handle_new_user() IS 'Fires AFTER INSERT on auth.users. Creates a pending profiles row, email + username identifiers in account_identifiers, and default account_settings. System username: ''user_'' + 8 random hex chars. Requires pgcrypto (extensions.gen_random_bytes). Tenant hardcoded to sole-tenant UUID (00000000-0000-0000-0000-000000000001). If this function raises, the auth.users INSERT is rolled back — no orphaned auth rows.';
+COMMENT ON FUNCTION public.handle_new_user() IS 'Fires AFTER INSERT on auth.users. Creates a pending profiles row, email + username identifiers in account_identifiers, and default account_settings. System username: ''user_'' + 8 random hex chars. Requires pgcrypto (extensions.gen_random_bytes). Tenant hardcoded to sole-tenant UUID (00000000-0000-0000-0000-000000000001). (021) discoverable_by_email now defaults FALSE — new accounts are username-discoverable only. If this function raises, the auth.users INSERT is rolled back — no orphaned auth rows.';
 
 
 --
@@ -1437,6 +1429,104 @@ COMMENT ON FUNCTION public.set_conversation_context_type(p_conversation_id uuid,
 
 
 --
+-- Name: set_display_name(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.set_display_name(p_display_name text) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_uid          uuid := auth.uid();
+  v_trimmed_name text := trim(p_display_name);
+BEGIN
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'set_display_name: not authenticated' USING ERRCODE = '28000';
+  END IF;
+
+  -- Same rules as complete_onboarding (policies.md §1): 1–50 chars after trim,
+  -- plus a control-char / bidi-override denylist (allowlist would break
+  -- international names like "José", "Nguyễn", "李").
+  IF length(v_trimmed_name) = 0 THEN
+    RAISE EXCEPTION 'set_display_name: display_name cannot be empty';
+  END IF;
+  IF length(v_trimmed_name) > 50 THEN
+    RAISE EXCEPTION 'set_display_name: display_name exceeds 50 characters';
+  END IF;
+  IF v_trimmed_name ~ ('[' || chr(1) || '-' || chr(31) || chr(127)
+                        || chr(8234) || '-' || chr(8238)
+                        || chr(8294) || '-' || chr(8297) || ']') THEN
+    RAISE EXCEPTION 'set_display_name: display_name contains invalid control characters';
+  END IF;
+
+  UPDATE public.profiles
+     SET display_name = v_trimmed_name,
+         updated_at   = now()
+   WHERE id = v_uid;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'set_display_name: no profile for caller';
+  END IF;
+
+  RETURN v_trimmed_name;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION set_display_name(p_display_name text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.set_display_name(p_display_name text) IS 'Phase 2.4 settings screen: change the caller''s display_name with the same validation as complete_onboarding (1–50 chars + control-char/bidi denylist). SECURITY DEFINER so the denylist can''t be bypassed by a raw client UPDATE.';
+
+
+--
+-- Name: set_preferred_language(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.set_preferred_language(p_language text) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_uid    uuid := auth.uid();
+  v_tenant uuid := public.auth_tenant_id();
+  v_lang   text := trim(p_language);
+BEGIN
+  IF v_uid IS NULL OR v_tenant IS NULL THEN
+    RAISE EXCEPTION 'set_preferred_language: not authenticated' USING ERRCODE = '28000';
+  END IF;
+
+  IF v_lang IS NULL OR length(v_lang) = 0 THEN
+    RAISE EXCEPTION 'set_preferred_language: language is required';
+  END IF;
+  IF length(v_lang) > 35 THEN
+    -- BCP 47 tags are short; guard against junk. (Longest realistic tags are well under this.)
+    RAISE EXCEPTION 'set_preferred_language: language code too long';
+  END IF;
+
+  UPDATE public.user_linguistic_profiles
+     SET preferred_language = v_lang,
+         updated_at         = now()
+   WHERE user_id = v_uid AND tenant_id = v_tenant;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'set_preferred_language: no linguistic profile for caller';
+  END IF;
+
+  RETURN v_lang;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION set_preferred_language(p_language text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.set_preferred_language(p_language text) IS 'Phase 2.4 settings screen: change the caller''s translation target language (user_linguistic_profiles.preferred_language). Validated single enforcement point; onboarding seeds the row via complete_onboarding(), this changes it later.';
+
+
+--
 -- Name: unblock_account(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1495,7 +1585,7 @@ CREATE TABLE public.account_identifiers (
 CREATE TABLE public.account_settings (
     account_id uuid NOT NULL,
     tenant_id uuid NOT NULL,
-    discoverable_by_email boolean DEFAULT true NOT NULL,
+    discoverable_by_email boolean DEFAULT false NOT NULL,
     discoverable_by_username boolean DEFAULT true NOT NULL,
     allow_dms_from text DEFAULT 'contacts'::text NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -3131,6 +3221,24 @@ GRANT ALL ON FUNCTION public.set_conversation_context_type(p_conversation_id uui
 
 
 --
+-- Name: FUNCTION set_display_name(p_display_name text); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.set_display_name(p_display_name text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.set_display_name(p_display_name text) TO authenticated;
+GRANT ALL ON FUNCTION public.set_display_name(p_display_name text) TO service_role;
+
+
+--
+-- Name: FUNCTION set_preferred_language(p_language text); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.set_preferred_language(p_language text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.set_preferred_language(p_language text) TO authenticated;
+GRANT ALL ON FUNCTION public.set_preferred_language(p_language text) TO service_role;
+
+
+--
 -- Name: FUNCTION unblock_account(p_target uuid); Type: ACL; Schema: public; Owner: -
 --
 
@@ -3528,5 +3636,5 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON T
 -- PostgreSQL database dump complete
 --
 
-\unrestrict lS8H7E824dXTtVxS8ZWnbSMmN0kL4boDrzbZmSrts0ODuGL5HO5h5eo9lY0Qurc
+\unrestrict lo6UnZm0kfwIMQNP7cP1F9R1lQgqKdebdahRmNVCjQtdFnZHZDYXqlgXFCMwHV8
 
