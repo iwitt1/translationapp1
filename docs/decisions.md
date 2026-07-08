@@ -22,6 +22,10 @@
 
 ### July 2026
 
+**Roadmap & security**
+
+- [2026-07-07 — Roadmap promotions (Phase 2.4) + RLS gap on tenants/event tables](#2026-07-07--roadmap-promotions-phase-24--rls-gap-on-tenantsevent-tables)
+
 **Docs & process**
 
 - [2026-07-07 — Automated schema.sql via CI (GitHub Action)](#2026-07-07--automated-schemasql-via-ci-github-action)
@@ -147,6 +151,15 @@
 
 
 ---
+
+## 2026-07-07 — Roadmap promotions (Phase 2.4) + RLS gap on tenants/event tables
+
+**Decision:** (1) Promoted a pre-demo UX cluster from parking-lot into a new **roadmap Phase 2.4 — Demo-readiness polish + repo hardening**: an account-settings screen (language pref + username change + discoverability), a native-name + expanded onboarding language list, non-English UI symbology, conversation-list realtime, and a repo-cleanup-for-sharing step. (2) Kept UI localization + "language not in the list" parked at High. (3) Surfaced a security gap and **deferred the fix**: `tenants`, `translation_events`, `agent_events` have **no RLS** and carry the default `GRANT ALL TO anon, authenticated`, so any anon-key client can read/write them via the REST API.
+**Context:** Reviewing the post-cleanup parking-lot with Isaac — several items had aged past their triggers (Phase 2 shipped) or were "is this done?" questions. Confirming RLS coverage against the now-generated `schema.sql` (17 of 20 tables RLS-on) exposed the 3 unprotected tables.
+**Alternatives considered:** UI items — leave parked (rejected; they gate a good demo). Placement — extend the closed Phase 2.2 (rejected) vs. a new Phase 2.4 (chosen; groups the cluster, orders repo-cleanup last per Isaac). RLS gap — fix now (rejected; no real users, not yet critical) vs. defer + track High (chosen).
+**Reasoning:** The settings screen is now promise-debt (onboarding advertises a username change with nowhere to make it); native names + symbology make the app usable by non-English speakers, which is core to a translation product. The RLS gap is real (integrity + cross-tenant metadata exposure — though no chat plaintext) but single-tenant + no-real-users makes it non-urgent; closing it before widening access is mandatory.
+**Implications:** New roadmap Phase 2.4; parking-lot re-tagged (2 new High items, several promoted/removed, switcher → Resolved, RLS item → High with the new finding). The RLS fix is a small staging-first migration (`ENABLE ROW LEVEL SECURITY` + `REVOKE` anon/authenticated on the 3 tables, keeping `hermes_writer`/`hermes_readonly`/`service_role`); verify nothing legit reads `tenants` client-side first (app uses a `CHAT_APP_TENANT_ID` constant + reads policy server-side → expected safe).
+**Revisit when:** Before widening access to real testers / sharing the app publicly (do the RLS migration then); or when Phase 2.4 is scheduled.
 
 ## 2026-07-07 — Automated schema.sql via CI (GitHub Action)
 

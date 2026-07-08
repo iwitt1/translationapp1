@@ -21,7 +21,8 @@
 | [Phase 2 — Multi-user safety](#phase-2--multi-user-safety) | Auth, identity, RLS, deletion — shareable without privacy risk | ✅ Done (prod cutover 2026-06-11) |
 | [Phase 2.1 — Close auth / security gaps before widening access](#phase-21--close-auth--security-gaps-before-widening-access) | Lock the API endpoints before widening access | 🔶 Token auth done; 3 small items open |
 | [Phase 2.2 — Enable real multi-user testing](#phase-22--enable-real-multi-user-testing) | Remove friction (SMTP, persistent login) for real testers | 🔶 Nearly done — 3+-user smoke left |
-| [Phase 2.3 — Public demo site + case-study landing](#phase-23--public-demo-site--case-study-landing) | Shareable jistchat.com case-study page → live demo | 🔶 In progress — landing built; boxes need reconciling |
+| [Phase 2.3 — Public demo site + case-study landing](#phase-23--public-demo-site--case-study-landing) | Shareable jistchat.com case-study page → live demo | 🔶 Nearly done — own-voice copy rewrite left |
+| [Phase 2.4 — Demo-readiness polish + repo hardening](#phase-24--demo-readiness-polish--repo-hardening) | App usability (settings, languages, symbology, realtime) + repo scrub for sharing | 📋 Planned |
 | [Phase 3 — Real conversation model](#phase-3--real-conversation-model) | Many conversations/participants (not one global room) | ✅ Done (prod cutover 2026-06-18) |
 | [Phase 4 — Corrections capture](#phase-4--corrections-capture) | Start the corrections data flywheel | 📋 Planned |
 | [Phase 5 — Mobile](#phase-5--mobile) | Native mobile app (React Native) | 📋 Planned (future) |
@@ -272,14 +273,35 @@
 
 **Goal:** A shareable `jistchat.com` that leads with the story and links to the live demo — a single link that shows product thinking + how AI/agents were used to build it.
 
-- [ ] **Landing / case-study page at `jistchat.com` root** (+ `www`), separate from the app (which lives at `app.jistchat.com`). Likely a small standalone static page/project (keeps the SPA clean; independent deploy).
-- [ ] **Content — narrative + highlights** for a PM/hiring audience: the problem, the trojan-horse strategy (consumer app → B2B translation API), the phased build, and how the work was done with AI + a Cowork/Cursor/Hermes agent workflow. A few selected technical highlights (architecture sketch, 2–3 key decisions), screenshots. Readable, not a spec dump.
-- [ ] **"Try the live demo" CTA** → `app.jistchat.com`, so a reader flows from the write-up into the working product.
-- [ ] Decide hosting mechanism at build time (separate Vercel project vs a static route); confirm nothing sensitive (internal `/docs/`, infra details) is exposed.
+- [x] **Landing / case-study page at `jistchat.com` root** (+ `www`), separate from the app (which lives at `app.jistchat.com`). Likely a small standalone static page/project (keeps the SPA clean; independent deploy).
+- [x] **Content — narrative + highlights** for a PM/hiring audience: the problem, the trojan-horse strategy (consumer app → B2B translation API), the phased build, and how the work was done with AI + a Cowork/Cursor/Hermes agent workflow. A few selected technical highlights (architecture sketch, 2–3 key decisions), screenshots. Readable, not a spec dump.
+- [x] **"Try the live demo" CTA** → `app.jistchat.com`, so a reader flows from the write-up into the working product.
+- [x] **Hosting decided** (built + deployed). The *confirm nothing sensitive is exposed* check moves into the Phase 2.4 **repo cleanup** item.
+- [ ] **Rewrite the case-study copy in my own voice** — the current copy is AI-drafted. (Keep Hermes out of public copy, per decisions.md 2026-07-05.)
 
 ### What "Phase 2.3 done" means
 - `jistchat.com` shows a clear, credible case-study page with a working "Try the demo" link.
 - A non-technical evaluator understands what the product is, the strategy, and how it was built; a technical one sees enough depth to be intrigued.
+
+---
+
+## Phase 2.4 — Demo-readiness polish + repo hardening
+
+*Added 2026-07-07. Promoted from parking-lot: the app-usability items that make the demo genuinely good — ordered UI-first, then the repo-sharing prep. These gate a *good* public demo (Phase 2.3).*
+
+**Goal:** The app is pleasant and navigable for a first-time demo user (including one who doesn't read English), and the repo is safe to share publicly.
+
+- [ ] **Account settings screen** (High). One place to change **language preference**, **username** (the once-a-year change the onboarding subtext already promises), and **discoverability** toggles. Moves language out of the chat header — stops accidental full-history re-translation / credit burn. Bundles three previously-parked items. *(Promoted from parking-lot 2026-07-07.)*
+- [ ] **Onboarding language list — native names + expanded set** (High). Show endonyms (Español, 日本語, Deutsch, …) not English exonyms, and offer more languages, so a non-English speaker can find theirs. *(Promoted from parking-lot.)*
+- [ ] **UI symbology for non-English navigation** (High). Icons/symbols on the core controls so the app is navigable without reading English — a lighter first step than full UI localization (which stays parked). *(Added 2026-07-07, Isaac.)*
+- [ ] **Conversation-list realtime** (Med). A conversation someone creates-with-you or invites-you-to should appear without a manual reload. Needs `conversation_members`/`conversations` added to the Supabase realtime publication + a second channel in `App.jsx`; intersects the realtime-RLS gap (parking-lot). A real demo friction point. *(Promoted from parking-lot.)*
+- [ ] **Repo cleanup for public sharing.** Scrub git history for secrets (e.g. gitleaks), decide public vs private, and confirm nothing sensitive (internal `/docs/`, infra details, keys) is exposed — folds in the Phase 2.3 "nothing sensitive" check. Current blocker on sharing the repo / docs-screenshot link.
+
+### What "Phase 2.4 done" means
+- A first-time user who doesn't read English can navigate the core app and pick their language.
+- Language / username / discoverability are changed in a settings screen, not the chat header.
+- New and invited conversations appear without a manual reload.
+- The repo is confirmed clean and safe to share publicly.
 
 ---
 
@@ -384,6 +406,7 @@ This phase will get detailed when we're approaching it. High-level items:
 
 *Reverse chronological. One line per change; details live in `decisions.md`.*
 
+- **2026-07-07** — Promoted a pre-demo UX cluster from parking-lot into new **Phase 2.4** (account settings screen, native-name + expanded languages, non-English symbology, conversation-list realtime) + repo cleanup; checked off Phase 2.3 landing/content/CTA/hosting and added an own-voice copy-rewrite item. (→ decisions.md 2026-07-07 "Roadmap promotions + RLS gap")
 - **2026-07-07** — Docs legibility cleanup: added Contents TOC + per-phase statuses; header de-blobbed; this Changelog added. (→ decisions.md 2026-07-07 "Docs legibility cleanup + new conventions")
 - **2026-07-05** — Added "Next up — translate model selection"; parked 4 UI/language items. (→ decisions.md 2026-07-05)
 - **2026-06-23** — Concretized Phase 2.2 (jistchat.com demo) + added Phase 2.3; added Phase 2.1/2.2 auth-first sub-phases; token auth marked done. (→ decisions.md 2026-06-23)

@@ -13,6 +13,22 @@
 
 ## Product features
 
+### Invite someone to the app when adding them by email
+**Priority:** High · **Blocks:** none
+
+When starting a conversation by entering an email that isn't a user yet, offer a button to **invite them to the app** — it sends an invite link to that email and tells the recipient which username invited them. Composes the existing `invites` / `redeem_invite` primitive with email delivery.
+- **Why interesting:** Turns "this person isn't on the app yet" from a dead end into a growth loop; the who-invited-you context is the friendliest onboarding path.
+- **Trigger:** Now buildable — custom email (Resend on jistchat.com) shipped 2026-06-23. Pull into a UX/growth pass.
+- **Surfaced:** 2026-07-07 (Isaac).
+
+### Custom signup + invite email templates
+**Priority:** High · **Blocks:** none
+
+Customize the emails sent for **signup** (magic link) and **invites** — branding, copy, and the who-invited-you context — instead of the default provider templates.
+- **Why interesting:** First impression + trust; the invite email is half of the growth loop above.
+- **Trigger:** Now buildable (Resend on jistchat.com). Pairs with the invite-to-app item.
+- **Surfaced:** 2026-07-07 (Isaac).
+
 ### Conversation threads (multiple topic-chats within one group)
 **Priority:** Low · **Blocks:** none
 
@@ -30,13 +46,6 @@ A conversation — direct or group — should persist and stay accessible to eve
 - **Shape (when built):** a service-role sweep (mirrors the Step 6 abandonment / Step 7 deletion crons) that finds conversations with zero active members (`conversation_members` all `left_at IS NOT NULL`, or members all deactivated/deleted) older than the window, and removes them; `conversation_members` rows cascade (`ON DELETE CASCADE`), and `messages`/`message_translations` handling follows the Spec 7 / sentinel-retirement precedent (decisions.md 2026-06-12 "Retire the global-room sentinel data").
 - **Deliberately NOT built in Phase 3 (decisions.md 2026-06-12, build-time decision #2).** Phase 3 Step 1 ships the schema with the right FK semantics so this is purely additive later; the reaping logic + the N-day policy value are out of scope until there's real conversation volume.
 - **Trigger:** real conversation retention exists and abandoned conversations accumulate; define N in policies.md first.
-
-### Language preference as account setting, not session toggle
-**Priority:** Med · **Blocks:** none
-
-The language selector is currently in the chat header — accessible mid-conversation. This makes it easy to accidentally trigger a full re-translation of chat history and burn credits. Language preference should live in user account/profile settings and be changed deliberately, not casually.
-- **Why interesting:** Prevents unintended credit burn; better UX signal — language is a stable identity attribute, not a per-session mode.
-- **Trigger:** Phase 2 (real auth + user profiles). Natural moment to move this out of the header and into a settings screen.
 
 ### Context type: auto-inferred, not manually set
 **Priority:** Low · **Blocks:** none
@@ -118,40 +127,35 @@ The viewer's side of the same feature: when a received translation is flagged am
 A single holding pen for UI/UX adjustments surfaced while designing Phase 2 identity, discovery, and onboarding. None are blocking; they're presentation-layer polish on top of the schema/policy work landing in Phase 2. Capture now, design later.
 
 - **Single-entry add field.** One "add a contact" box that accepts either a username or a full email and routes to the right exact-match lookup, rather than separate fields per handle type. Respects discovery policy + handle minimization (policies.md §2).
-- **Settings home for identity attributes.** A settings screen where the user sets/changes username (subject to the 1-change/365-days rule), display name, language, and discoverability toggles (`discoverable_by_email`, `discoverable_by_username`). **Priority raised 2026-07-07:** username choice moved to onboarding (migration 020) and the onboarding subtext now *promises* "you can change it once, then once per year" — but this screen is the only place that change could happen, and it doesn't exist. Until it ships, users who regret a hasty signup choice have no self-serve path (flagged UX debt, decisions.md 2026-07-07). The free system→user-chosen change is now consumed at onboarding, so this screen's username section is purely the 365-day change flow.
+- **Settings home for identity attributes.** **→ PROMOTED to roadmap Phase 2.4 (Account settings screen) 2026-07-07.** A settings screen where the user sets/changes username (subject to the 1-change/365-days rule), display name, language, and discoverability toggles (`discoverable_by_email`, `discoverable_by_username`). **Priority raised 2026-07-07:** username choice moved to onboarding (migration 020) and the onboarding subtext now *promises* "you can change it once, then once per year" — but this screen is the only place that change could happen, and it doesn't exist. Until it ships, users who regret a hasty signup choice have no self-serve path (flagged UX debt, decisions.md 2026-07-07). The free system→user-chosen change is now consumed at onboarding, so this screen's username section is purely the 365-day change flow.
 - **Username availability-check RPC (added 2026-07-07).** Onboarding currently validates username availability by submit-and-see-error (`change_username` raises 'unavailable'). A tiny dedicated `is_username_available(text)` SECURITY DEFINER RPC would enable live inline feedback while typing. The existing search RPC can't serve this: it filters by discoverability, so it can't honestly answer "is this taken." Polish, not blocking.
 - **Onboarding screen polish.** The post-magic-link screen (display name + language) is functionally specified in policies.md §6 (P2/P3); visual/UX design is open.
 - **Block/report surfaces.** Where and how a user blocks or reports from a conversation or profile view. Schema exists (Phase 2); UI placement is open.
 - **Pending-account re-prompt UX.** Reminder email cadence + in-app state for pending (un-onboarded) accounts before 30-day deletion (policies.md §6). **Update 2026-06-10 (Step 6):** the *deletion* half shipped — the abandonment sweep (migration 012, `server/lib/abandonment.js`, Vercel cron) hard-deletes aged-pending accounts and records the abuse hash. The *re-prompt email* half is **deliberately parked** and decoupled from the server: no sending domain is set up yet (limited to ~2/hour), and lifecycle/drip email belongs in a CRM, not the API layer. Intended cadence when built: **day-3 and day-14** nudge before the day-30 delete. Owner = a future CRM integration, not the sweep. See decisions.md 2026-06-10 "Step 6 abandonment + abuse monitoring".
 
 - **Translation wait-state: show the original while pending (added 2026-07-05).** With gpt-5.4 medium reasoning, translations take ~7–10s; the recipient stares at "…" the whole time. After a threshold (say 2–3s), show the untranslated original with a "translating…" indicator, then swap in the translation when it lands. Shows progress instead of dead air, and the original is often partially intelligible anyway. Surfaced during the prompt-v2 staging gate.
-- **UI localization to the user's language (added 2026-07-05).** Buttons, menus, empty states, and in-message labels (e.g. the "Original" expander on received messages) should render in the user's own language, not English. The user told us their language at signup; the UI ignoring that undercuts the product's core promise. Standard i18n pass (string catalog + the user's `default_language`).
-- **Signup language list shown in native names (added 2026-07-05).** The language picker should show endonyms — Español, Français, 日本語, Deutsch — not English exonyms. A person who doesn't read English can't find "Japanese" in a list. Pairs with the i18n pass above.
-- **Open question — language not in the list (added 2026-07-05).** What happens when someone's language isn't offered at signup? Two sketched options: (a) a free-text field ("type *hello* in your language") routed through the existing detect call to identify it; (b) swap the hand-curated list for a comprehensive standard list (ISO 639 / CLDR data, which also solves native names above). Leaning (b) for coverage with (a) as a fallback affordance, but undecided — needs a real decision before non-curated-language users show up.
+- **UI localization to the user's language (added 2026-07-05).** Buttons, menus, empty states, and in-message labels (e.g. the "Original" expander on received messages) should render in the user's own language, not English. The user told us their language at signup; the UI ignoring that undercuts the product's core promise. Standard i18n pass (string catalog + the user's `default_language`). **Priority: High** — kept parked; the lighter non-English *symbology* step is on the roadmap (Phase 2.4).
+- **Signup language list shown in native names (added 2026-07-05).** **→ PROMOTED to roadmap Phase 2.4 2026-07-07** (native-name + expanded language list).
+- **Open question — language not in the list (added 2026-07-05).** What happens when someone's language isn't offered at signup? Two sketched options: (a) a free-text field ("type *hello* in your language") routed through the existing detect call to identify it; (b) swap the hand-curated list for a comprehensive standard list (ISO 639 / CLDR data, which also solves native names above). Leaning (b) for coverage with (a) as a fallback affordance, but undecided — needs a real decision before non-curated-language users show up. **Priority: High.**
+
 
 - **Why interesting:** Keeps Phase 2 scoped to schema + policy + enforcement without scope-creeping into UI design, while not losing the UX threads.
 - **Surfaced:** 2026-06-09 during Phase 2 identity/discovery design; wait-state/localization/language-list items added 2026-07-05 during prompt-v2 staging testing.
 - **Trigger:** Phase 2 schema + auth land; UI build is the natural next pass.
 
-### Conversation switcher / inbox IA (multi-conversation navigation)
+### Unread state / unread counts
 **Priority:** Med · **Blocks:** none
 
-The app currently has no interface to list, search, or switch between conversations — it shows a
-single chat. Once discovery (Step 4) and contacts (Step 5) let a user have multiple counterparties,
-the app needs the standard chat-client information architecture: an inbox/thread list, switching
-between conversations, unread state, and eventually message-history search. **Distinct from
-discovery search** — discovery finds *people to add*; this navigates *conversations you're already
-in*. The two share the word "search" but are different surfaces with different backends.
-- **Why interesting:** It's the navigational backbone every multi-conversation chat app needs; once
-  there's more than one conversation per user, its absence is immediately felt.
-- **Why deferred:** It's information-architecture over the conversation/membership model, which isn't
-  fleshed out yet (conversations are membership-based and independent of the contact graph —
-  policies.md §3). Designing a switcher before that model is settled is premature. It's also its own
-  design session, not presentation-layer polish — bigger than the "UI improvements" holding pen
-  above.
-- **Trigger:** The conversation/membership model lands (Phase 3 conversation work), or contacts
-  (Step 5) make multi-conversation real. Open it as a dedicated design conversation at that point.
-- **Surfaced:** 2026-06-10, while scoping how/when to wire the Step 4 discovery RPCs to the app layer.
+Per-conversation unread indicators + counts. The read-cursor already exists (`conversation_members.last_read_at`); this is the compute + display layer. Split out of the (now-shipped) conversation switcher.
+- **Why interesting:** Standard chat affordance; its absence is felt as soon as you have multiple conversations.
+- **Trigger:** Multi-conversation use is real now; natural to fold into the `list_conversations` enrichment RPC (Phase 3 follow-ups).
+
+### Message-history search (within conversations)
+**Priority:** Med · **Blocks:** none
+
+Search message history inside conversations you're in — distinct from discovery search, which finds *people*. Split out of the (now-shipped) conversation switcher.
+- **Why interesting:** Expected in any mature chat app once history accumulates.
+- **Trigger:** Conversation history grows past what scrolling handles.
 
 ### Onboarding funnel events
 **Priority:** Low · **Blocks:** none
@@ -171,7 +175,7 @@ Explicit event logging for the signup funnel beyond what account state already c
 **Priority:** Med · **Blocks:** none
 
 The conversation-aware `App.jsx` rewrite shipped with three deliberate MVP corners, all fine for the first smoke pass but worth closing before real multi-user load:
-- **No conversation-list realtime.** A conversation that someone else *creates with you* or *invites you to* doesn't appear until a manual reload — the single realtime channel is on `messages` only, so list membership changes aren't pushed. **Sketch:** add a `conversations` / `conversation_members` realtime channel, or a lightweight per-user activity feed, and refresh the list on membership events.
+- **No conversation-list realtime.** **→ PROMOTED to roadmap Phase 2.4 (Med) 2026-07-07.** A conversation that someone else *creates with you* or *invites you to* doesn't appear until a manual reload — the single realtime channel is on `messages` only, so list membership changes aren't pushed. **Sketch:** add a `conversations` / `conversation_members` realtime channel, or a lightweight per-user activity feed, and refresh the list on membership events.
 - **List enrichment is N+1.** `loadConversations()` fetches members + the latest message *per conversation* in `Promise.all`. Fine at a handful of conversations; a latency problem at scale. **Sketch:** fold into a single `list_conversations` RPC that returns each row already decorated with display name, last-message snippet/time, and unread count (also the natural home for server-computed unread).
 - **`?join=<token>` doesn't deep-link.** Redeeming an invite reloads the conversation list but doesn't open the joined thread (the `redeem_invite` RPC returns `'joined'`, not the conversation id). **Sketch:** have `redeem_invite` return the target conversation id so App can `openConversation()` it.
 - **Register "?" tooltip clips off-screen** (logged during the 2026-06-12 staging smoke). The explainer popover in the `ConversationView` overflow menu is absolutely positioned and runs past the viewport edge on narrow widths. **Sketch:** flip/clamp the popover within the viewport (or anchor it left of the "?"); fold into the broader UI-polish pass (Sonnet) rather than a one-off. Cosmetic — feature works.
@@ -200,15 +204,18 @@ We chose **Model A** (one tenant per user) for Phase 2. Under Model A this is do
 - **Surfaced:** 2026-06-09 during Phase 2 identity/discovery design.
 
 ### Phase 2 RLS / validation gaps (surfaced in Step 2 review, 2026-06-10)
-**Priority:** Med · **Blocks:** Phase 6 (multi-tenant)
+**Priority:** High · **Blocks:** widening access to real users (close before sharing widely)
 
-Three gaps spotted reviewing migration 008 + App.jsx. None block the Step 2 gate or matter much in the single consumer tenant, but all three become real once the "build as if the B2B API has external customers" principle meets actual multi-tenancy. Recorded so they're not silently shipped.
+
+Gaps spotted reviewing migration 008 + App.jsx (one since resolved; a new one found 2026-07-07). None block the Step 2 gate or matter much in the single consumer tenant, but all three become real once the "build as if the B2B API has external customers" principle meets actual multi-tenancy. Recorded so they're not silently shipped.
 
 1. **`message_translations` cache is poisonable within a tenant.** The RLS policies (`mt_insert_same_tenant`, `mt_update_same_tenant`) gate only on `tenant_id = auth_tenant_id()`. So any authenticated user can INSERT or *overwrite* any translation-cache row for their tenant, and the INSERT check never verifies the `message_id` actually belongs to that tenant. In one shared consumer tenant this is low-risk (derived data, semi-trusted users) — one user could corrupt another's cached translations with garbage, nothing worse. Across B2B customers sharing a project it's a cross-customer integrity hole. *Fix when:* multi-tenant, or cache integrity becomes a felt problem. *Sketch:* scope writes by a join to `messages` ownership, or restrict cache writes to a service role / server path rather than the client.
 
 2. **Realtime subscription doesn't enforce RLS or tenant scope.** App.jsx's `postgres_changes` channel appends every `INSERT` on `public.messages` with no tenant filter; only the initial fetch is tenant-scoped. Supabase Realtime doesn't apply RLS to `postgres_changes` unless realtime authorization (private channels) is configured. Fine for one shared tenant; a cross-tenant message-leak vector the moment a second tenant exists on the project. *Fix when:* before any real multi-tenant data shares a Supabase project. *Sketch:* enable Realtime RLS / private channels, or filter the subscription by `tenant_id` and stop trusting the client filter for isolation.
 
 3. ~~**`display_name` charset not validated server-side.**~~ **RESOLVED 2026-07-07** (migration 020, exactly the predicted "next touch of `complete_onboarding()`"): control characters, DEL, and bidi override/isolate chars are now rejected in the RPC. Implemented as a denylist rather than §1's allowlist sketch so international names pass — policies.md §1 updated. Emoji remain allowed (a product choice, not an oversight). Original item below for history: policies.md §1 specified display-name charset = alphanumeric + space + hyphen + apostrophe; `complete_onboarding()` validated only length, so arbitrary characters (emoji, control chars, RTL overrides) could land in `display_name`.
+
+4. **Three tables have no RLS + permissive `GRANT ALL TO anon, authenticated`** (found 2026-07-07 confirming RLS coverage against the generated `schema.sql`): `tenants`, `translation_events`, `agent_events`. Supabase enforces access *via* RLS, so RLS-off + granted-to-anon means **any client holding the public anon key can read *and* write these tables directly through the REST API (`/rest/v1/…`), bypassing the app's token-auth** — exposing tenant config + the event log (usage/cost/`user_id` metadata, *not* chat text) and allowing tamper/forge/delete, including `tenants` policy columns. Likely a Spec 4a oversight (event tables got `hermes_*` grants, but anon/authenticated were never revoked and RLS never enabled; `tenants` was never locked down). Supabase's Security Advisor should independently flag these. *Fix (staging-first):* `ENABLE ROW LEVEL SECURITY` on all three + `REVOKE` anon/authenticated (deny-by-default like `email_hash_abuse`), keeping `hermes_writer`/`hermes_readonly`/`service_role`; verify nothing legit reads `tenants` client-side first (app uses a `CHAT_APP_TENANT_ID` constant + reads policy server-side → expected safe). **Not critical yet (no real users), so parked — not roadmapped — but High priority: close before widening access.** See decisions.md 2026-07-07.
 
 - **Surfaced:** 2026-06-10, Cowork review of Sonnet's Step 2 implementation.
 - **Trigger:** #1 and #2 at first real multi-tenant move (strategic Phase 2 / B2B API); #3 anytime we touch `complete_onboarding()` or build identity validation in Step 4.
@@ -399,7 +406,6 @@ A single source of truth for enumerated option sets surfaced to users or constra
 
 ### Translation deduplication / orchestration layer
 **Priority:** Low · **Blocks:** none
-
 A central layer that dedupes identical concurrent translation requests across users. If 50 users in a group chat all need the same Spanish→English translation, the cache solves serial case; an in-flight queue solves the concurrent case.
 - **Why interesting:** Prevents N parallel OpenAI calls for the same translation when N users land on a message simultaneously.
 - **Trigger:** Real concurrent traffic; identified instances of the race condition causing real cost.
@@ -776,6 +782,27 @@ Replace Supabase's **built-in** email service (used for magic-link / OTP deliver
 - **Trigger:** before sharing the app with real testers (the Phase 2 "shareable without the email limit biting" intent), or when the deferred Phase 3 group smoke needs >2 users, or when re-prompt/CRM email is picked up. Its own small spec + a DNS/verification step.
 - **Surfaced:** 2026-06-18, during the Phase 3 prod cutover smoke (magic-link rate limit).
 
+### Conversation switcher / inbox IA (multi-conversation navigation) — RESOLVED (backbone shipped)
+
+**Resolved 2026-07-07:** the navigation backbone shipped in the Phase 3 conversation-aware frontend — `ConversationList.jsx` (inbox + switch), wired in `App.jsx`. The two remaining sub-parts from this item's scope — **unread state** and **message-history search** — are split into their own parking-lot items (Med). Original write-up kept for history.
+
+The app currently has no interface to list, search, or switch between conversations — it shows a
+single chat. Once discovery (Step 4) and contacts (Step 5) let a user have multiple counterparties,
+the app needs the standard chat-client information architecture: an inbox/thread list, switching
+between conversations, unread state, and eventually message-history search. **Distinct from
+discovery search** — discovery finds *people to add*; this navigates *conversations you're already
+in*. The two share the word "search" but are different surfaces with different backends.
+- **Why interesting:** It's the navigational backbone every multi-conversation chat app needs; once
+  there's more than one conversation per user, its absence is immediately felt.
+- **Why deferred:** It's information-architecture over the conversation/membership model, which isn't
+  fleshed out yet (conversations are membership-based and independent of the contact graph —
+  policies.md §3). Designing a switcher before that model is settled is premature. It's also its own
+  design session, not presentation-layer polish — bigger than the "UI improvements" holding pen
+  above.
+- **Trigger:** The conversation/membership model lands (Phase 3 conversation work), or contacts
+  (Step 5) make multi-conversation real. Open it as a dedicated design conversation at that point.
+- **Surfaced:** 2026-06-10, while scoping how/when to wire the Step 4 discovery RPCs to the app layer.
+
 ---
 
 ## How to use this doc
@@ -793,6 +820,7 @@ Replace Supabase's **built-in** email service (used for magic-link / OTP deliver
 
 *Reverse chronological. One line per change; project events link to `decisions.md`.*
 
+- **2026-07-07** — Reviewed with Isaac: added invite-to-app + custom-email items (High); promoted the account-settings screen, native-name/expanded languages, and conversation-list realtime to roadmap Phase 2.4; kept UI-localization + language-not-found parked at High; moved the conversation switcher to Resolved (unread + search split out); bumped the RLS-gaps item to High and added the no-RLS-on-`tenants`/event-tables finding. (→ decisions.md 2026-07-07 "Roadmap promotions + RLS gap")
 - **2026-07-07** — Docs legibility cleanup: header de-blobbed; **Priority/Blocks** convention added (reverses the prior "don't prioritize here" rule); resolved/built/promoted items swept into "Resolved & graduated." (→ decisions.md 2026-07-07 "Docs legibility cleanup + new conventions")
 - **2026-07-02** — "Apply finalized brand to the product frontend" added, then RESOLVED same day. (→ decisions.md 2026-07-02)
 - **2026-06-23** — Promoted SMTP + persistent-login + sign-out control to roadmap Phase 2.2. (→ decisions.md 2026-06-23)
