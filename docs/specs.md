@@ -4,8 +4,35 @@
 >
 > Spec lifecycle: **draft** → **approved** → **in-flight** → **shipped** → **archived**. When a spec ships, mark it `shipped` here with the commit reference and move the verification details to `/docs/verification.md`. Archive specs after one cycle of "shipped" review (typically 2-4 weeks) — move them to a future `/docs/specs-archive.md` if/when this file exceeds ~600 lines.
 
-**Last updated:** 2026-07-07 — added **Spec 8** (onboarding language list) + **Spec 9** (core-controls symbology) for Phase 2.4, Cursor/Sonnet-executed. Full history in [Changelog](#changelog).
+**Last updated:** 2026-07-08 — added **Spec 10** (account settings screen), Cowork-executed. Full history in [Changelog](#changelog).
 **Owner:** Isaac (iwitt1)
+
+---
+
+## Spec 10 — Account settings screen (Phase 2.4) — Cowork-executed
+
+**Linked roadmap item:** Phase 2.4 — Demo-readiness polish → Account settings screen
+**Author:** Isaac (drafted with Cowork, mockup iterated in-session)
+**Drafted / built:** 2026-07-08
+**Status:** **built — staging-first pending.** Code + migration 021 written in Cowork this session (Isaac's call to build here rather than hand to Cursor). Isaac commits, runs 021 on `translationapp1-staging`, smoke-tests, then replays to prod. Verification: verification.md "Spec 10 — Account settings screen (2026-07-08)".
+
+### Goal
+One screen to manage the account: change **username** (the once-a-year `change_username`), **display name**, **preferred language**, and **discoverability** — moving language out of the chat header (stops accidental full-history re-translation). Opened from an **app-bar gear**; **sign-out relocated** into it.
+
+### What shipped
+- `src/components/SettingsModal.jsx` — modal (matches the in-session mockup): username display line + gated "Change" drop-down (submit-and-error; greyed until the 365-day cadence elapses, computed by `usernameChangeEligibility`); display name (inline, validated); language (`LANGUAGES` endonym list, "affects new messages only" note); discoverability checkboxes (username / email); sign-out row.
+- `src/lib/settings.js` — data layer: `getAccountSettings`, `updateDiscoverability`, `changeUsername`, `setDisplayName`, `setPreferredLanguage`, `usernameChangeEligibility`.
+- `src/App.jsx` — app-bar sign-out button replaced by a **Settings gear**; `SettingsModal` rendered; `onSaved` reloads profile + linguistic profile.
+- `migrations/021_settings_screen.sql` — `set_preferred_language()` + `set_display_name()` RPCs; `account_settings.discoverable_by_email` default true→false + `handle_new_user` trigger + backfill.
+
+### Decisions (see decisions.md 2026-07-08)
+Language/display-name via validated RPCs (not raw client UPDATE); discoverability via own-row UPDATE; discoverability default → username-only (email-off, backfilled); "Who can message you" (`allow_dms_from`) **pulled** (unenforced → parking-lot); settings entry = app-bar gear (not a second kebab); username availability = submit-and-error (availability RPC stays parked).
+
+### Out of scope
+Account-deletion UI (built server-side, no UI yet); DM-initiation enforcement + its UI (parked); live username availability check (parked); UI localization (parked).
+
+### Verification plan (→ verification.md)
+Migration 021 embedded checks (RPC signatures/grants, default=false, backfill=0, fresh-signup trigger smoke, RPC happy/deny paths) + app smoke: gear opens settings; change display name → app-bar name updates + persists; change language → new received messages translate to it, existing history untouched; toggle discoverability → discovery search honors it; username "Change" greyed for a fresh account (clear `username_last_changed_at` on staging to exercise the change + taken/invalid errors); sign-out from settings works.
 
 ---
 

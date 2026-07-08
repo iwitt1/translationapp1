@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { LogOut } from 'lucide-react';
+import { Settings } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { LANGUAGES } from './lib/vocabularies';
 import { detectSourceLanguage } from './lib/translation';
@@ -17,6 +17,7 @@ import ConversationList from './components/ConversationList';
 import ConversationView from './components/ConversationView';
 import NewConversationModal from './components/NewConversationModal';
 import InviteModal from './components/InviteModal';
+import SettingsModal from './components/SettingsModal';
 
 /*
 ========================================================
@@ -68,6 +69,7 @@ export default function App() {
   // ── modals ──
   const [showNew, setShowNew] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   const userId = session?.user?.id ?? null;
   const activeConversation = useMemo(
@@ -91,6 +93,7 @@ export default function App() {
       else {
         setSession(null); setProfile(null); setLinguistic(null);
         setConversations([]); setActiveId(null); setMessages([]);
+        setShowSettings(false);
         setAuthView('email_input');
       }
     });
@@ -536,11 +539,15 @@ export default function App() {
           </svg>
           <span className="hidden sm:inline font-bold text-sm" style={{ fontFamily: "'Outfit', sans-serif" }}>Jistchat</span>
         </div>
-        <div className="flex items-center gap-3 text-xs text-slate-500">
+        <div className="flex items-center gap-2 text-xs text-slate-500">
           <span className="hidden sm:inline truncate max-w-[12rem]">{profile?.display_name}</span>
-          <button onClick={handleSignOut} className="hover:text-slate-800 flex items-center gap-1" title="Sign out" aria-label="Sign out">
-            <LogOut size={14} strokeWidth={2.2} />
-            Sign out
+          <button
+            onClick={() => setShowSettings(true)}
+            className="h-8 w-8 grid place-items-center rounded-full hover:bg-slate-100 text-slate-500 hover:text-slate-800"
+            title="Settings"
+            aria-label="Settings"
+          >
+            <Settings size={18} strokeWidth={2.2} />
           </button>
         </div>
       </header>
@@ -586,6 +593,14 @@ export default function App() {
         conversationId={activeConversation?.id}
         conversationName={activeConversation?.displayName || 'this conversation'}
         onClose={() => setShowInvite(false)}
+      />
+      <SettingsModal
+        open={showSettings}
+        onClose={() => setShowSettings(false)}
+        profile={profile}
+        linguisticProfile={linguisticProfile}
+        onSaved={() => loadProfile(userId)}
+        onSignOut={handleSignOut}
       />
     </main>
   );

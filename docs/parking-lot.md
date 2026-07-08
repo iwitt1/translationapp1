@@ -127,7 +127,7 @@ The viewer's side of the same feature: when a received translation is flagged am
 A single holding pen for UI/UX adjustments surfaced while designing Phase 2 identity, discovery, and onboarding. None are blocking; they're presentation-layer polish on top of the schema/policy work landing in Phase 2. Capture now, design later.
 
 - **Single-entry add field.** One "add a contact" box that accepts either a username or a full email and routes to the right exact-match lookup, rather than separate fields per handle type. Respects discovery policy + handle minimization (policies.md §2).
-- **Settings home for identity attributes.** **→ PROMOTED to roadmap Phase 2.4 (Account settings screen) 2026-07-07.** A settings screen where the user sets/changes username (subject to the 1-change/365-days rule), display name, language, and discoverability toggles (`discoverable_by_email`, `discoverable_by_username`). **Priority raised 2026-07-07:** username choice moved to onboarding (migration 020) and the onboarding subtext now *promises* "you can change it once, then once per year" — but this screen is the only place that change could happen, and it doesn't exist. Until it ships, users who regret a hasty signup choice have no self-serve path (flagged UX debt, decisions.md 2026-07-07). The free system→user-chosen change is now consumed at onboarding, so this screen's username section is purely the 365-day change flow.
+- **Settings home for identity attributes.** **→ SHIPPED 2026-07-08 (Account settings screen, migration 021 + `SettingsModal.jsx`).** *(was: PROMOTED to roadmap Phase 2.4 2026-07-07.)* A settings screen where the user sets/changes username (subject to the 1-change/365-days rule), display name, language, and discoverability toggles (`discoverable_by_email`, `discoverable_by_username`). Opened from an app-bar gear; sign-out relocated into it. Language/display-name/username go through validated RPCs (`set_preferred_language`, `set_display_name`, `change_username`); discoverability is a direct own-row UPDATE. See decisions.md 2026-07-08. The free system→user-chosen change is consumed at onboarding, so this screen's username section is purely the 365-day change flow (Change control greys out until eligible).
 - **Username availability-check RPC (added 2026-07-07).** Onboarding currently validates username availability by submit-and-see-error (`change_username` raises 'unavailable'). A tiny dedicated `is_username_available(text)` SECURITY DEFINER RPC would enable live inline feedback while typing. The existing search RPC can't serve this: it filters by discoverability, so it can't honestly answer "is this taken." Polish, not blocking.
 - **Onboarding screen polish.** The post-magic-link screen (display name + language) is functionally specified in policies.md §6 (P2/P3); visual/UX design is open.
 - **Block/report surfaces.** Where and how a user blocks or reports from a conversation or profile view. Schema exists (Phase 2); UI placement is open.
@@ -142,6 +142,23 @@ A single holding pen for UI/UX adjustments surfaced while designing Phase 2 iden
 - **Why interesting:** Keeps Phase 2 scoped to schema + policy + enforcement without scope-creeping into UI design, while not losing the UX threads.
 - **Surfaced:** 2026-06-09 during Phase 2 identity/discovery design; wait-state/localization/language-list items added 2026-07-05 during prompt-v2 staging testing.
 - **Trigger:** Phase 2 schema + auth land; UI build is the natural next pass.
+
+### DM-initiation control — "Who can message you" (`allow_dms_from` enforcement + UI)
+**Priority:** Low · **Blocks:** none
+
+The `account_settings.allow_dms_from` column (`everyone`/`contacts`/`nobody`, default `contacts`) has existed since migration 007 but **nothing reads it** — it's stored, never enforced. It is a distinct axis from discoverability: discoverability governs who can *find/add* you (the discovery RPCs honor `discoverable_by_*`); `allow_dms_from` governs who can *start a conversation* once they've found you (cf. Signal/Telegram message-requests, Discord "allow DMs from server members"). It was considered for the Phase 2.4 settings screen and **pulled (2026-07-08, Isaac)** rather than ship a control that does nothing.
+- **To build:** enforce the setting in the conversation-create path (`create_conversation` / conversation-kind `redeem_invite`), layered on top of the existing tenant-level `dm_initiation_policy` (`lib/policies.js`), then surface a "Who can message you" selector in the settings screen.
+- **Why deferred:** no enforcement today; shipping the UI first would be a dead control. Also intersects the still-Phase-3 DM *policy values*/tiers.
+- **Trigger:** unsolicited-DM friction becomes real (wider discovery / larger tester pool), or a B2B tenant needs per-user DM gating.
+- **Surfaced:** 2026-07-08 during the Phase 2.4 settings-screen build.
+
+### Should the onboarding username claim consume the yearly change?
+**Priority:** Low · **Blocks:** none
+
+Today the username picked at onboarding is claimed via `change_username()` (migration 020), which sets `username_source='user_set'` and starts the 365-day cadence clock. Consequence: a brand-new user cannot change the handle they just picked for a year, and the settings-screen "Change" control is greyed for ~365 days after signup. Open question: should the onboarding claim be treated as *setup* (not a "change"), leaving the first real change free — e.g. give one free `user_set→user_set` change, or don't start the clock until the first post-onboarding change? Trade-off: friction/typo-regret at signup vs. handle-churn/squatting abuse the cadence is meant to prevent.
+- **Why deferred:** nobody's a year in yet, so it bites no one today; and it touches `change_username()` cadence logic (shared by onboarding + settings), so it wants a deliberate policy decision, not a quick patch.
+- **Trigger:** first real complaint about being locked into a signup typo, or when we revisit username policy (policies.md §1).
+- **Surfaced:** 2026-07-08 during the Phase 2.4 settings-screen build (Isaac parked it).
 
 ### Unread state / unread counts
 **Priority:** Med · **Blocks:** none

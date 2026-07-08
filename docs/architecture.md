@@ -74,7 +74,7 @@ A real-time multilingual chat application backed by an LLM-powered translation A
 9. ~~**Prompt drift between prod and local.** Local `server/index.js` has an extra prompt line that production `api/translate.js` lacks. Reconciled in Phase 0.~~ Done 2026-05-12.
 10. **Wasteful detect-on-every-send.** Every message triggers an OpenAI detect call even when the sender's language is known.
 11. **No error UX.** Translation failures silently fall back to the original text.
-12. ~~**No way for users to set preferred language in the UI.**~~ **Built on staging** — `complete_onboarding(display_name, preferred_language)` RPC sets it explicitly at onboarding (written `_source='explicit'` to `user_linguistic_profiles`). Still true in **prod**.
+12. ~~**No way for users to set preferred language in the UI.**~~ **Resolved.** Set at onboarding via `complete_onboarding(...)`, and **changeable later in the settings screen** via `set_preferred_language()` (migration 021, 2026-07-08) — no longer a header control, so changing it can't accidentally re-translate all history. (Settings screen staging-first pending prod.)
 13. ~~**Stray files at repo root** (`Bash`, `echo`, `which`). Gitignored but ugly; delete in Phase 0.~~ Done 2026-05-12.
 
 ---
@@ -488,8 +488,12 @@ minimization** (policies.md §2): a discovery query returns only the matched han
 other identifiers.
 
 #### `account_settings` (per-user privacy prefs, 1:1)
-1:1 with `profiles`: `discoverable_by_email` / `discoverable_by_username` (default true) +
-`allow_dms_from` (`everyone`|`contacts`|`nobody`, default `contacts`).
+1:1 with `profiles`: `discoverable_by_username` (default true) / `discoverable_by_email`
+(**default false since migration 021** — new accounts are username-discoverable only; existing rows
+backfilled to false, decisions.md 2026-07-08) + `allow_dms_from` (`everyone`|`contacts`|`nobody`,
+default `contacts` — **stored but not yet enforced**; DM-initiation is currently governed by the
+tenant-level `dm_initiation_policy` only, see parking-lot "DM-initiation control"). The discoverability
+toggles are edited from the settings screen via a direct own-row UPDATE (`account_settings_update_own`).
 
 #### `relationships` (contact graph; conversations are independent of this)
 > **Canonical-pair model** (migration 011; decisions.md 2026-06-10 "Contact-graph representation").
@@ -629,6 +633,17 @@ SELECT-only).
 
 (`create_invite` / `redeem_invite` were also amended in 017 for `conversation`-kind invites — see the
 Step 5 RPC list above.)
+
+### Phase 2.4 settings functions (migration 021)
+
+Both `SECURITY DEFINER SET search_path = public`, `EXECUTE` to `authenticated` only. Called by the
+settings screen (`SettingsModal.jsx` via `lib/settings.js`); the single validated write path for their
+field.
+
+- **`set_preferred_language(p_language)`** → text — validates non-empty (+ length cap), updates the caller's `user_linguistic_profiles.preferred_language` + `updated_at`. The change-later counterpart to `complete_onboarding`'s onboarding seed.
+- **`set_display_name(p_display_name)`** → text — validates 1–50 chars after trim + the control-char/bidi denylist (identical to `complete_onboarding`), updates `profiles.display_name`. Exists so the denylist can't be bypassed by a raw client UPDATE (which `profiles_update_own` + the display_name column grant would otherwise allow).
+
+(Migration 021 also flips `account_settings.discoverable_by_email` to default false and updates the `handle_new_user` trigger accordingly — see §7 `account_settings`.)
 
 ---
 
@@ -868,7 +883,8 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │   ├── 017_phase3_conversations.sql          Phase 3 Step 1: conversations + conversation_members tables + RLS + dedupe; promotes messages.conversation_id to a real FK; adds conversation_contexts RLS+FK; create_conversation/leave_conversation/set_conversation_context_type/is_active_member RPCs; amends create_invite/redeem_invite for conversation-kind; adds tenants.conversation_policy
 │   ├── 018_phase3_messages_rls.sql           Phase 3 Step 2 / Spec 7: flips messages + message_translations RLS tenant-scoped → membership-scoped (is_active_member). Drops+recreates the same 5 policy names from 008; policies-only, no DDL/data change; messages stay immutable; replay to prod AFTER 017
 │   ├── 019_unify_context_type_vocab.sql       Unify conversations.context_type CHECK + create_conversation/set_conversation_context_type inline guards on the engine vocab (casual/dating/professional/academic). ALTER + CREATE OR REPLACE; defensive remap; does NOT touch detected_register
-│   └── 020_onboarding_username.sql       Onboarding requires a user-chosen username; complete_onboarding() (3-arg) claims it atomically with activation; change_username() allows self-revert; display_name denylist
+│   ├── 020_onboarding_username.sql       Onboarding requires a user-chosen username; complete_onboarding() (3-arg) claims it atomically with activation; change_username() allows self-revert; display_name denylist
+│   └── 021_settings_screen.sql       Phase 2.4 settings: set_preferred_language() + set_display_name() RPCs; account_settings.discoverable_by_email default true→false + handle_new_user trigger + backfill
 ├── scripts/
 │   ├── rls-adversarial-test.mjs   Phase 2 Step 3 RLS gate (run on staging)
 │   ├── discovery-gate-test.mjs    Phase 2 Step 4 discovery gate (run on staging)
@@ -886,14 +902,16 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │   │   ├── ConversationView.jsx     Thread: header + overflow menu (register selector + "?" explainer) + messages + composer
 │   │   ├── MessageBubble.jsx        Per-message translate/cache/infer + "Original:" single-line expandable preview + optimistic pending/failed states
 │   │   ├── NewConversationModal.jsx People-picker (discovery RPCs) → create_conversation (direct dedupe / group)
-│   │   └── InviteModal.jsx          Mints a conversation invite (create_invite) → copyable ?join=<token> link
+│   │   ├── InviteModal.jsx          Mints a conversation invite (create_invite) → copyable ?join=<token> link
+│   │   └── SettingsModal.jsx        Account settings (app-bar gear): username change (gated) / display name / language / discoverability + relocated sign-out
 │   └── lib/
 │       ├── supabase.js       Supabase client initialization
 │       ├── config.js         Non-secret constants (CHAT_APP_TENANT_ID etc.)
 │       ├── vocabularies.js   Client source of truth for enumerated option sets (context_type/register, languages); aligned with translatePrompt.js + the 019 CHECK
 │       ├── translation.js    Translation-engine client config (API URLs, PROFILE_INFERENCE_ENABLED) + language-code normalizer + detectSourceLanguage(); keeps chat UI decoupled from the engine HTTP contract
 │       ├── discovery.js      Data-access layer for the people-picker: find_account_by_email / search_accounts_by_username RPC wrappers
-│       └── conversations.js  Data-access layer for Phase 3 conversations: RPC wrappers (create/leave/setContextType/invite/redeem) + list/read/insert queries
+│       ├── conversations.js  Data-access layer for Phase 3 conversations: RPC wrappers (create/leave/setContextType/invite/redeem) + list/read/insert queries
+│       └── settings.js       Data-access layer for the settings screen: account_settings read/UPDATE + set_preferred_language/set_display_name/change_username RPC wrappers + username-change eligibility helper
 ├── docs/
 │   ├── architecture.md       This file
 │   ├── schema.sql            Generated current-state schema snapshot (the *what*; §7 owns the *why*)

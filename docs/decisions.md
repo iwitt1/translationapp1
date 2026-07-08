@@ -24,6 +24,7 @@
 
 **Roadmap & security**
 
+- [2026-07-08 — Account settings screen (Phase 2.4) + migration 021: settings RPCs, discoverability default → username-only](#2026-07-08--account-settings-screen-phase-24--migration-021-settings-rpcs-discoverability-default--username-only)
 - [2026-07-07 — Spec 8 + 9 shipped: expanded language list + lucide-react UI icons (Phase 2.4)](#2026-07-07--spec-8--9-shipped-expanded-language-list--lucide-react-ui-icons-phase-24)
 - [2026-07-07 — Roadmap promotions (Phase 2.4) + RLS gap on tenants/event tables](#2026-07-07--roadmap-promotions-phase-24--rls-gap-on-tenantsevent-tables)
 
@@ -152,6 +153,21 @@
 
 
 ---
+
+## 2026-07-08 — Account settings screen (Phase 2.4) + migration 021: settings RPCs, discoverability default → username-only
+
+**Decision:** Built the account settings screen (`src/components/SettingsModal.jsx` + `src/lib/settings.js`), opened from a **gear icon in the global app bar**, with **sign-out relocated into it** (removed from the app bar). It edits: **username** (the once-a-year `change_username`, submit-and-error, with the "Change" control greyed out until the 365-day cadence has elapsed), **display name**, **preferred language** (the full 40-endonym `LANGUAGES` list), and **discoverability** (`discoverable_by_username` / `discoverable_by_email` checkboxes). Migration 021 adds two SECURITY DEFINER RPCs — `set_preferred_language(text)` and `set_display_name(text)` — and flips `account_settings.discoverable_by_email` to **default false** (column default + `handle_new_user` trigger), **backfilling existing rows to false**. Built directly in Cowork (not handed to Cursor) at Isaac's call; Isaac commits + runs staging-first.
+**Context:** First checklist item of Phase 2.4 (demo-readiness). Onboarding (migration 020) started *promising* a username-change path that didn't exist; language lived only in the chat header (accidental full-history re-translation / credit burn) and was write-only after onboarding; discoverability toggles had a table but no UI. The screen closes all three.
+**Alternatives considered:**
+- *Language write path* — new `set_preferred_language` RPC (chosen; single validated server-side enforcement point, consistent with `change_username`, and a cleaner Phase-6 API seam) vs. a direct client UPDATE via the existing `ulp_update_own` RLS (rejected; validation would live in the client and it's a weaker structural boundary).
+- *Display-name write path* — new `set_display_name` RPC reusing `complete_onboarding`'s length + control-char/bidi denylist (chosen) vs. a raw client UPDATE allowed by `profiles_update_own` + the display_name column grant (rejected; that path bypasses the denylist).
+- *"Who can message you" (`allow_dms_from`)* — include it (rejected; the column exists but **nothing enforces it**, so the control would be a no-op) → **parked, Low** (parking-lot "DM-initiation control"). It's a separate axis from discoverability and belongs with real DM-gating enforcement (Phase 3/later).
+- *Discoverability default* — email-off by default with backfill (chosen; more private default, pre-launch, reversible in the very screen we shipped) vs. new-users-only (rejected; inconsistent old-vs-new privacy posture) vs. leave as-is (rejected; email-discoverable-by-default is the wrong default for a chat app).
+- *Settings entry point* — app-bar gear (chosen) vs. a second kebab in the app bar (rejected; collides visually with the per-conversation ⋯ in the thread header — same icon, different scope).
+- *Username availability feedback* — submit-and-error (chosen; keeps the `is_username_available` RPC parked) vs. build the live availability check now (rejected; scope creep).
+**Reasoning:** The RPC-per-field pattern keeps all identity/profile validation server-side in one place each — the project's "over-engineer the structural pieces now" ethos, and the right shape for when the translation/identity layer gets external API customers. Email-off-by-default is the privacy-respecting default; backfilling is safe pre-launch and user-reversible.
+**Implications:** New accounts are username-discoverable only. `set_display_name` is now the sanctioned display-name-change path (a raw UPDATE still works via RLS but skips the denylist — acceptable; the RPC is what the app calls). The username "Change" control is inert for ~365 days after onboarding for any user who chose a handle at signup (the onboarding claim consumes the free system→user change and starts the clock) — expected, not a bug; to exercise the change flow on staging, clear `username_last_changed_at` (see migration 020 verification block).
+**Revisit when:** DM-gating enforcement is built (un-park "Who can message you"); or the live availability-check RPC is wanted; or a B2B tenant needs different discoverability defaults (they'd move from a column default to tenant policy).
 
 ## 2026-07-07 — Spec 8 + 9 shipped: expanded language list + lucide-react UI icons (Phase 2.4)
 

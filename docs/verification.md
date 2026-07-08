@@ -65,6 +65,7 @@
 - [Translate model swap: gpt-5.4 + prompt v2.0.0 (2026-07-05) — ⏳ gate PENDING on staging](#translate-model-swap-gpt-54--prompt-v200-2026-07-05---gate-pending-on-staging)
 - [Username at onboarding — migration 020 (2026-07-07) — ✅ GREEN on staging; PROD ROLLED OUT same day](#username-at-onboarding--migration-020-2026-07-07---green-on-staging-prod-rolled-out-same-day)
 - [Spec 8 + 9 — Demo-readiness polish (2026-07-07) — ✅ GREEN on staging; merged to main, prod smoke pending](#spec-8--9--demo-readiness-polish-2026-07-07---green-on-staging-merged-to-main-prod-smoke-pending)
+- [Spec 10 — Account settings screen (2026-07-08) — ⏳ staging-first pending](#spec-10--account-settings-screen-2026-07-08--️-staging-first-pending)
 
 **Meta**
 
@@ -1879,6 +1880,41 @@ See roadmap.md Phase 2.2, decisions.md 2026-06-23, operations.md (topology + dep
 
 ---
 
+## Spec 10 — Account settings screen (2026-07-08) — ⏳ staging-first pending
+
+**What shipped:** `SettingsModal.jsx` (app-bar gear → modal: username-change gated drop-down, display name, language, discoverability checkboxes, relocated sign-out) + `lib/settings.js` data layer + `App.jsx` wiring (gear replaces the app-bar sign-out button). Migration `021_settings_screen.sql`: `set_preferred_language()` + `set_display_name()` RPCs; `account_settings.discoverable_by_email` default true→false + `handle_new_user` trigger + backfill. See decisions.md / specs.md 2026-07-08.
+
+**Run 021 on `translationapp1-staging` first, then this smoke, then replay to prod.**
+
+Migration (embedded verification block covers these — run after applying):
+
+- [ ] Both RPCs exist with expected signatures; `authenticated` has EXECUTE, `anon`/`public` do not.
+- [ ] `account_settings.discoverable_by_email` column default = `false`.
+- [ ] Backfill complete: `SELECT count(*) FROM account_settings WHERE discoverable_by_email = true;` → 0.
+- [ ] Fresh staging signup → its `account_settings` row is `(discoverable_by_email=false, discoverable_by_username=true)`.
+- [ ] `set_preferred_language('es')` as an authenticated active user → returns `'es'`, ULP row updated.
+- [ ] `set_display_name` rejects a bidi-override char; accepts a normal name.
+
+App smoke (Vercel Preview against staging):
+
+- [ ] App-bar **gear** opens Settings; the old app-bar sign-out button is gone (sign-out now lives in the modal and works, with the confirm prompt).
+- [ ] **Display name:** edit + Save → app-bar name updates; reopen Settings → persisted.
+- [ ] **Language:** change + Save → newly-received messages translate into the new language; **existing history is not re-translated**.
+- [ ] **Discoverability:** uncheck Username / check Email + Save → discovery search (people-picker) honors the change (username no longer found; email now found).
+- [ ] **Username gating:** for an account that chose its handle at onboarding, "Change" is greyed with an "Available <date>" tooltip. To exercise the change flow, clear the cadence on staging (`UPDATE profiles SET username_last_changed_at = now() - interval '400 days' WHERE id = '<uid>';`), then: happy path renames; taken/reserved/invalid inputs show the mapped inline errors.
+- [ ] No console errors; Cancel discards unsaved edits.
+
+**Known failure modes to watch:**
+
+| Symptom | Likely cause |
+|---|---|
+| Language change re-translates whole thread | translations are cached per message; only new sends/receives should hit the engine — if history re-translates, a cache-key or re-render bug |
+| "Change" always greyed even after clearing cadence | `usernameChangeEligibility` reads `profile.username_source`/`username_last_changed_at` — confirm `onSaved` reloaded the profile |
+| Discoverability toggle silently no-ops | `account_settings_update_own` RLS or the `account_id = auth.uid()` filter — confirm the row updated |
+| Settings modal stale after save | `onSaved` must call `loadProfile(userId)` to refresh both profile + linguistic profile |
+
+---
+
 ## How to use this doc
 
 - Before shipping a feature, draft its verification section first. Easier than scrambling after.
@@ -1893,6 +1929,7 @@ See roadmap.md Phase 2.2, decisions.md 2026-06-23, operations.md (topology + dep
 
 *Reverse chronological. One line per change; project events link to `decisions.md`.*
 
+- **2026-07-08** — Added "Spec 10 — Account settings screen" section (settings modal + migration 021; staging-first pending). (→ decisions.md 2026-07-08 "Account settings screen")
 - **2026-07-07** — Added "Spec 8 + 9 — Demo-readiness polish" section (language-list + lucide icons, staging gate GREEN); updated same day once merged to `main` (commit `1c37b14`). (→ decisions.md 2026-07-07 "Spec 8 + 9 shipped")
 - **2026-07-07** — Docs legibility cleanup: added Contents TOC; header de-blobbed; this Changelog added. Also added the "Username at onboarding — migration 020" section (gate GREEN + prod). (→ decisions.md 2026-07-07)
 - **2026-07-05** — Added "Translate model swap: gpt-5.4 + prompt v2.0.0" section. (→ decisions.md 2026-07-05)
