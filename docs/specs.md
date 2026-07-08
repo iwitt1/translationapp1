@@ -4,8 +4,131 @@
 >
 > Spec lifecycle: **draft** → **approved** → **in-flight** → **shipped** → **archived**. When a spec ships, mark it `shipped` here with the commit reference and move the verification details to `/docs/verification.md`. Archive specs after one cycle of "shipped" review (typically 2-4 weeks) — move them to a future `/docs/specs-archive.md` if/when this file exceeds ~600 lines.
 
-**Last updated:** 2026-07-07 — docs legibility cleanup (header de-blobbed). Substantive prior update 2026-06-18 (Specs 6 & 7 shipped). Full history in [Changelog](#changelog).
+**Last updated:** 2026-07-07 — added **Spec 8** (onboarding language list) + **Spec 9** (core-controls symbology) for Phase 2.4, Cursor/Sonnet-executed. Full history in [Changelog](#changelog).
 **Owner:** Isaac (iwitt1)
+
+---
+
+## Spec 8 — Onboarding language list: native names + expanded set (~40) — Cursor/Sonnet-executed
+
+**Linked roadmap item:** Phase 2.4 — Demo-readiness polish
+**Author:** Isaac (drafted with Cowork)
+**Drafted:** 2026-07-07
+**Status:** approved
+
+### Goal
+A first-time user who doesn't read English should be able to find their language at onboarding. Today the picker is a short, English-labelled (exonym) `LANGUAGES` array in `src/lib/vocabularies.js`, rendered as a native `<select>` in `App.jsx`. Expand it to ~40 of the most-spoken languages and label each **endonym-first with English in parentheses** — e.g. `Español (Spanish)` — so both a native speaker and an English speaker (and text search) can find it.
+
+### Acceptance criteria
+- `LANGUAGES` in `src/lib/vocabularies.js` holds the ~40 entries below, each `{ value: <ISO 639-1 code>, label: "<Endonym> (<English>)" }` (English label is exactly `English`, no parens).
+- The onboarding `<select>` (App.jsx ~line 479) renders all ~40 with the new labels; the wire value written to `complete_onboarding(p_preferred_language)` is still the ISO code (unchanged behavior).
+- Codes stay valid ISO 639-1 / BCP 47 that the detect + translate engine already accepts. No new dialect/region codes (dialect lives separately in `dialect_region`).
+- No duplicates; order is common-languages-first (as listed).
+- The `getLanguages()` accessor shape is unchanged (call sites untouched); `CONTEXT_TYPES` and other `vocabularies.js` exports are untouched.
+- Default remains `'en'`; existing stored profiles keep working.
+
+### Out of scope
+- The "language not in the list" solution (free-text / comprehensive CLDR list + searchable picker) — stays parked (High).
+- A custom-styled dropdown (endonym bold / English muted) — we chose the plain `<select>` with parens.
+- UI localization (translating the app's own text) — separate parked item.
+- Any backend/schema change.
+
+### Open questions
+- **RTL labels:** Arabic/Hebrew/Persian/Urdu endonyms + a parenthesized English word can bidi-reorder oddly in `<option>` text. Acceptable cosmetic quirk for v1? (If it bothers, wrap the English in LTR marks later.)
+- Final sort order — proposed common-first (below); confirm or switch to alpha-by-English.
+
+### Technical sketch
+- File: `src/lib/vocabularies.js` — replace the `LANGUAGES` array with the below. `src/App.jsx` needs no change (it already maps `LANGUAGES` → `<option>`), just confirm the `<option>` uses `l.label`.
+- Drop-in array:
+
+```js
+export const LANGUAGES = [
+  { value: 'en', label: 'English' },
+  { value: 'es', label: 'Español (Spanish)' },
+  { value: 'zh', label: '中文 (Chinese)' },
+  { value: 'hi', label: 'हिन्दी (Hindi)' },
+  { value: 'ar', label: 'العربية (Arabic)' },
+  { value: 'pt', label: 'Português (Portuguese)' },
+  { value: 'bn', label: 'বাংলা (Bengali)' },
+  { value: 'ru', label: 'Русский (Russian)' },
+  { value: 'ja', label: '日本語 (Japanese)' },
+  { value: 'de', label: 'Deutsch (German)' },
+  { value: 'fr', label: 'Français (French)' },
+  { value: 'ko', label: '한국어 (Korean)' },
+  { value: 'it', label: 'Italiano (Italian)' },
+  { value: 'tr', label: 'Türkçe (Turkish)' },
+  { value: 'vi', label: 'Tiếng Việt (Vietnamese)' },
+  { value: 'pl', label: 'Polski (Polish)' },
+  { value: 'uk', label: 'Українська (Ukrainian)' },
+  { value: 'nl', label: 'Nederlands (Dutch)' },
+  { value: 'th', label: 'ไทย (Thai)' },
+  { value: 'fa', label: 'فارسی (Persian)' },
+  { value: 'id', label: 'Bahasa Indonesia (Indonesian)' },
+  { value: 'he', label: 'עברית (Hebrew)' },
+  { value: 'el', label: 'Ελληνικά (Greek)' },
+  { value: 'sv', label: 'Svenska (Swedish)' },
+  { value: 'cs', label: 'Čeština (Czech)' },
+  { value: 'ro', label: 'Română (Romanian)' },
+  { value: 'hu', label: 'Magyar (Hungarian)' },
+  { value: 'da', label: 'Dansk (Danish)' },
+  { value: 'fi', label: 'Suomi (Finnish)' },
+  { value: 'no', label: 'Norsk (Norwegian)' },
+  { value: 'ur', label: 'اردو (Urdu)' },
+  { value: 'ta', label: 'தமிழ் (Tamil)' },
+  { value: 'te', label: 'తెలుగు (Telugu)' },
+  { value: 'mr', label: 'मराठी (Marathi)' },
+  { value: 'gu', label: 'ગુજરાતી (Gujarati)' },
+  { value: 'sw', label: 'Kiswahili (Swahili)' },
+  { value: 'tl', label: 'Tagalog (Filipino)' },
+  { value: 'ms', label: 'Bahasa Melayu (Malay)' },
+  { value: 'sk', label: 'Slovenčina (Slovak)' },
+  { value: 'bg', label: 'Български (Bulgarian)' },
+];
+```
+
+### Verification plan (→ verification.md after ship)
+- Open onboarding → language picker shows ~40 endonym `(English)` labels.
+- Pick a non-English one (e.g. `日本語 (Japanese)`) → complete onboarding → confirm `user_linguistic_profiles.preferred_language = 'ja'` and that received messages translate to Japanese.
+- No console errors; register/context selector unaffected.
+
+---
+
+## Spec 9 — Core-controls UI symbology (lucide-react) — Cursor/Sonnet-executed
+
+**Linked roadmap item:** Phase 2.4 — Demo-readiness polish
+**Author:** Isaac (drafted with Cowork)
+**Drafted:** 2026-07-07
+**Status:** approved
+
+### Goal
+Make the app navigable by a first-time user who doesn't read English. Icons today are hand-inlined SVGs with inconsistent coverage (some controls are icon-buttons, others text-only). Add `lucide-react` and put a clear icon on each **core** control, **keeping** existing text labels/tooltips (icons aid non-English users without removing info from English ones).
+
+### Acceptance criteria
+- `lucide-react` installed; icons imported per-icon (tree-shaken), sized ~18–20px, `strokeWidth` ~2, color via `currentColor` (matches the existing inline SVGs).
+- Every core control has a clear icon **and** an `aria-label` + `title`/tooltip: send message · new conversation · invite / copy-invite-link · back · close (modals) · sign-out · settings entry (or its placeholder if the settings screen isn't built yet) · register/context (⋯) menu · the "Original" expander on translated messages · add-person/search in the new-conversation modal.
+- Controls that currently show a **text label keep the label** with the icon beside it (belt-and-suspenders); icon-only controls get the aria-label/tooltip.
+- No behavior change — presentation only; all handlers/labels still work.
+
+### Out of scope
+- Full sweep (secondary/state/empty/error/onboarding affordances — the register "?", empty states, "translating…", "⚠ Translation failed"/retry, sign-in screen, status ticks, "Copied!", per-message language indicator, timestamps). Parked as the follow-up.
+- Full UI localization (translated text) — separate parked item.
+- Any restyle beyond adding icons.
+
+### Open questions
+- On the few text-labelled controls (e.g. "Sign out"), keep text+icon (recommended) or go icon-only+tooltip? Default: keep text+icon.
+- Confirm the icon mapping below (or swap any).
+
+### Technical sketch
+- `npm install lucide-react`. Import e.g. `import { Send, SquarePen, UserPlus, Copy, ArrowLeft, X, LogOut, Settings, MoreVertical, ChevronDown, Search } from 'lucide-react'`.
+- Files: `ConversationView.jsx` (send, ⋯/register), `ConversationList.jsx` (new conversation), `MessageBubble.jsx` (Original expander), `NewConversationModal.jsx` (search/add, close), `InviteModal.jsx` (copy, close), `App.jsx` app bar (sign-out, settings entry, back).
+- Suggested mapping: send→`Send`; new conversation→`SquarePen` (or `Plus`); invite→`UserPlus`; copy link→`Copy`; back→`ArrowLeft`; close→`X`; sign-out→`LogOut`; settings→`Settings`; overflow/register→`MoreVertical`; Original expander→`ChevronDown`; add-person/search→`Search`.
+- Optional (if quick): swap the existing hand-inlined SVGs for these controls to their lucide equivalents for one consistent set; otherwise leave them and just match sizing.
+
+### Verification plan (→ verification.md after ship)
+- Each listed core control shows its icon at consistent size/stroke; existing labels/tooltips intact.
+- Each icon-only control has an `aria-label` (spot-check in devtools).
+- Send / new / invite / back / close / sign-out / register menu / Original expander all still function.
+- "English-blind" pass: with the text mentally removed, the core flows are recognizable by icon alone.
 
 ---
 
@@ -598,6 +721,7 @@ The earlier Resume notes section (session 1, 2026-05-21) was built on a misdiagn
 
 *Reverse chronological. One line per change; project events link to `decisions.md`.*
 
+- **2026-07-07** — Added Spec 8 (onboarding language list: ~40 native-name languages) + Spec 9 (core-controls symbology via lucide-react) for roadmap Phase 2.4; both Cursor/Sonnet-executed. (→ roadmap.md Phase 2.4)
 - **2026-07-07** — Docs legibility cleanup: header de-blobbed; added this Changelog + a "mostly historical" banner. (→ decisions.md 2026-07-07 "Docs legibility cleanup + new conventions")
 - **2026-06-18** — Specs 6 & 7 marked shipped to prod (Phase 3 cutover, migrations 017/018). (→ decisions.md 2026-06-18)
 - **2026-06-12** — Migration renumber: Phase 3 specs shifted to 017/018 after the FK-cascade fix took 016; Spec 6 drafted (Cowork-executed); Spec 7 drafted. (→ decisions.md 2026-06-12)
