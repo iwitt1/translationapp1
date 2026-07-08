@@ -20,12 +20,13 @@
 - [5. The translation API contract](#5-the-translation-api-contract)
 - [6. The context object — the personalization mechanism](#6-the-context-object--the-personalization-mechanism)
 - [7. Database schema](#7-database-schema)
+  - [Live tables at a glance](#live-tables-at-a-glance)
   - [Tables that exist today (MVP)](#tables-that-exist-today-mvp)
   - [Tables to add in Phase 0 (cheap structural prep)](#tables-to-add-in-phase-0-cheap-structural-prep)
   - [Tables to add in Phase 1 (with the contextual-translation feature)](#tables-to-add-in-phase-1-with-the-contextual-translation-feature)
   - [Tables to add in Phase 1–2 (build the schema even before features fill them)](#tables-to-add-in-phase-12-build-the-schema-even-before-features-fill-them)
   - [Phase 2 tables (identity, discovery, social graph)](#phase-2-tables-identity-discovery-social-graph)
-  - [Phase 2 DB functions (live on staging, 007/008)](#phase-2-db-functions-live-on-staging-007008)
+  - [Phase 2 DB functions (identity, discovery, safety, lifecycle)](#phase-2-db-functions-identity-discovery-safety-lifecycle)
 - [8. How a translation moves through the system](#8-how-a-translation-moves-through-the-system)
 - [9. AI integration — how it actually works](#9-ai-integration--how-it-actually-works)
 - [10. Security and privacy posture](#10-security-and-privacy-posture)
@@ -227,35 +228,48 @@ The `_source` fields in `user_linguistic_profiles` (e.g., `dialect_source: 'expl
 
 ## 7. Database schema
 
-> **Source of truth for the *what*:** exact current DDL lives in **`docs/schema.sql`** (a generated `supabase db dump --schema-only` snapshot, regenerated per migration — operations.md §3) and in **`/migrations/`** (000–020, replayable in order). This section owns the ***why***: what each table is for, the relationships, and the constraints that carry meaning. *(2026-07-07: `schema.sql` is set up but pending its first real generation — see that file's header — so the column-level detail below is retained for now; it can be slimmed to rationale once the dump is committed.)*
+> **Source of truth for the *what*:** the exact current DDL lives in **`docs/schema.sql`** (a
+> generated `supabase db dump --schema-only` snapshot, regenerated per migration by the
+> `schema-dump` CI Action — operations.md §3) and in **`/migrations/`** (000–020, replayable in
+> order). This section owns the ***why***: what each table is for, the relationships, and the
+> constraints that carry meaning. Column-level detail (types, defaults, boilerplate keys) lives in
+> `schema.sql` and is **not** repeated here.
 
-> **Migration status (2026-06-10).** The "Phase N — to add" framing below is partly historical: a
-> chunk of it has now shipped to **staging** (not prod). Quick map:
->
-> | Table / object | Migration | State |
-> |---|---|---|
-> | `tenants`, `tenant_id` columns | 001 | live (prod + staging) |
-> | `messages`, `message_translations` | 000/001 | live; **`messages.sender_id` text→uuid (FK `auth.users`, ON DELETE SET NULL)** on **staging** via 008 |
-> | `user_profiles` | 000 | **dropped on staging** by 008 (replaced by `profiles`) |
-> | `user_linguistic_profiles` | 002 → recreated 008 → 009 | live on staging with **uuid** `user_id` (FK `profiles`); 009 restores `nonbinary` to the gender CHECK |
-> | `user_profile_events` | 005/006 → recreated 008 | live on staging with **uuid** `user_id` |
-> | `profiles`, `account_identifiers`, `account_settings` | 007 | live on **staging** |
-> | `auth_tenant_id()`, `handle_new_user()` trigger | 007 | live on staging |
-> | `complete_onboarding(display_name, preferred_language, username?)` RPC | 008, replaced by 020 | 020 staging gate pending |
-> | RLS on all Phase 2 tables + `messages`/`message_translations` | 007/008 | enabled on staging; verified by Step 3 gate |
-> | `find_account_by_email()`, `search_accounts_by_username()`, `change_username()` discovery RPCs + username-prefix index | 010 | **gate PASSED on staging (22/22); re-passed after 011's block-filter amend** (Phase 2 Step 4; additive, no table changes). The two discovery RPCs are **amended by 011** to filter active blocks. |
-> | `relationships` (canonical-pair), `blocks`, `reports`, `invites`, `invite_redemptions`, `email_hash_abuse` + 9 RPCs (`active_block_exists`, `request_contact`, `respond_to_contact`, `block_account`, `unblock_account`, `report_account`, `create_invite`, `redeem_invite`, `revoke_invite`) | 011 | **gate PASSED on staging (40/40)** (Phase 2 Step 5; additive tables + RLS + RPCs, no destructive change). `tenants.dm_initiation_policy` already exists (007). |
-> | `list_abandoned_pending_accounts()`, `record_abandoned_email_hash()` support functions for the abandonment sweep | 012 | **gate PASSED on staging 2026-06-11 (19/19 GREEN)** (Phase 2 Step 6; additive functions only, `service_role`-only EXECUTE, no table changes — `email_hash_abuse` shipped in 011). The sweep itself is Node (Vercel cron): `server/lib/abandonment.js` + `api/v1/jobs/abandonment.js`. |
-> | `data_deletion_requests` table + `request_account_deletion()`, `cancel_account_deletion()` (user RPCs), `list_due_deletion_requests()`, `claim_deletion_request()`, `complete_deletion_request()` (service_role) | 013 | **gate PASSED on staging 2026-06-11 (37/37 GREEN)** (Phase 2 Step 7; net-new table + RLS + 6 RPCs, additive, no table recreate). Two-phase erasure (deactivate → grace → hard-delete). The sweep is Node (Vercel cron): `server/lib/deletion.js` + `api/v1/jobs/deletion.js`. Reuses `email_hash_abuse` (no schema change). |
-> | `conversations`, `conversation_members` + `is_active_member()` + write RPCs (`create_conversation`, `leave_conversation`, `set_conversation_context_type`) + `create_invite`/`redeem_invite` amended for `conversation`-kind + `tenants.conversation_policy` jsonb | 017 | **gate PASSED on staging 2026-06-12 (35/35 GREEN); applied on prod 2026-06-18** (Phase 3 Step 1 / Spec 6; additive tables + RLS + RPCs, promotes `messages.conversation_id` to FK + NOT NULL, adds `conversation_contexts` RLS + FK). Direct-dedupe is race-safe via `conversations.dedupe_key` + a partial unique index. |
-> | `conversation_contexts` RLS + `conversation_id` FK | 017 | **added 2026-06-12** — closes the outstanding Phase-1 RLS gap; FK added `NOT VALID` (legacy rows unscanned). |
-> | `messages` + `message_translations` RLS flipped **tenant-scoped → membership-scoped** | 018 | **gate PASSED on staging 2026-06-12 (27/27 GREEN; sentinel purged first); applied on prod 2026-06-18 (after 017)** (Phase 3 Step 2 / Spec 7; policies-only, no DDL/data change). Drops + recreates the same five policy names from 008 with an added `is_active_member()` predicate. Replayed to prod after 017, as required (prod sentinel purge was a no-op, messages=0). |
-> | `conversations.context_type` CHECK + `create_conversation`/`set_conversation_context_type` inline guards → unified on the engine vocab `casual/dating/professional/academic` | 019 | **applied on staging 2026-06-12 + prod 2026-06-18** (was `casual/professional/romantic/family/support`). ALTER on the table CHECK + CREATE OR REPLACE on the two RPCs (signatures unchanged → grants preserved); defensive remap of any retired-value rows (0 expected). Does **not** touch the `detected_register` field. Interim stop-gap until the tenant-scoped vocab registry (parking-lot). |
-> | `translation_corrections`, `translation_reviews` | — | **not built yet** |
->
-> Prod runs the full schema through migration **019** (Phase 2 cutover 2026-06-11 replayed 007→015; Phase 3 cutover 2026-06-18 replayed 016→019). The column
-> definitions in the subsections below are the design of record; where 007/008 diverged from the
-> original sketch it's noted inline.
+**Where things stand:** all tables through migration **020 are live on prod** (Phase 2 cutover
+2026-06-11 replayed 007→015; Phase 3 cutover 2026-06-18 replayed 016→019; 020 rolled out
+2026-07-07). Per-migration status is in `roadmap.md`; the dated history + rationale are in
+`decisions.md`. Two tables below (`translation_corrections`, `translation_reviews`) are **designed
+but not built** — for those, this section is still the design of record.
+
+### Live tables at a glance
+
+Plain-English directory of the tables in `schema.sql` today — the technical detail is in the
+subsections that follow.
+
+| Table | What it's for |
+|---|---|
+| `tenants` | The workspace everything belongs to — one row today (the chat app); the seam for future B2B customers. |
+| `messages` | The chat messages people send. |
+| `message_translations` | Cached translations of each message, so the same text isn't paid to translate twice. |
+| `conversations` | A chat thread — direct (1:1) or group. |
+| `conversation_members` | Who belongs to each conversation. |
+| `conversation_contexts` | The inferred "vibe" of a conversation (register, closeness) used to tune translation. |
+| `user_linguistic_profiles` | What we've learned about how each person speaks — language, dialect, formality, gender forms. |
+| `user_profile_events` | A history log of every change to those profiles (debugging + training data). |
+| `translation_events` | A record of every translation call (model, cost, latency) for analytics. |
+| `agent_events` | A record of Hermes agent task activity (the agent is currently paused). |
+| `profiles` | A person's account — one per login. |
+| `account_identifiers` | The handles people can be found by (email, username), kept normalized and non-reusable. |
+| `account_settings` | Each person's privacy / discoverability preferences. |
+| `relationships` | The contact graph — who is connected to whom. |
+| `blocks` | Who has blocked whom. |
+| `reports` | Abuse / spam reports filed against accounts. |
+| `invites` + `invite_redemptions` | Shareable invite links and who redeemed them. |
+| `email_hash_abuse` | A privacy-preserving signal to catch signup-spam without storing deleted users' emails. |
+| `data_deletion_requests` | "Delete my account" (GDPR) requests + the audit trail proving it happened. |
+
+*(Designed but not built yet: `translation_corrections`, `translation_reviews` — the future
+corrections / quality-review store; sketches further down.)*
 
 ### Tables that exist today (MVP)
 
@@ -264,164 +278,116 @@ The `_source` fields in `user_linguistic_profiles` (e.g., `dialect_source: 'expl
 > now require `tenant_id = auth_tenant_id() AND is_active_member(conversation_id, auth.uid())` —
 > a user may read or post a message only inside a conversation they are an active member of. This
 > replaces the 008 tenant-only predicate (the "one global room" read/write boundary). **No UPDATE
-> or DELETE policy** → messages remain immutable for `authenticated` (unchanged). Realtime
-> `postgres_changes` applies the SELECT policy for the `authenticated` role, so membership also
-> governs realtime delivery (verified explicitly by the gate). Policy names are unchanged from 008
-> (`messages_select_same_tenant`, `messages_insert_own` — the `_same_tenant` suffix is now a slight
-> misnomer; the predicate is tenant **and** membership).
+> or DELETE policy** → messages remain immutable for `authenticated`. Realtime `postgres_changes`
+> applies the SELECT policy for the `authenticated` role, so membership also governs realtime
+> delivery (verified by the gate). Policy names are unchanged from 008 (`messages_select_same_tenant`,
+> `messages_insert_own` — the `_same_tenant` suffix is now a slight misnomer; the predicate is tenant
+> **and** membership).
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid | Primary key, default `gen_random_uuid()` |
-| `created_at` | timestamp with time zone | Default `now()` |
-| `sender_id` | text → **uuid** | Was the typed username string. **Staging (008):** now `uuid`, FK `auth.users(id)` ON DELETE SET NULL. Prod still `text`. |
-| `original_text` | text | The message as typed |
-| `source_language` | text | BCP 47 language code, detected by AI at send |
-| `tenant_id` | uuid | NOT NULL, FK to `tenants(id)`. Added by migration `001`. Indexed (014). |
-| `conversation_id` | uuid | **Promoted to a real FK by migration 017 (Phase 3 Step 1).** Pre-staged by 014 (nullable, `DEFAULT` the global-conversation sentinel `00000000-0000-0000-0000-000000000002`); 017 inserts the `conversations` global row, **adds the FK → `conversations(id)`**, `SET NOT NULL`, and **drops the 014 default** (real conversation ids take over). Zero backfill, as designed. Indexed (014). FK is NO ACTION on delete (conversations are never hard-deleted in-model; soft-leave only). |
-
-**Vestigial columns dropped by migration 014.** `room_id`, `translated_text`, `target_language`, `tone`, `context_id`, `model_version`, `latency_ms` were all superseded and are removed: `room_id`/`context_id` → `conversation_id` + `conversation_contexts`; `translated_text` → `message_translations.translated_text`; `target_language` → `message_translations.language`; `tone` → per-call `context_type` + `conversation_contexts.detected_register`; `model_version` → `translation_events.model_used`; `latency_ms` → `translation_events.latency_ms`. They lived in `000_base_schema.sql`; 014 is an `ALTER … DROP COLUMN` (not a recreate) run on staging then in the prod replay, so both environments stay matched. (decisions.md 2026-06-11 "Forward-schema prep".)
+- **`sender_id`** — migrated from the typed username string (text) to `uuid` FK `auth.users(id)`
+  **ON DELETE SET NULL** (008): deleting an account nulls the author link but keeps the message —
+  the data-deletion de-identification path (§10 / Step 7).
+- **`conversation_id`** — promoted to a real FK → `conversations(id)` by migration 017; pre-staged by
+  014 as nullable with the global-conversation sentinel default (`…0002`) so the promotion needed
+  **zero backfill**. FK is NO ACTION on delete (conversations are soft-leave only, never hard-deleted).
+- **`source_language`** — BCP 47 code, detected by the AI at send time.
+- **Vestigial columns dropped by migration 014:** `room_id`, `translated_text`, `target_language`,
+  `tone`, `context_id`, `model_version`, `latency_ms` — all superseded (`room_id`/`context_id` →
+  `conversation_id` + `conversation_contexts`; `translated_text` → `message_translations`; `tone` →
+  `context_type` + `detected_register`; `model_version`/`latency_ms` → `translation_events`). An
+  `ALTER … DROP COLUMN` (not a recreate); decisions.md 2026-06-11 "Forward-schema prep".
 
 #### `message_translations`
 > **RLS: membership-scoped as of migration 018 (Phase 3 Step 2 / Spec 7).** The translation cache
 > inherits the exact read/write boundary of the message it caches. Because the cache has no
-> `conversation_id` column, all three policies (SELECT/INSERT/UPDATE) resolve membership through
-> the parent message via `EXISTS (SELECT 1 FROM messages m WHERE m.id = message_translations.message_id
-> AND m.tenant_id = auth_tenant_id() AND is_active_member(m.conversation_id, auth.uid()))`. This is
-> the easy-to-miss half of Spec 7: without it a non-member could read a conversation's translations
-> even though they cannot read its source messages. The frontend upserts (`INSERT … ON CONFLICT DO
-> UPDATE`), so both the INSERT `WITH CHECK` and the UPDATE `USING`/`WITH CHECK` carry the predicate.
-> No DELETE policy (unchanged — cache rows die via the `message_id` FK cascade, migration 016). Policy
-> names unchanged from 008 (`mt_select_same_tenant`/`mt_insert_same_tenant`/`mt_update_same_tenant`).
+> `conversation_id` column, all three policies (SELECT/INSERT/UPDATE) resolve membership through the
+> parent message via `EXISTS (… messages m WHERE m.id = message_translations.message_id AND
+> m.tenant_id = auth_tenant_id() AND is_active_member(m.conversation_id, auth.uid()))`. This is the
+> easy-to-miss half of Spec 7: without it a non-member could read a conversation's translations even
+> though they cannot read its source messages. The frontend upserts (`INSERT … ON CONFLICT DO
+> UPDATE`), so INSERT `WITH CHECK` and UPDATE `USING`/`WITH CHECK` both carry the predicate. No DELETE
+> policy (cache rows die via the `message_id` FK cascade). Policy names unchanged from 008.
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid | Primary key, default `gen_random_uuid()` |
-| `message_id` | uuid | FK to `messages(id)`, **ON DELETE CASCADE** — the cache is a strict child of its message, so deleting a message removes its cached translations. Reconciled to cascade on **both** environments by migration 016 (2026-06-12) after staging was found drifted to NO ACTION (migration 000's hand-reconstruction had dropped the clause prod carried). Nullable in schema; the cache contract assumes a real link. |
-| `language` | text | NOT NULL. Target language code (BCP 47). |
-| `translated_text` | text | NOT NULL. The cached translation. |
-| `created_at` | timestamptz | Default `now()`. **Migration 014** converted this from `timestamp without time zone` (naive values interpreted AS UTC) to standardize on tz-aware timestamps across the schema. |
-| `tenant_id` | uuid | NOT NULL, FK to `tenants(id)`. Added by migration `001`. Indexed (014). |
-| `prompt_version` | text | Semver of the prompt that produced this translation. Nullable; null = pre-versioning (pre-migration `003`). |
+- Unique `(message_id, language)` — one cached translation per message per target language.
+- `message_id` FK is **ON DELETE CASCADE** (the cache is a strict child of its message). Reconciled to
+  cascade on **both** environments by migration 016 after staging had drifted to NO ACTION (000's
+  hand-reconstruction dropped the clause prod carried).
+- `prompt_version` — semver of the prompt that produced the translation; null = pre-versioning (pre-003).
 
-Unique: `(message_id, language)` — one cached translation per message per target.
-
-#### `user_profiles`
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid | Primary key, default `gen_random_uuid()` — surrogate key, separate from `user_id` |
-| `user_id` | text | UNIQUE. The username string (will migrate to `uuid` in Phase 2). |
-| `display_name` | text | |
-| `default_language` | text | Default `'en'` |
-| `created_at` | timestamp without time zone | Default `now()` |
-| `tenant_id` | uuid | NOT NULL, FK to `tenants(id)`. Added by migration `001`. |
-
-**Replaced by `profiles`** — and as of migration 008 this table is **dropped on staging**
-(`DROP TABLE public.user_profiles CASCADE`). The `user_id` text key and `default_language` moved:
-identity is now the `auth.users` uuid (via `profiles`) and language lives in
-`user_linguistic_profiles.preferred_language`. Prod dropped `user_profiles` in the Phase 2 cutover (2026-06-11).
+#### `user_profiles` — dropped
+Replaced by `profiles`; **dropped** by migration 008 (staging) and in the Phase 2 prod cutover
+(2026-06-11). Identity moved to the `auth.users` uuid (via `profiles`); language moved to
+`user_linguistic_profiles.preferred_language`. Kept here only as a pointer — it is not in `schema.sql`.
 
 ### Tables to add in Phase 0 (cheap structural prep)
 
 #### `tenants`
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid | Primary key |
-| `name` | text | |
-| `default_correction_ownership` | text + CHECK | `'platform' \| 'tenant' \| 'shared'`, default `'platform'`. (Migration 001 already implements this as text + CHECK, not a Postgres enum — matches the project-wide anti-enum convention; spec corrected 2026-06-11.) |
-| `training_data_agreement` | boolean | default false |
-| `created_at` | timestamptz | Standardized by migration 014 (was naive `timestamp`). |
-
-Seeded with one row representing the chat app itself. Every other table gets a `tenant_id` FK pointing at this row. When Phase 2 opens the API to external customers, new tenants get new rows and RLS scopes them.
+Seeded with one row representing the chat app itself; every other table carries a `tenant_id` FK to
+it, and Phase 2 RLS scopes external customers by new tenant rows. `default_correction_ownership`
+(`platform`|`tenant`|`shared`) and the other enum-like columns are **text + CHECK, not Postgres
+enums** (project-wide anti-enum convention). Extra columns are added later: `dm_initiation_policy` and
+`conversation_policy` (see the Phase 2 tables below).
 
 ### Tables to add in Phase 1 (with the contextual-translation feature)
 
 #### `user_linguistic_profiles`
-> **Live on staging** (recreated by migration 008 with a uuid key). PK is composite
-> `(user_id, tenant_id)`. Enum-like columns are enforced as text + `CHECK` constraints, not Postgres
-> enums. RLS: SELECT same-tenant, UPDATE own (`user_id = auth.uid()`).
-| Column | Type | Notes |
-|---|---|---|
-| `user_id` | uuid | **FK to `profiles(id)`** ON DELETE CASCADE (008). Part of composite PK. |
-| `tenant_id` | uuid | FK to tenants. Part of composite PK. |
-| `preferred_language` | text | e.g. `"es"`; set `explicit` at onboarding |
-| `dialect_region` | text | e.g. `"es-AR"` (Rioplatense) |
-| `dialect_confidence` | float | 0.0–1.0, default 0.0 |
-| `dialect_source` | text+CHECK | `'explicit' \| 'inferred'`, default `'inferred'` |
-| `formality_preference` | text+CHECK | `'formal' \| 'neutral' \| 'casual'` |
-| `formality_source` | text+CHECK | `'explicit' \| 'inferred'`, default `'inferred'` |
-| `gender_signal` | text+CHECK | `'masculine' \| 'feminine' \| 'neutral' \| 'nonbinary' \| 'unknown'`. 008 dropped `nonbinary` from the CHECK (regression vs. migration 003); **migration 009 restores it** (pending its staging run). `neutral` = source language has no grammatical gender (Finnish, Turkish, …); `nonbinary` = speaker uses gender-inclusive forms (decisions.md 2026-05-12). |
-| `gender_source` | text+CHECK | `'explicit' \| 'inferred'`, default `'inferred'` |
-| `script_preference` | text | e.g. `"latin"`, `"traditional"`, `"simplified"` |
-| `script_source` | text+CHECK | `'explicit' \| 'inferred'`, default `'inferred'` |
-| `known_languages` | text[] | e.g. `["es", "en"]` for bilingual users |
-| `updated_at` | timestamptz | default `now()` |
+> **RLS:** SELECT same-tenant, UPDATE own (`user_id = auth.uid()`). Composite PK `(user_id,
+> tenant_id)`; `user_id` is a uuid FK → `profiles(id)` ON DELETE CASCADE (recreated with the uuid key
+> by 008). Enum-like columns are text + CHECK, not Postgres enums.
+
+The per-user linguistic signal store — one row per user per tenant. Each inferred attribute pairs with
+a `_source` column (`explicit` | `inferred`); **explicit always wins, and inference may only raise
+confidence, never overwrite an explicit value** (§9). Notable: `gender_signal` distinguishes
+`neutral` (source language has no grammatical gender — Finnish, Turkish, …) from `nonbinary` (speaker
+uses gender-inclusive forms); migration 008 accidentally dropped `nonbinary` from the CHECK and **009
+restored it** (decisions.md 2026-05-12 / 2026-06-10). `known_languages` (text[]) drives the
+bilingual-corrector weighting in the flywheel.
 
 #### `conversation_contexts`
-> **RLS added 2026-06-12 (migration 017).** This table has been live on staging since
-> migration 002. Migration 017 (Phase 3 Step 1) closes the long-standing RLS gap: it adds a
-> SELECT policy gated on active membership (`is_active_member(conversation_id, auth.uid())`)
-> and adds the `conversation_id` FK → `conversations(id)` **`NOT VALID`** (enforced on new/
-> updated rows; legacy rows left unscanned). Writes remain RPC-only (no client INSERT/UPDATE
-> policy). The `conversation_id` PK here is the same id pre-staged on
-> `messages.conversation_id` (migration 014) and seeded as the global-conversation sentinel.
-> `participant_ids` is **legacy** — membership is now authoritative in `conversation_members`;
-> `participant_ids` is retained for the existing context-builder read path and is not the
-> source of truth for access control.
-| Column | Type | Notes |
-|---|---|---|
-| `conversation_id` | uuid | Primary key; FK → `conversations(id)` (017, `NOT VALID`). |
-| `tenant_id` | uuid | FK to tenants |
-| `participant_ids` | uuid[] | **Legacy** — superseded by `conversation_members` for access control (017). |
-| `detected_register` | text + CHECK | `'professional' \| 'casual' \| 'romantic' \| 'family' \| 'support'`. (text + CHECK, not a Postgres enum — anti-enum convention; spec corrected 2026-06-11.) |
-| `register_confidence` | float | 0.0–1.0 |
-| `relationship_closeness` | text + CHECK | `'new' \| 'acquainted' \| 'close'`. (text + CHECK, not enum; spec corrected 2026-06-11.) |
-| `closeness_signals` | jsonb | `{message_count, days_active, avg_response_time}` |
-| `dominant_topics` | text[] | e.g. `["medical", "legal"]` for domain routing |
-| `updated_at` | timestamptz | Standardized by migration 014 (was naive `timestamp`). |
+> **RLS added 2026-06-12 (migration 017).** Live on staging since migration 002. 017 (Phase 3 Step 1)
+> closes the long-standing RLS gap: a SELECT policy gated on active membership
+> (`is_active_member(conversation_id, auth.uid())`) plus the `conversation_id` FK → `conversations(id)`
+> **`NOT VALID`** (enforced on new/updated rows; legacy rows unscanned). Writes remain RPC-only.
 
-Updated by a background job every N messages or when a significant shift is detected. NOT updated on every message.
+Per-conversation register/closeness state, updated by a background job every N messages (**not** per
+message). `detected_register` is the **inference output** (`professional`|`casual`|`romantic`|`family`|
+`support`) — deliberately a different vocabulary from the user-chosen `conversations.context_type`.
+`participant_ids` is **legacy** — `conversation_members` is now authoritative for access control; it's
+retained only for the existing context-builder read path, not as a source of truth.
 
 #### `conversations` (migration 017, Phase 3 Step 1)
-> First-class conversation objects. Replaces the implicit "everyone shares the global
-> conversation" model. Created only via the `create_conversation()` RPC; never client-inserted.
-> RLS: SELECT gated on active membership (`is_active_member`). The global-conversation sentinel
-> (`…0002`) is seeded here as a `group` row in the tenant sentinel (`…0001`) with `created_by NULL`.
+> First-class conversation objects, replacing the implicit "everyone shares the global conversation"
+> model. Created only via `create_conversation()`; never client-inserted. RLS: SELECT gated on active
+> membership (`is_active_member`). The global-conversation sentinel (`…0002`) is seeded as a `group`
+> row in the tenant sentinel (`…0001`) with `created_by NULL`.
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid | PK, default `gen_random_uuid()`. |
-| `tenant_id` | uuid | NOT NULL, FK → tenants. Single-tenant invariant enforced in the RPC. |
-| `kind` | text + CHECK | `'direct' \| 'group'`. `direct` must have exactly 2 members. |
-| `title` | text | Nullable; group display name. |
-| `context_type` | text + CHECK | `'casual' \| 'dating' \| 'professional' \| 'academic'`, default `'casual'`. **Unified with the translation engine vocab in migration 019** (was `professional/casual/romantic/family/support`). This is the user-chosen conversation register; distinct from the inference-output `detected_register` field, which keeps its own set. Set via `set_conversation_context_type()`. |
-| `created_by` | uuid | FK → `profiles(id)` **ON DELETE SET NULL** — a conversation survives its creator's account deletion (persists while any member is active). |
-| `dedupe_key` | text | Sorted member-set string; populated only when resolved policy = `dedupe`, else NULL. Arbiter of "one thread per member-set". |
-| `created_at` / `updated_at` | timestamptz | NOT NULL, default `now()`. |
-
-**Indexes/constraints:** `conversations_tenant_id_idx`; partial unique `conversations_dedupe_unique (tenant_id, dedupe_key) WHERE dedupe_key IS NOT NULL` (race-safe dedupe).
+- **`created_by`** FK → `profiles(id)` **ON DELETE SET NULL** — a conversation survives its creator's
+  account deletion (persists while any member is active). This is why nothing currently reaps a
+  fully-abandoned conversation (the parking-lot GC item).
+- **`context_type`** (`casual`|`dating`|`professional`|`academic`, default `casual`) — the user-chosen
+  register, **unified with the translation-engine vocab in migration 019** (was
+  `professional/casual/romantic/family/support`). Set via `set_conversation_context_type()`; distinct
+  from the inference-output `detected_register`.
+- **`dedupe_key`** — sorted member-set string, populated only when the resolved policy is `dedupe`;
+  arbiter of "one thread per member-set", enforced race-safely by the partial unique index
+  `(tenant_id, dedupe_key) WHERE dedupe_key IS NOT NULL`.
+- `kind` (`direct`|`group`) — a `direct` conversation must have exactly 2 members.
 
 #### `conversation_members` (migration 017, Phase 3 Step 1)
-> Membership rows. **Soft-leave model** (mirrors `blocks.unblocked_at`): leaving sets `left_at`
-> rather than deleting the row, so history and re-join are clean. One active row per
-> (conversation, account) enforced by a partial unique index. Created/updated only via RPCs.
+> Membership rows, created/updated only via RPCs.
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid | PK, default `gen_random_uuid()`. |
-| `conversation_id` | uuid | NOT NULL, FK → `conversations(id)` **ON DELETE CASCADE**. |
-| `account_id` | uuid | NOT NULL, FK → `profiles(id)` **ON DELETE CASCADE**. |
-| `tenant_id` | uuid | NOT NULL, FK → tenants. |
-| `role` | text + CHECK | `'owner' \| 'member'`, default `'member'`. Creator is `owner`. |
-| `joined_at` | timestamptz | NOT NULL, default `now()`. |
-| `left_at` | timestamptz | Nullable; non-null = soft-left (inactive membership). |
-| `last_read_at` | timestamptz | Nullable; read-cursor for unread counts. |
-
-**Indexes/constraints:** `conversation_members_account_id_idx`, `conversation_members_conversation_id_idx`; partial unique `conversation_members_active_unique (conversation_id, account_id) WHERE left_at IS NULL`.
+**Soft-leave model** (mirrors `blocks.unblocked_at`): leaving sets `left_at` rather than deleting the
+row, so history and re-join stay clean, with one active row per (conversation, account) enforced by
+the partial unique index `(conversation_id, account_id) WHERE left_at IS NULL`. `role`
+(`owner`|`member`, creator = `owner`); `last_read_at` is the read-cursor for future unread counts.
+FKs to `conversations` and `profiles` are both ON DELETE CASCADE.
 
 ### Tables to add in Phase 1–2 (build the schema even before features fill them)
 
-#### `translation_corrections` (append-only)
+*(`translation_corrections` and `translation_reviews` are **designed, not built** — not in
+`schema.sql`; the column sketches below are the design of record for when they land.)*
+
+#### `translation_corrections` (append-only) — NOT BUILT YET
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid | Primary key |
@@ -433,80 +399,65 @@ Updated by a background job every N messages or when a significant shift is dete
 | `original_text` | text | |
 | `model_output` | text | What the AI produced |
 | `corrected_text` | text | What the user changed it to |
-| `correction_source` | enum | `'user_edit' \| 'thumbs_down' \| 'bilingual_review' \| 'ai_audit'` |
+| `correction_source` | text+CHECK | `'user_edit' \| 'thumbs_down' \| 'bilingual_review' \| 'ai_audit'` |
 | `corrector_user_id` | uuid | nullable |
 | `corrector_known_languages` | text[] | **Snapshot** of corrector's profile |
 | `register_context` | jsonb | **Snapshot** of conversation register |
-| `ownership` | enum | `'platform' \| 'tenant' \| 'shared'` |
-| `created_at` | timestamp | |
+| `ownership` | text+CHECK | `'platform' \| 'tenant' \| 'shared'` |
+| `created_at` | timestamptz | |
 
-Snapshots are critical. Context drifts; you need to know what was true at the moment of correction, not what is true now. The `corrector_known_languages` snapshot tells you whether the correction came from a native speaker of both languages. The `register_context` snapshot tells you what conversation state the model was operating under when it failed.
+Snapshots are critical: context drifts, so you need what was true at the moment of correction, not
+now. `corrector_known_languages` tells you whether the fix came from a native speaker of both
+languages; `register_context` tells you what conversation state the model was operating under when it
+failed.
 
-#### `translation_reviews`
+#### `translation_reviews` — NOT BUILT YET
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid | Primary key |
 | `tenant_id` | uuid | FK to tenants |
 | `translation_id` | uuid | References the specific translation event |
-| `reviewer_type` | enum | `'ai_audit' \| 'human' \| 'bilingual_user'` |
+| `reviewer_type` | text+CHECK | `'ai_audit' \| 'human' \| 'bilingual_user'` |
 | `reviewer_id` | uuid | nullable if ai_audit |
-| `reviewed_at` | timestamp | |
+| `reviewed_at` | timestamptz | |
 | `quality_score` | float | 0.0–1.0 |
 | `flags` | text[] | e.g. `["register_mismatch", "idiom_error", "gender_error", "dialect_wrong"]` |
 | `suggested_fix` | text | nullable |
 | `confidence` | float | Reviewer's confidence in their assessment |
 | `model_version` | text | nullable; if `ai_audit`, which model/prompt version reviewed |
 
-Both human reviewers and AI auditors write into the same table — no schema changes when humans get involved.
+Both human reviewers and AI auditors write into the same table — no schema changes when humans get
+involved.
 
-#### `data_deletion_requests`
-> **Built by migration 013 (Phase 2 Step 7) — gate PASSED on staging (37/37).** RLS: SELECT own
-> (`ddr_select_own`); all writes via SECURITY DEFINER RPCs. The three columns marked † extend
-> the original §7 sketch to support the two-phase grace flow + a future admin path
-> (decisions.md 2026-06-11).
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid | Primary key |
-| `user_id` | uuid | FK → `profiles(id)` **ON DELETE SET NULL** — the audit row *survives* the hard delete; the null is itself anonymization. (NOT cascade: that would delete the audit record of its own erasure.) |
-| `tenant_id` | uuid | FK to tenants |
-| `requested_at` | timestamptz | |
-| `grace_until` † | timestamptz | Hard-delete eligible once `now() > grace_until` (default request + 30 days) |
-| `completed_at` | timestamptz | nullable; set when the sweep finishes |
-| `status` | text + CHECK | `'pending' \| 'processing' \| 'completed' \| 'cancelled'` † (`cancelled` = grace-window reversal) |
-| `requested_by` † | text + CHECK | `'user' \| 'admin'` (default `'user'`) |
-| `deleted_fields` | jsonb | Log of what was removed (table → count/flag) |
-| `updated_at` | timestamptz | |
+#### `data_deletion_requests` (migration 013, Phase 2 Step 7)
+> **RLS:** SELECT own (`ddr_select_own`); all writes via SECURITY DEFINER RPCs.
 
-Two-phase erasure: `request_account_deletion()` soft-deletes (`profiles.status='deactivated'`) and enqueues a `pending` row; `cancel_account_deletion()` reverses within grace; the daily Node sweep (`server/lib/deletion.js`) hard-deletes due requests via the admin API. The FK chain (007/008) does the anonymization — profile/identifiers/settings/linguistic-profile/events cascade away, `messages.sender_id` → NULL retains content. The deletion job will also **anonymize** corrections (strip user_id and PII, keep translation pairs) rather than hard-deleting — but `translation_corrections` is **not built yet**, so the sweep currently logs `corrections_anonymized: 0` (wire the strip-PII pass when that table lands). Anonymized translation pairs remain legally usable for training; hard-deletion destroys training data that is irreplaceable.
-
-On a voluntary erasure the sweep records the same keyed email HMAC as Step 6, reusing `email_hash_abuse` + `record_abandoned_email_hash()` (no schema change); `abandon_count` therefore counts "times an account on this email hash vanished" (abandonment **or** deletion). Splitting the two via a `source` column is parked (parking-lot.md).
+Two-phase erasure: `request_account_deletion()` soft-deletes (`profiles.status='deactivated'`) and
+enqueues a `pending` row with `grace_until = now()+30d`; `cancel_account_deletion()` reverses within
+grace; the daily Node sweep (`server/lib/deletion.js`) hard-deletes due requests via the admin API.
+The FK chain (007/008) does the anonymization — profile/identifiers/settings/linguistic-profile/events
+cascade away, while `messages.sender_id` → NULL **retains content**. **The audit row outlives the
+user by design:** `user_id` is FK → `profiles` **ON DELETE SET NULL** (not CASCADE), so the completed
+request survives its own erasure as proof-of-deletion, with `user_id` nulled and a `deleted_fields`
+jsonb snapshot of what was removed. On voluntary erasure the sweep records the same keyed email HMAC as
+Step 6 (reusing `email_hash_abuse`), so `abandon_count` counts "times an account on this email hash
+vanished" (abandonment **or** deletion; the `source` split is parked). Corrections anonymization is a
+no-op stub until `translation_corrections` exists.
 
 #### `user_profile_events` (append-only event source)
-> **Live on staging** — first added by migration 005 (+ `task_id` in 006), recreated by 008 with a
-> **uuid** `user_id` (FK `profiles`). RLS: SELECT own, INSERT own. The inference workstream writes
-> here with `source='inference'`.
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid | Primary key |
-| `user_id` | uuid | FK to users |
-| `tenant_id` | uuid | FK to tenants |
-| `event_type` | text | e.g. `"dialect_inferred"`, `"formality_set_explicit"` |
-| `previous_value` | jsonb | |
-| `new_value` | jsonb | |
-| `source` | enum | `'explicit' \| 'inference' \| 'correction_analysis'` |
-| `created_at` | timestamptz | Standardized by migration 014 (was naive `timestamp`). |
+> **RLS:** SELECT own, INSERT own. First added by 005 (+ `task_id` in 006), recreated by 008 with a
+> **uuid** `user_id` (FK `profiles`). The inference workstream writes here with `source='inference'`.
 
-Lets you reconstruct what the system believed about a user at any point in time. Critical for debugging bad translations and for quality control on training data.
+Append-only log (`source` ∈ `explicit`|`inference`|`correction_analysis`) that lets you reconstruct
+what the system believed about a user at any point in time — critical for debugging bad translations
+and for quality control on training data.
 
 ### Phase 2 tables (identity, discovery, social graph)
 
-> **Status:** `profiles`, `account_identifiers`, `account_settings` are **live on staging** (migration
-> 007). `relationships`, `blocks`, `reports`, `invites`/`invite_redemptions`, `email_hash_abuse` are
-> **live on staging via migration 011 — gate PASSED 40/40** (Phase 2 Step 5). Design rationale and
-> trade-offs in `decisions.md` (2026-06-09 + 2026-06-10 entries). Policy *values* live in
-> `policies.md` + `lib/policies.js`. **Identity vs. discovery principle:** the stable identity is
-> the `auth.users` uuid; human-facing discovery handles are a separate normalized layer that
-> points at it and is never a key.
+> Design rationale and trade-offs are in `decisions.md` (2026-06-09 + 2026-06-10 entries); policy
+> *values* live in `policies.md` + `lib/policies.js`. **Identity vs. discovery principle:** the stable
+> identity is the `auth.users` uuid; human-facing discovery handles are a separate normalized layer
+> that points at it and is never a key.
 
 #### Uniqueness scope (across vs. within tenant)
 | Thing | Unique scope |
@@ -518,137 +469,79 @@ Lets you reconstruct what the system believed about a user at any point in time.
 | `display_name` | Not unique anywhere |
 | email (at auth layer) | Global per Supabase project — see Model-A concern in decisions.md |
 
-#### `profiles` (replaces `user_profiles` in Phase 2)
-1:1 with `auth.users`. `id` = `auth.users.id` (FK, on delete cascade). RLS uses `auth.uid()`.
-Adopts **Model A — one tenant per user** (decisions.md 2026-06-09).
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid | PK = `auth.users.id` |
-| `tenant_id` | uuid | NOT NULL, FK to `tenants(id)` |
-| `display_name` | text | NOT NULL. "The name other people see." Not unique. |
-| `username` | text | Canonical (lowercased). Unique **within tenant**. See policies.md §1. |
-| `username_source` | enum | `'system_generated' \| 'user_set'`, default `'system_generated'` |
-| `username_last_changed_at` | timestamptz | Supports the 1/year rule |
-| `is_verified` | boolean | default false. Placeholder; no verification feature yet. |
-| `verification_method` | text | nullable. How verified (platform/tool); may become enum/array later. |
-| `status` | enum | `'pending' \| 'active' \| 'deactivated'`, default `'pending'` |
-| `onboarding_completed_at` | timestamptz | null until display_name + language set; flips status to `active` |
-| `created_at` / `updated_at` | timestamptz | |
-
-Language/dialect preferences do NOT live here — they stay in `user_linguistic_profiles`
-(`preferred_language` written `explicit` at onboarding). Lifecycle (pending → active →
-abandonment) is governed by policies.md §6; a DB trigger on `auth.users` insert creates the
-pending profile + random username.
+#### `profiles` (replaces `user_profiles`)
+1:1 with `auth.users` (`id` = `auth.users.id`, FK ON DELETE CASCADE); RLS via `auth.uid()`. Adopts
+**Model A — one tenant per user** (decisions.md 2026-06-09). Language/dialect do **not** live here —
+they stay in `user_linguistic_profiles` (`preferred_language` written `explicit` at onboarding).
+`username` is canonical-lowercase, unique **within tenant**, with `username_source`
+(`system_generated`|`user_set`) + `username_last_changed_at` supporting the 1/year rule (policies.md
+§1). `status` (`pending`|`active`|`deactivated`) + `onboarding_completed_at` drive the lifecycle
+(policies.md §6); a DB trigger on `auth.users` insert creates the pending profile + a random username.
+`is_verified` / `verification_method` are placeholders (no verification feature yet).
 
 #### `account_identifiers` (normalized discovery handles)
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid | PK |
-| `account_id` | uuid | FK to `profiles(id)`, on delete cascade |
-| `tenant_id` | uuid | FK to tenants |
-| `type` | enum | `'email' \| 'username' \| 'phone' \| 'friend_code'` |
-| `value` | text | Canonical/normalized (lowercased email/username) |
-| `status` | enum | `'active' \| 'retired' \| 'reserved'`. Rows are never hard-deleted. |
-| `verified` | boolean | default false |
-| `created_at` | timestamptz | |
-
-Usernames unique within tenant via `(tenant_id, type, value)` covering active+retired+reserved
-(enforces non-reuse). Reserved words seeded as `reserved` rows. **Handle minimization** (policies.md
-§2): a discovery query returns only the matched handle, never an account's other identifiers.
+Normalized handle rows pointing at `profiles` (ON DELETE CASCADE). `type` ∈
+(`email`|`username`|`phone`|`friend_code`), `status` ∈ (`active`|`retired`|`reserved`) — **rows are
+never hard-deleted**, and uniqueness on `(tenant_id, type, value)` across active+retired+reserved
+enforces within-tenant non-reuse. Reserved words are seeded as `reserved` rows. **Handle
+minimization** (policies.md §2): a discovery query returns only the matched handle, never an account's
+other identifiers.
 
 #### `account_settings` (per-user privacy prefs, 1:1)
-| Column | Type | Notes |
-|---|---|---|
-| `account_id` | uuid | PK, FK to `profiles(id)` |
-| `tenant_id` | uuid | FK to tenants |
-| `discoverable_by_email` | boolean | default true |
-| `discoverable_by_username` | boolean | default true |
-| `allow_dms_from` | enum | `'everyone' \| 'contacts' \| 'nobody'`, default `'contacts'` |
-| `updated_at` | timestamptz | |
+1:1 with `profiles`: `discoverable_by_email` / `discoverable_by_username` (default true) +
+`allow_dms_from` (`everyone`|`contacts`|`nobody`, default `contacts`).
 
 #### `relationships` (contact graph; conversations are independent of this)
 > **Canonical-pair model** (migration 011; decisions.md 2026-06-10 "Contact-graph representation").
 > ONE row per unordered pair `{account_lo, account_hi}` with `account_lo < account_hi` enforced by a
-> CHECK. This replaces the originally-sketched directional `requester_id`/`addressee_id` design.
-> Direction is carried by `initiator_id` (whoever asked first), not by column position. The single-row
-> invariant makes the **glare race** (both users hit "add" before either accepts) structurally
-> impossible — both adds resolve to the *same* pair row, and the reverse-pending case auto-accepts.
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid | PK |
-| `tenant_id` | uuid | NOT NULL, FK to tenants |
-| `account_lo` | uuid | FK to `profiles(id)` ON DELETE CASCADE. The lexically-smaller of the two uuids. |
-| `account_hi` | uuid | FK to `profiles(id)` ON DELETE CASCADE. The lexically-larger. CHECK `account_lo < account_hi`. |
-| `initiator_id` | uuid | FK to `profiles(id)`. Whoever sent the request. CHECK `initiator_id IN (account_lo, account_hi)`. Drives the DM-initiation policy's "initiator's handle type" rule + the incoming-vs-outgoing UI distinction. |
-| `state` | text+CHECK | `'pending' \| 'accepted' \| 'declined'`, default `'pending'` |
-| `via_identifier_type` | text+CHECK | `'email' \| 'username' \| 'phone' \| 'friend_code' \| 'invite_link'` — **provenance**, set at add-time, read by the DM-initiation policy. `invite_link` is set only by `redeem_invite()`. |
-| `created_at` / `updated_at` | timestamptz | |
+> CHECK, replacing the originally-sketched directional `requester_id`/`addressee_id`. Direction is
+> carried by `initiator_id` (whoever asked first), not by column position. The single-row invariant
+> makes the **glare race** (both users hit "add" before either accepts) structurally impossible —
+> both adds resolve to the *same* pair row, and the reverse-pending case auto-accepts.
 
-Unique `(tenant_id, account_lo, account_hi)` — the anti-glare guarantee. Second index
-`relationships_hi_idx (tenant_id, account_hi)` so "all of X's contacts" is index-backed in both
-positions. **RLS:** SELECT where the caller is `account_lo` or `account_hi` (either party sees the
-row); all writes go through `request_contact` / `respond_to_contact` / `redeem_invite` (SECURITY
-DEFINER). The state machine: new→`pending`, reverse-pending→`accepted` (mutual), `accepted`→error,
-`declined`→re-request `pending`.
+Unique `(tenant_id, account_lo, account_hi)` is the anti-glare guarantee; a second index on
+`(tenant_id, account_hi)` keeps "all of X's contacts" index-backed in both positions.
+`via_identifier_type` records **provenance** (set at add-time, read by the DM-initiation policy;
+`invite_link` set only by `redeem_invite()`). **RLS:** SELECT where the caller is `account_lo` or
+`account_hi`; all writes go through `request_contact` / `respond_to_contact` / `redeem_invite`
+(SECURITY DEFINER). State machine: new→`pending`, reverse-pending→`accepted` (mutual), `accepted`→
+error, `declined`→re-request `pending`.
 
 #### `blocks` (directional)
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid | PK |
-| `tenant_id` | uuid | FK to tenants |
-| `blocker_id` | uuid | FK to `profiles(id)` |
-| `blocked_id` | uuid | FK to `profiles(id)` |
-| `unblocked_at` | timestamptz | nullable; null = currently blocked. Kept after unblock for history. |
-| `created_at` | timestamptz | |
-
-Partial unique index `blocks_active_unique (blocker_id, blocked_id) WHERE unblocked_at IS NULL` — no
-double-active-blocking, while historical (unblocked) rows coexist. Second partial index
-`blocks_blocked_active_idx (blocked_id) WHERE unblocked_at IS NULL` backs the reverse leg of
-`active_block_exists()`. **RLS:** SELECT the **blocker only** — the blocked party must never learn
-they were blocked by reading this table. A block is an **override layer**: it never mutates the
-`relationships` row; `active_block_exists()` (bidirectional) is checked first by every initiation
-path and both discovery RPCs (symmetric hide). Writes via `block_account` / `unblock_account`.
+Stored directionally (`blocker_id` → `blocked_id`), `unblocked_at` nullable (null = currently blocked;
+kept after unblock for history). A partial unique index on `(blocker_id, blocked_id) WHERE
+unblocked_at IS NULL` prevents double-active-blocking while historical rows coexist; a second partial
+index on the blocked leg backs the reverse check. **RLS: SELECT the blocker only** — the blocked party
+must never learn they were blocked by reading this table. A block is an **override layer**: it never
+mutates the `relationships` row; `active_block_exists()` (bidirectional) is checked first by every
+initiation path and both discovery RPCs (symmetric hide). Writes via `block_account` /
+`unblock_account`.
 
 #### `reports`
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid | PK |
-| `tenant_id` | uuid | FK to tenants |
-| `reporter_id` | uuid | FK to `profiles(id)` |
-| `reported_id` | uuid | FK to `profiles(id)` |
-| `reason` | enum | `'spam' \| 'abuse' \| 'impersonation' \| 'other'` |
-| `details` | text | nullable |
-| `status` | text+CHECK | `'open' \| 'reviewed' \| 'actioned' \| 'dismissed'`, default `'open'` |
-| `created_at` | timestamptz | |
-
-Initial behavior: `report_account()` records the report **and** ensures an active block in **one
-transaction** (atomic — both or neither). Multiple reports of the same target are allowed (distinct
-incidents). No moderation-queue UI yet; rows accumulate at `status='open'` for later review. **RLS:**
-SELECT the reporter only (a future moderation tool reads via service role). `reports_no_self` CHECK.
+`reason` ∈ (`spam`|`abuse`|`impersonation`|`other`); `status` ∈ (`open`|`reviewed`|`actioned`|
+`dismissed`, default `open`). `report_account()` records the report **and** ensures an active block in
+**one transaction** (atomic — both or neither). Multiple reports of the same target are allowed
+(distinct incidents). No moderation-queue UI yet; rows accumulate at `status='open'`. **RLS:** SELECT
+the reporter only (a future moderation tool reads via service role); `reports_no_self` CHECK.
 
 #### `invites` + `invite_redemptions` (deep-link / invite-link primitive)
-`invites`: `id`, `tenant_id`, `token` (globally unique, opaque), `kind` enum
-`'contact' \| 'conversation'`, `created_by` FK profiles, `target_conversation_id` uuid nullable
-(Phase 3), `max_uses` int nullable, `use_count` int default 0, `expires_at` timestamptz nullable,
-`revoked` boolean default false, `created_at`.
-`invite_redemptions`: `id`, `invite_id` FK, `redeemed_by` FK profiles, `redeemed_at`, UNIQUE
-`(invite_id, redeemed_by)` (a re-click is a no-op, not a re-add). Redeeming a `contact` invite
-**AUTO-ACCEPTS** the contact (decisions.md 2026-06-10) — it writes a `relationships` row directly at
-`state='accepted'`, `via_identifier_type='invite_link'`, `initiator_id = created_by`, with no
-separate accept handshake (minting the link is the creator's consent; clicking is the redeemer's).
-Block-checked first. `conversation`-kind invites are reserved for Phase 3 and rejected by
-`redeem_invite()` for now. **RLS:** `invites` SELECT the creator only (redemption is by token through
-the definer RPC, which also prevents token/invite enumeration via the table); `invite_redemptions`
+`invites` carries an opaque globally-unique `token`, a `kind` (`contact`|`conversation`), `created_by`,
+optional `target_conversation_id` (Phase 3), `max_uses`/`use_count`, `expires_at`, and `revoked`.
+`invite_redemptions` records one row per `(invite_id, redeemed_by)` (a re-click is a no-op, not a
+re-add). Redeeming a `contact` invite **AUTO-ACCEPTS** the contact (decisions.md 2026-06-10) — it
+writes a `relationships` row directly at `state='accepted'`, `via_identifier_type='invite_link'`,
+`initiator_id = created_by`, with no separate accept handshake (minting the link is the creator's
+consent; clicking is the redeemer's). Block-checked first. **RLS:** `invites` SELECT the creator only
+(redemption is by token through the definer RPC, which also prevents enumeration); `invite_redemptions`
 SELECT the redeemer only. Defaults at launch: multi-use, no expiry, revocable. Writes via
 `create_invite` / `redeem_invite` / `revoke_invite`.
 
 #### `tenants` — add columns
-`dm_initiation_policy` jsonb — per-tenant overrides on top of `lib/policies.js` global defaults.
-Sole tenant launches `'{}'` (no overrides → mutual-acceptance-only; policies.md §3).
-`conversation_policy` jsonb (migration 017) — per-tenant overrides for conversation-dedupe
-(`{kind: 'dedupe'|'always_new'}`) on top of `lib/policies.js` `CONVERSATION.DEFAULTS`
-(`direct: dedupe`, `group: always_new`). Sole tenant launches `'{}'`. Read by the
-`create_conversation()` RPC to decide whether a create reuses an existing thread.
+`dm_initiation_policy` jsonb — per-tenant overrides on top of `lib/policies.js` global defaults (sole
+tenant launches `'{}'` → mutual-acceptance-only; policies.md §3). `conversation_policy` jsonb
+(migration 017) — per-tenant overrides for conversation-dedupe (`{kind: 'dedupe'|'always_new'}`) on top
+of `lib/policies.js` `CONVERSATION.DEFAULTS` (`direct: dedupe`, `group: always_new`); sole tenant
+launches `'{}'`. Read by `create_conversation()` to decide whether a create reuses an existing thread.
 
 #### Where policy lives (three layers)
 1. `docs/policies.md` — human-readable values, audited on a cadence.
@@ -660,100 +553,82 @@ Schema enforces *mechanism* (uniqueness, non-deletion, the partial index); layer
 #### `email_hash_abuse` (signup-spam monitor; table + RLS in 011, writes in Step 6)
 When an abandoned pending account is deleted (policies.md §6), a **keyed hash** of its canonical email
 is recorded here — never the plaintext — so repeat-abandon / signup-spam is detectable without
-retaining deleted-user PII.
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid | PK |
-| `tenant_id` | uuid | NOT NULL, FK to tenants |
-| `email_hash` | bytea | `HMAC-SHA256(canonical_email, pepper)` |
-| `key_version` | smallint | default 1; supports pepper rotation |
-| `first_seen` / `last_seen` | timestamptz | |
-| `abandon_count` | integer | default 1, CHECK `>= 1` |
+retaining deleted-user PII. `email_hash` is `HMAC-SHA256(canonical_email, pepper)` (bytea) with a
+`key_version` (default 1) and `abandon_count`, unique on `(tenant_id, email_hash, key_version)`. The
+HMAC is computed in the **Step 6 abandonment job** (Node `crypto`) with the pepper read from an env
+secret — **the pepper never enters Postgres**, so even a full DB compromise doesn't expose the key
+(decisions.md 2026-06-10); `key_version` lets it rotate forward without re-keying old rows. **RLS:**
+enabled with **no policy** for `authenticated`/`anon` *and* `REVOKE ALL … FROM anon, authenticated` —
+fully denied to clients; only the service role (Step 6 job) touches it.
 
-UNIQUE `(tenant_id, email_hash, key_version)`. The HMAC is computed in the **Step 6 abandonment job**
-(Node `crypto`), with the pepper read from an env secret — **the pepper never enters Postgres**, so
-even a full DB compromise does not expose the key (decisions.md 2026-06-10). `key_version` lets the
-pepper rotate forward without re-keying old rows; losing the pepper is low-stakes here (advisory-only
-table, nothing joins on it). **RLS:** enabled with **no policy** for `authenticated`/`anon` *and*
-`REVOKE ALL ... FROM anon, authenticated` — fully denied to clients; only the service role (Step 6
-job) touches it. The table + RLS land in 011; the writes wire in Step 6.
+### Phase 2 DB functions (identity, discovery, safety, lifecycle)
 
-### Phase 2 DB functions (live on staging, 007/008)
+These server-side functions are load-bearing for identity + RLS; treat them as part of the schema.
+(Their SQL bodies are in `schema.sql`; described here for behavior/intent.)
 
-These three server-side functions are load-bearing for identity + RLS; treat them as part of the schema.
+- **`auth_tenant_id()`** (007, `SECURITY DEFINER`, SQL) — returns `tenant_id FROM profiles WHERE id = auth.uid()`. The linchpin of every tenant-scoped RLS policy. `SECURITY DEFINER` so it can read `profiles` without tripping the very RLS it feeds (avoids recursion); returns NULL for an unauthenticated caller → access denied by default.
+- **`handle_new_user()`** (007, `AFTER INSERT` trigger `on_auth_user_created` on `auth.users`) — creates the pending `profiles` row + `email`/`username` `account_identifiers` + default `account_settings`. System username = `'user_' + 8 hex chars`. **Tenant hardcoded to the sole-tenant UUID `…001`**. If it raises, the `auth.users` INSERT rolls back (no orphaned auth rows).
+- **`complete_onboarding(p_display_name, p_preferred_language, p_username DEFAULT NULL)`** (008, replaced by 020; `SECURITY DEFINER`, `EXECUTE` to `authenticated`) — the P1→P3 transition: sets `status='active'`, `display_name`, `onboarding_completed_at`, and creates the `user_linguistic_profiles` row with `preferred_language` written `_source='explicit'`. Since 020 it also (a) claims the user-chosen username via `change_username()` in the same transaction — atomic with activation, so pending accounts never hold user-chosen handles (preserves the Step 6 abandonment assumption) — and (b) enforces a `display_name` control-char/bidi denylist. Routed through an RPC precisely because `authenticated` may not write `status`/`username` directly (§10).
+- **`find_account_by_email(p_email)`** (010, amended 011, `SECURITY DEFINER`, `EXECUTE` to `authenticated`) — Step 4 discovery. Exact-equality lookup on the canonical email; returns at most one `(account_id, display_name, username)`. Bypasses `account_identifiers`' own-rows-only RLS deliberately but **handle-minimizes** (never the target's email/phone/other identifiers). Tenant-scoped; active profiles only; respects `discoverable_by_email`; excludes the caller; **011 adds `AND NOT active_block_exists(caller, target)`**.
+- **`search_accounts_by_username(p_prefix, p_limit)`** (010, amended 011, `SECURITY DEFINER`) — Step 4 username autocomplete. Prefix match on the canonical username. Min prefix 3, cap 20, LIKE metacharacters escaped. Tenant-scoped; active only; respects `discoverable_by_username`; excludes the caller; **011 adds the active-block filter** (both directions).
+- **`change_username(p_new_username)`** (010, replaced by 020; `SECURITY DEFINER`) — the **sole** username-change path (`profiles.username` is REVOKEd from `authenticated`, §10). Validates charset/length/reserved/non-reuse + the 1/365-day cadence (the first `system_generated`→`user_set` change is free and starts the clock — consumed at onboarding since 020), then atomically retires the old `account_identifiers` row (never deletes) and activates the new one. **Since 020:** the caller may revert to their *own* retired handle (the retired row flips back to `active`); everyone else stays blocked (decisions.md 2026-07-07). Called directly (future settings screen) and by `complete_onboarding()`.
 
-- **`auth_tenant_id()`** (007, `SECURITY DEFINER`, SQL) — returns `tenant_id FROM profiles WHERE id = auth.uid()`. The linchpin of every tenant-scoped RLS policy. It's `SECURITY DEFINER` so it can read `profiles` without tripping the very RLS it feeds (avoids recursion); returns NULL for an unauthenticated caller → access denied by default.
-- **`handle_new_user()`** (007, `AFTER INSERT` trigger `on_auth_user_created` on `auth.users`) — creates the pending `profiles` row + `email` and `username` `account_identifiers` + default `account_settings`. System username = `'user_' + 8 hex chars` (needs pgcrypto). **Tenant hardcoded to the sole-tenant UUID `…001`** — every new signup lands in tenant 1. If it raises, the `auth.users` INSERT rolls back (no orphaned auth rows).
-- **`complete_onboarding(p_display_name, p_preferred_language, p_username DEFAULT NULL)`** (008, replaced by 020; `SECURITY DEFINER`, `GRANT EXECUTE … TO authenticated`, REVOKEd from public/anon) — the P1→P3 transition: sets `status='active'`, `display_name`, `onboarding_completed_at`, and creates the `user_linguistic_profiles` row with `preferred_language` written `_source='explicit'`. Since 020 it also (a) claims the user-chosen username when `p_username` is provided, by calling `change_username()` in the same transaction — atomic with activation, so pending accounts never hold user-chosen handles (preserves the Step 6 abandonment assumption) — and (b) enforces a `display_name` control-char/bidi denylist. Routed through an RPC (not a direct table write) precisely because `authenticated` is *not* allowed to write `status` or `username` directly (see §10 column-grant note).
-- **`find_account_by_email(p_email)`** (010, **amended 011**, `SECURITY DEFINER`, `GRANT EXECUTE … TO authenticated`) — Step 4 discovery. Exact-equality lookup on the canonical email; returns at most one `(account_id, display_name, username)`. Bypasses `account_identifiers`' own-rows-only RLS deliberately, but **handle-minimizes**: returns only public handles, never the target's email/phone/other identifiers. Tenant-scoped via `auth_tenant_id()`; only `status='active'` profiles; respects `discoverable_by_email`; excludes the caller; **011 adds `AND NOT active_block_exists(caller, target)`** (symmetric block hide). No prefix/enumeration.
-- **`search_accounts_by_username(p_prefix, p_limit)`** (010, **amended 011**, `SECURITY DEFINER`, `GRANT … TO authenticated`) — Step 4 username autocomplete. Prefix match on the canonical username; returns `(account_id, display_name, username)` rows. Min prefix length 3, result cap 20, LIKE metacharacters escaped (no `%`/`_` injection). Tenant-scoped; only active profiles; respects `discoverable_by_username`; excludes the caller; **011 adds the active-block filter** (both directions). Amending shipped functions is a behavior change → re-run the Step 4 gate after 011.
-- **`change_username(p_new_username)`** (010, replaced by 020; `SECURITY DEFINER`, `GRANT … TO authenticated`) — the **sole** username-change path (`profiles.username` is REVOKEd from `authenticated`, §10). Validates charset/length/reserved/non-reuse and the 1/365-day cadence (first `system_generated`→`user_set` change is free and starts the clock — consumed at onboarding since 020), then atomically retires the old `account_identifiers` row (never deletes) and activates the new one, and updates `profiles`. **Since 020:** the caller may revert to their *own* retired handle — the retired row flips back to `active` instead of inserting; everyone else stays blocked (self-revert exception, decisions.md 2026-07-07). Called directly (future settings screen) and by `complete_onboarding()`. Returns the new canonical username; raises a client-parseable error on any rule violation.
-
-#### Phase 2 Step 5 social-graph RPCs (migration 011; gate PASSED on staging 40/40)
+#### Phase 2 Step 5 social-graph RPCs (migration 011)
 
 All nine are `SECURITY DEFINER`, `SET search_path = public`, `EXECUTE` granted to `authenticated`
-only (revoked from `public`/`anon`), and tenant-scoped via `auth_tenant_id()` (an unauthenticated
-caller matches nothing). They are the **sole write path** to the Step 5 tables — every social table
-is RLS SELECT-only (or no policy), so direct client writes are denied.
+only, and tenant-scoped via `auth_tenant_id()`. They are the **sole write path** to the Step 5 tables
+(every social table is RLS SELECT-only / no policy, so direct client writes are denied).
 
-- **`active_block_exists(p_a, p_b)`** — `STABLE` boolean helper. True iff an active block (`unblocked_at IS NULL`) exists in **either** direction between two accounts in the caller's tenant. `SECURITY DEFINER` so it reads `blocks` past the blocker-only RLS. Called first by `request_contact`, `respond_to_contact`, `redeem_invite`, and both discovery RPCs.
-- **`request_contact(p_target, p_via)`** → text — add-a-contact entry point on the canonical pair. new→`'pending'`; reverse-pending→`'accepted'` (mutual); already-pending-by-caller / already-accepted→error; `declined`→re-request `'pending'`. Block-checked; rejects self/cross-tenant/`invite_link` via. Locks the pair row `FOR UPDATE` so concurrent adds serialize.
-- **`respond_to_contact(p_other, p_accept)`** → text — accept/decline an incoming `pending` request (caller must be the addressee, i.e. not the initiator). Accept→`'accepted'` (block-checked); decline→`'declined'` (kept soft for a future re-request cooldown).
-- **`block_account(p_target)`** → text — create an active block (idempotent: `'blocked'` / `'already_blocked'`). Does **not** mutate `relationships`.
-- **`unblock_account(p_target)`** → text — stamp `unblocked_at` on the caller's active block (`'unblocked'` / `'not_blocked'`); history preserved.
-- **`report_account(p_target, p_reason, p_details)`** → uuid — record a report **and** ensure an active block in one transaction (atomic). Returns the report id.
-- **`create_invite(p_kind, p_max_uses, p_expires_at, p_target_conversation_id)`** → text — **amended in 017** (was 3-arg; the 4th param required a DROP + CREATE, not CREATE OR REPLACE — adding a param overloads rather than replaces). Mints an opaque base64url token (16 random bytes; `extensions.gen_random_bytes`, schema-qualified). Defaults `contact` kind, multi-use / no-expiry / revocable. **017 un-rejects `conversation` kind:** a `conversation` invite requires `p_target_conversation_id` and the caller to be an active member of that conversation. Re-REVOKE/GRANT issued for the new signature.
-- **`redeem_invite(p_token)`** → text — **amended in 017** (CREATE OR REPLACE, same signature). Validates token (revoked/expired/max-uses/cross-tenant/own-invite all rejected) and records the redemption (one per user). `contact` kind unchanged → **auto-accepts** the contact with the creator (`via='invite_link'`, `initiator=creator`), returns `'accepted'`. **017 un-rejects `conversation` kind:** inserts an active `conversation_members` row for the redeemer on the target conversation (single-tenant + block checks, glare-safe), returns `'joined'`. Block-checked.
-- **`revoke_invite(p_invite_id)`** → text — revoke an invite the caller created (`'revoked'` / `'noop'`); no further redemptions.
+- **`active_block_exists(p_a, p_b)`** — `STABLE` boolean helper; true iff an active block exists in **either** direction. `SECURITY DEFINER` so it reads `blocks` past the blocker-only RLS. Called first by the contact/redeem paths and both discovery RPCs.
+- **`request_contact(p_target, p_via)`** → text — add-a-contact on the canonical pair. new→`pending`; reverse-pending→`accepted` (mutual); already-pending-by-caller / already-accepted→error; `declined`→re-request. Block-checked; rejects self/cross-tenant/`invite_link` via; locks the pair row `FOR UPDATE`.
+- **`respond_to_contact(p_other, p_accept)`** → text — accept/decline an incoming `pending` request (caller must be the addressee). Accept→`accepted` (block-checked); decline→`declined` (kept soft for a future cooldown).
+- **`block_account(p_target)`** → text — create an active block (idempotent). Does **not** mutate `relationships`.
+- **`unblock_account(p_target)`** → text — stamp `unblocked_at`; history preserved.
+- **`report_account(p_target, p_reason, p_details)`** → uuid — record a report **and** ensure an active block in one transaction (atomic).
+- **`create_invite(p_kind, p_max_uses, p_expires_at, p_target_conversation_id)`** → text — **amended in 017** (4th param → DROP + CREATE). Mints an opaque base64url token. Defaults `contact` kind, multi-use / no-expiry / revocable. **017 un-rejects `conversation` kind** (requires the caller be an active member of the target).
+- **`redeem_invite(p_token)`** → text — **amended in 017**. Validates token (revoked/expired/max-uses/cross-tenant/own-invite rejected), records the redemption. `contact` → **auto-accepts** the contact with the creator, returns `accepted`. **017:** `conversation` → inserts an active `conversation_members` row, returns `joined`. Block-checked.
+- **`revoke_invite(p_invite_id)`** → text — revoke an invite the caller created.
 
-#### Phase 2 Step 6 abandonment support functions (migration 012; gate PASSED on staging 2026-06-11, 19/19)
+#### Phase 2 Step 6 abandonment support functions (migration 012)
 
-Unlike every RPC above, these are **system functions** called only by the abandonment sweep as
-the `service_role` — `EXECUTE` is granted to `service_role` only (revoked from
-`public`/`anon`/`authenticated`), and they do **not** use `auth.uid()`/`auth_tenant_id()` because
-the sweep operates across all tenants, not as a logged-in user. They exist because the sweep's
-logic must live partly in Node (the abuse hash is a keyed HMAC whose pepper never enters Postgres —
-decisions.md 2026-06-10) but two pieces are cleanest in SQL:
+Unlike the RPCs above, these are **system functions** called only by the abandonment sweep as the
+`service_role` (EXECUTE to `service_role` only); they don't use `auth.uid()` because the sweep operates
+across all tenants. They exist because the sweep lives partly in Node (the abuse hash is a keyed HMAC
+whose pepper never enters Postgres) but two pieces are cleanest in SQL:
 
-- **`list_abandoned_pending_accounts(p_max_age interval DEFAULT '30 days')`** → setof `(account_id, tenant_id, canonical_email, username_source)` — `STABLE SECURITY DEFINER`. Returns every `status='pending'` account created more than `p_max_age` ago, with the canonical (`lower(trim)`) email the sweep hashes and `username_source` (a guard — the sweep refuses anything not `system_generated`). Backed by the `profiles_tenant_status_created_idx` partial index (007), built for exactly this query.
-- **`record_abandoned_email_hash(p_tenant_id uuid, p_email_hash_hex text, p_key_version smallint DEFAULT 1)`** → void — `VOLATILE SECURITY DEFINER`. Atomic insert-or-increment into `email_hash_abuse` (the +1 can't be expressed as a plain PostgREST upsert). The hash arrives as hex and is `decode()`d to `bytea`; on conflict `(tenant_id, email_hash, key_version)` it bumps `abandon_count` + `last_seen`, preserving `first_seen`.
+- **`list_abandoned_pending_accounts(p_max_age interval DEFAULT '30 days')`** → setof `(account_id, tenant_id, canonical_email, username_source)` — `STABLE SECURITY DEFINER`. Every `pending` account older than `p_max_age`, with the canonical email to hash and `username_source` (the sweep refuses anything not `system_generated`). Backed by the `profiles_tenant_status_created_idx` partial index.
+- **`record_abandoned_email_hash(p_tenant_id, p_email_hash_hex, p_key_version DEFAULT 1)`** → void — `VOLATILE SECURITY DEFINER`. Atomic insert-or-increment into `email_hash_abuse` (the +1 can't be a plain PostgREST upsert); hash arrives as hex, `decode()`d to bytea; on conflict bumps `abandon_count` + `last_seen`, preserving `first_seen`.
 
 **No "release username" function exists by design:** the sweep deletes the `auth.users` row via the
-Supabase admin API, and the FK cascade (auth.users→profiles→account_identifiers/account_settings,
-all ON DELETE CASCADE, 007) drops the username + email rows — with the rows gone, within-tenant
-uniqueness + historical-non-reuse no longer block the handle, so it is released automatically
-(decisions.md 2026-06-10 "Step 6 abandonment").
+admin API, and the FK cascade (007) drops the username/email rows, so within-tenant uniqueness +
+historical-non-reuse no longer block the handle — it's released automatically (decisions.md 2026-06-10).
 
-#### Phase 2 Step 7 data-deletion functions (migration 013; gate PASSED on staging, 37/37)
+#### Phase 2 Step 7 data-deletion functions (migration 013)
 
-Two **user-facing** RPCs (caller-scoped via `auth.uid()`, so a user can only ever erase
-themselves) plus three **service_role-only** sweep helpers (mirroring the Step 6 list/record
-split). The hard delete itself runs in Node (`server/lib/deletion.js`) because `admin.deleteUser`
-is a Supabase auth-schema op and the abuse-hash pepper must never enter Postgres.
+Two **user-facing** RPCs (caller-scoped via `auth.uid()`, so a user can only erase themselves) plus
+three **service_role-only** sweep helpers (mirroring the Step 6 split). The hard delete runs in Node
+(`server/lib/deletion.js`) because `admin.deleteUser` is an auth-schema op and the abuse-hash pepper
+must never enter Postgres.
 
-- **`request_account_deletion(p_grace interval DEFAULT '30 days')`** → `data_deletion_requests` row — `VOLATILE SECURITY DEFINER`, `EXECUTE` to `authenticated`. Soft-deletes the caller (`profiles.status='deactivated'`) and enqueues a `pending` request with `grace_until = now()+p_grace`. **Idempotent** — returns an existing open request without resetting the grace clock.
-- **`cancel_account_deletion()`** → boolean — reverses a `pending` request within grace: marks it `cancelled` and restores the profile to `active` (or `pending` if onboarding never completed). `false` if nothing is pending. Cannot cancel once the sweep has claimed it (`processing`).
-- **`list_due_deletion_requests()`** → setof `(request_id, account_id, tenant_id, canonical_email)` — `STABLE SECURITY DEFINER`, `service_role` only. Pending requests past `grace_until`, with the canonical email to hash. Backed by `data_deletion_requests_due_idx`.
-- **`claim_deletion_request(p_id)`** → boolean — atomic `pending`→`processing`; true if this call won the claim (guards double-processing across overlapping runs).
-- **`complete_deletion_request(p_id, p_deleted_fields jsonb)`** → void — stamps `completed` + `completed_at` + the `deleted_fields` audit log, by PK (the row's `user_id` is already NULL from the cascade).
+- **`request_account_deletion(p_grace interval DEFAULT '30 days')`** → row — soft-deletes the caller (`status='deactivated'`) and enqueues a `pending` request with `grace_until = now()+p_grace`. **Idempotent** — returns an existing open request without resetting the clock.
+- **`cancel_account_deletion()`** → boolean — reverses a `pending` request within grace (marks it `cancelled`, restores the profile); cannot cancel once the sweep has claimed it (`processing`).
+- **`list_due_deletion_requests()`** → setof `(request_id, account_id, tenant_id, canonical_email)` — `service_role` only; pending requests past `grace_until`.
+- **`claim_deletion_request(p_id)`** → boolean — atomic `pending`→`processing` (guards double-processing).
+- **`complete_deletion_request(p_id, p_deleted_fields jsonb)`** → void — stamps `completed` + `completed_at` + the audit log, by PK (the row's `user_id` is already NULL from the cascade).
 
-**The audit row outlives the user by design:** `data_deletion_requests.user_id` is FK → `profiles`
-**ON DELETE SET NULL** (not CASCADE), so the request row survives its own erasure as proof-of-deletion
-(decisions.md 2026-06-11 "Step 7 data deletion").
+#### Phase 3 Step 1 conversation RPCs (migration 017)
 
-#### Phase 3 Step 1 conversation RPCs (migration 017; gate PASSED on staging 2026-06-12, 35/35)
+All `SECURITY DEFINER`, `SET search_path = public`, `EXECUTE` to `authenticated` only, tenant-scoped
+via the caller's profile. Sole write path to `conversations` / `conversation_members` (both RLS
+SELECT-only).
 
-All `SECURITY DEFINER`, `SET search_path = public`, `EXECUTE` granted to `authenticated` only
-(revoked from `public`/`anon`), tenant-scoped via the caller's profile. They are the **sole write
-path** to `conversations` / `conversation_members` — both tables are RLS SELECT-only, so direct
-client writes are denied.
+- **`is_active_member(p_conversation_id, p_account_id)`** → boolean — `STABLE SECURITY DEFINER` membership helper; true iff an active (`left_at IS NULL`) membership row exists. Reads past the membership-gated RLS (mirrors `active_block_exists`); the linchpin of the conversation/members/contexts SELECT policies.
+- **`create_conversation(p_kind, p_member_ids, p_title, p_context_type)`** → uuid — builds the distinct member set (incl. caller); rejects `<2` members and `direct ≠ 2`; enforces the single-tenant invariant; block-gated. Resolves dedupe from `tenants.conversation_policy` (fallback `CONVERSATION.DEFAULTS`); when `dedupe`, sets `dedupe_key` and **finds-or-creates** race-safely (INSERT, catch `unique_violation` → re-SELECT). Caller = `owner` on a fresh conversation.
+- **`leave_conversation(p_conversation_id)`** → void — **soft-leave**: stamps `left_at` on the caller's active membership. No-op-safe.
+- **`set_conversation_context_type(p_conversation_id, p_context_type)`** → void — validates against the CHECK set, requires the caller be an active member, updates `context_type` + `updated_at`.
 
-- **`is_active_member(p_conversation_id, p_account_id)`** → boolean — `STABLE SECURITY DEFINER` membership helper. True iff an active (`left_at IS NULL`) `conversation_members` row exists. Reads past the membership-gated RLS (mirrors `active_block_exists`); the linchpin of the `conversations` / `conversation_members` / `conversation_contexts` SELECT policies.
-- **`create_conversation(p_kind, p_member_ids, p_title, p_context_type)`** → uuid — `VOLATILE`. Builds the distinct member set (incl. caller); rejects `<2` members and `direct ≠ 2`; enforces the single-tenant invariant via a `profiles` count (opaque "member not found" on mismatch); block-gated via `active_block_exists`. Resolves dedupe from `tenants.conversation_policy` (falling back to `CONVERSATION.DEFAULTS`: `direct→dedupe`, `group→always_new`); when `dedupe`, sets `dedupe_key` = sorted member-set and **finds-or-creates** race-safely (INSERT, catch `unique_violation` → re-SELECT on the partial unique index). Ensures an active membership row per member (caller = `owner` on a fresh conversation), glare-safe.
-- **`leave_conversation(p_conversation_id)`** → void — **soft-leave**: stamps `left_at = now()` on the caller's active membership (mirrors `unblock_account`). No-op-safe if already left / not a member.
-- **`set_conversation_context_type(p_conversation_id, p_context_type)`** → void — validates `context_type` against the CHECK set, requires the caller be an active member (`is_active_member`), updates `conversations.context_type` + `updated_at`.
-
-(`create_invite` / `redeem_invite` were also amended in 017 for `conversation`-kind invites — see the Step 5 RPC list above.)
+(`create_invite` / `redeem_invite` were also amended in 017 for `conversation`-kind invites — see the
+Step 5 RPC list above.)
 
 ---
 
@@ -1116,7 +991,7 @@ Plain-English definitions for jargon used here. Keeps the door open for non-tech
 
 *Reverse chronological. One line per change; project events link to `decisions.md`.*
 
-- **2026-07-07** — Docs legibility cleanup: added Contents TOC; header de-blobbed; §7 wired to the new generated `docs/schema.sql`; §13 file map updated (migration 020, `schema.sql`, `archive/`; phase2-implementation retired). (→ decisions.md 2026-07-07 "Docs legibility cleanup + new conventions")
+- **2026-07-07** — Docs legibility cleanup: added Contents TOC; header de-blobbed; §7 wired to + slimmed against the new generated `docs/schema.sql` (per-table column grids removed; ~1,124 → ~970 lines); §13 file map updated (migration 020, `schema.sql`, `archive/`; phase2-implementation retired). (→ decisions.md 2026-07-07 "Docs legibility cleanup + new conventions")
 - **2026-06-23** — Phase 2.1 token auth (§10/§11/§13) + Phase 2.2 production domain/email/sessions (§11). (→ decisions.md 2026-06-23)
 - **2026-06-18** — Phase 3 production cutover reconciled: §2/§7/§10 (016→019 on prod; membership-scoped RLS live). (→ decisions.md 2026-06-18)
 - **2026-06-11** — Phase 2 production cutover; forward-schema prep (014) + profile_writer role (015); §7/§10/§13 reconciled. (→ decisions.md 2026-06-11)
