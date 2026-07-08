@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { CHAT_APP_TENANT_ID } from '../lib/config';
 import { PROMPT_VERSION } from '../../lib/translatePrompt.js';
@@ -209,14 +210,24 @@ export default function MessageBubble({
               className="mt-1 text-[11px] text-slate-400 cursor-pointer select-none"
               onClick={() => setExpanded((e) => !e)}
               title={message.original_text}
+              role="button"
+              tabIndex={0}
+              aria-label={expanded ? 'Collapse original text' : 'Expand original text'}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded((x) => !x); }
+              }}
             >
               {expanded ? (
-                <div>
-                  <span className="font-medium text-slate-500">Original:</span>{' '}
-                  {message.original_text}
+                <div className="flex items-start gap-1">
+                  <ChevronUp size={12} strokeWidth={2.2} className="shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-medium text-slate-500">Original:</span>{' '}
+                    {message.original_text}
+                  </div>
                 </div>
               ) : (
                 <div className="flex items-baseline gap-1">
+                  <ChevronDown size={12} strokeWidth={2.2} className="shrink-0 self-center" />
                   <span className="font-medium text-slate-500 shrink-0">Original:</span>
                   <span className="min-w-0 truncate">{message.original_text}</span>
                 </div>

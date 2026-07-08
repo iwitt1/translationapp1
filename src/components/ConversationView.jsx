@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { ArrowLeft, MoreVertical, UserPlus, Send } from 'lucide-react';
 import MessageBubble from './MessageBubble';
 import { avatarColor, initials } from './ConversationList';
 import { getContextTypes } from '../lib/vocabularies';
@@ -86,10 +87,9 @@ export default function ConversationView({
           onClick={onBack}
           className="md:hidden h-9 w-9 grid place-items-center rounded-full hover:bg-slate-100"
           aria-label="Back"
+          title="Back"
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M15 18l-6-6 6-6" />
-          </svg>
+          <ArrowLeft size={20} strokeWidth={2.2} />
         </button>
 
         <div className={`h-9 w-9 rounded-full grid place-items-center text-sm font-semibold text-white shrink-0 ${avatarColor(conversation.displayName)}`}>
@@ -106,10 +106,9 @@ export default function ConversationView({
             onClick={() => setMenuOpen((o) => !o)}
             className="h-9 w-9 grid place-items-center rounded-full hover:bg-slate-100"
             aria-label="More"
+            title="More options"
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-              <circle cx="12" cy="5" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="12" cy="19" r="1.8" />
-            </svg>
+            <MoreVertical size={20} strokeWidth={2.2} />
           </button>
 
           {menuOpen && (
@@ -147,8 +146,9 @@ export default function ConversationView({
               <div className="border-t border-slate-100 my-1" />
               <button
                 onClick={() => { setMenuOpen(false); onInvite(); }}
-                className="w-full text-left px-3 py-2 hover:bg-slate-50"
+                className="w-full text-left px-3 py-2 hover:bg-slate-50 flex items-center gap-2"
               >
+                <UserPlus size={16} strokeWidth={2} />
                 Invite to conversation
               </button>
               <div className="border-t border-slate-100 my-1" />
@@ -197,8 +197,11 @@ export default function ConversationView({
         />
         <button
           onClick={submit}
-          className="h-10 px-4 rounded-2xl bg-violet-600 text-white text-sm font-medium hover:bg-violet-700"
+          className="h-10 px-4 rounded-2xl bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 flex items-center gap-1.5"
+          aria-label="Send"
+          title="Send"
         >
+          <Send size={16} strokeWidth={2.2} />
           Send
         </button>
       </div>

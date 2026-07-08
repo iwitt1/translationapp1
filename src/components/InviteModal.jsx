@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { X, Copy as CopyIcon } from 'lucide-react';
 import { createConversationInvite } from '../lib/conversations';
 
 /*
@@ -61,10 +62,8 @@ export default function InviteModal({ open, conversationId, conversationName, on
       <div className="bg-white w-full md:max-w-sm rounded-t-2xl md:rounded-2xl md:shadow-2xl p-5">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-semibold">Invite to {conversationName}</h2>
-          <button onClick={onClose} className="h-8 w-8 grid place-items-center rounded-full hover:bg-slate-100" aria-label="Close">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-              <path d="M18 6L6 18M6 6l12 12" />
-            </svg>
+          <button onClick={onClose} className="h-8 w-8 grid place-items-center rounded-full hover:bg-slate-100" aria-label="Close" title="Close">
+            <X size={18} strokeWidth={2.2} />
           </button>
         </div>
 
@@ -81,8 +80,10 @@ export default function InviteModal({ open, conversationId, conversationName, on
           <button
             onClick={copy}
             disabled={!link}
-            className="px-3 rounded-xl bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 disabled:bg-slate-300"
+            className="px-3 rounded-xl bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 disabled:bg-slate-300 flex items-center gap-1.5"
+            title="Copy link"
           >
+            <CopyIcon size={16} strokeWidth={2.2} />
             {copied ? 'Copied' : 'Copy'}
           </button>
         </div>

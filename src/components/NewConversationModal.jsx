@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { X, Search } from 'lucide-react';
 import { findAccountByEmail, searchAccountsByUsername } from '../lib/discovery';
 import { getContextTypes, DEFAULT_CONTEXT_TYPE } from '../lib/vocabularies';
 import { avatarColor, initials } from './ConversationList';
@@ -97,7 +98,10 @@ export default function NewConversationModal({ open, onClose, onCreate }) {
     <div className="fixed inset-0 z-40 bg-slate-900/40 flex md:items-center md:justify-center">
       <div className="bg-white w-full md:max-w-md md:rounded-2xl md:shadow-2xl flex flex-col h-full md:h-auto md:max-h-[88vh]">
         <header className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
-          <button onClick={onClose} className="text-sm text-slate-500 hover:text-slate-700">Cancel</button>
+          <button onClick={onClose} className="text-sm text-slate-500 hover:text-slate-700 flex items-center gap-1" title="Cancel">
+            <X size={16} strokeWidth={2.2} />
+            Cancel
+          </button>
           <h2 className="font-semibold">New conversation</h2>
           <button
             disabled={picked.length < 1 || creating}
@@ -122,13 +126,17 @@ export default function NewConversationModal({ open, onClose, onCreate }) {
               </div>
             )}
 
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Add by username or email…"
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
-              autoFocus
-            />
+            <div className="relative">
+              <Search size={16} strokeWidth={2.2} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Add by username or email…"
+                aria-label="Search by username or email"
+                className="w-full rounded-xl border border-slate-300 pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+                autoFocus
+              />
+            </div>
 
             {results.length > 0 && (
               <div className="mt-1 border border-slate-100 rounded-xl divide-y divide-slate-100 overflow-hidden">

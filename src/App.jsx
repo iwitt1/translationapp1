@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { LogOut } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { LANGUAGES } from './lib/vocabularies';
 import { detectSourceLanguage } from './lib/translation';
@@ -537,7 +538,10 @@ export default function App() {
         </div>
         <div className="flex items-center gap-3 text-xs text-slate-500">
           <span className="hidden sm:inline truncate max-w-[12rem]">{profile?.display_name}</span>
-          <button onClick={handleSignOut} className="hover:text-slate-800" title="Sign out">Sign out</button>
+          <button onClick={handleSignOut} className="hover:text-slate-800 flex items-center gap-1" title="Sign out" aria-label="Sign out">
+            <LogOut size={14} strokeWidth={2.2} />
+            Sign out
+          </button>
         </div>
       </header>
 
