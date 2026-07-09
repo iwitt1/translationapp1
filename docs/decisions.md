@@ -24,6 +24,7 @@
 
 **Roadmap & security**
 
+- [2026-07-08 — Make the repo public: full history, docs kept as-is (Phase 2.4)](#2026-07-08--make-the-repo-public-full-history-docs-kept-as-is-phase-24)
 - [2026-07-08 — Conversation-list realtime: publish conversation_members + a second App.jsx channel (Phase 2.4, migration 022)](#2026-07-08--conversation-list-realtime-publish-conversation_members--a-second-appjsx-channel-phase-24-migration-022)
 - [2026-07-08 — Account settings screen (Phase 2.4) + migration 021: settings RPCs, discoverability default → username-only](#2026-07-08--account-settings-screen-phase-24--migration-021-settings-rpcs-discoverability-default--username-only)
 - [2026-07-07 — Spec 8 + 9 shipped: expanded language list + lucide-react UI icons (Phase 2.4)](#2026-07-07--spec-8--9-shipped-expanded-language-list--lucide-react-ui-icons-phase-24)
@@ -154,6 +155,15 @@
 
 
 ---
+
+## 2026-07-08 — Make the repo public: full history, docs kept as-is (Phase 2.4)
+
+**Decision:** Publish `github.com/iwitt1/translationapp1` as a **public** repo with its **full commit history** and `/docs/` **kept intact** (no scrub, no squash). Closes the Phase 2.4 "repo cleanup for public sharing" item and unblocks the Phase 2.3 case-study repo link.
+**Context:** The case-study landing page wants to link to the repo + docs as evidence of product thinking and the AI/agent build workflow. Before opening it, we needed to confirm nothing sensitive leaks.
+**Alternatives considered:** *Squashed snapshot to a fresh public repo* (rejected — the 106-commit history is part of the "how it was built" story and the content is benign, so a pristine snapshot buys little). *Public but exclude/trim `/docs/`* (rejected — the docs are the showcase). *Keep private, share via invite* (rejected — less reach for a portfolio). *Word-level scrub of costs/hiring/infra detail* (rejected as cosmetic — full history is public, so scrubbing current files wouldn't remove prior versions, and the content isn't damaging anyway).
+**Reasoning:** A secret scan of the working tree + all 106 commits found **no secrets** — keys live in Vercel/Supabase env vars, `.env*` is gitignored, the Supabase anon key is public-by-design (RLS-protected), and no service_role key / PAT / password-bearing connection string is in tracked files or history. The only flagged content is benign detail (e.g. a $9.60/mo droplet, a $200–800 training estimate, "hire a collaborator later" asides) that reads as credible engineering for a portfolio audience. Shelved-Hermes docs are all marked paused; keeping them public is acceptable (Isaac confirmed).
+**Implications:** Every future commit is instantly public — the `.env*` gitignore discipline and "secrets by reference only" rule become load-bearing (GitHub secret-scanning + push protection turn on automatically for public repos as a safety net). Branch protection / rulesets on `main` become free at the public tier (the Phase 1.5 open item). GitHub Actions secrets (schema-dump `DATABASE_URL`) stay private and are not passed to fork-PR workflows. Cowork/Cursor local workflow is unaffected — remote visibility doesn't touch the local repo or the deploy pipeline.
+**Revisit when:** a real secret is ever committed (rotate immediately + scrub history); or a collaborator/hire needs write access (add branch protection, now free); or something genuinely sensitive needs to land in `/docs/` (move it to a private doc or reference-by-name).
 
 ## 2026-07-08 — Conversation-list realtime: publish conversation_members + a second App.jsx channel (Phase 2.4, migration 022)
 
