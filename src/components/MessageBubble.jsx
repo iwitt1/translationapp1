@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { CHAT_APP_TENANT_ID } from '../lib/config';
@@ -53,6 +53,8 @@ export default function MessageBubble({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [isTruncated, setIsTruncated] = useState(false);
+  const origRef = useRef(null);
 
   const targetLanguage = linguisticProfile?.preferred_language || 'en';
   const isSender = message.sender_id === userId;
@@ -186,6 +188,21 @@ export default function MessageBubble({
   const showOriginal =
     !isSender && !loading && !error && translatedText !== message.original_text;
 
+  // Only offer the expand caret when the single-line preview is actually clipped
+  // — a caret that reveals nothing is a dead control. Measure the collapsed line
+  // and re-check on width changes (the bubble is percentage-width). While
+  // expanded we keep the last-known truncation (the collapsed line isn't mounted).
+  useLayoutEffect(() => {
+    if (!showOriginal || expanded) return;
+    const el = origRef.current;
+    if (!el) return;
+    const measure = () => setIsTruncated(el.scrollWidth > el.clientWidth + 1);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [showOriginal, expanded, translatedText, message.original_text]);
+
   return (
     <div className={`flex ${isSender ? 'justify-end' : 'justify-start'}`}>
       <div className="max-w-[78%] md:max-w-[65%]">
@@ -210,33 +227,46 @@ export default function MessageBubble({
             </div>
           )}
 
-          {/* Original-text preview — the caret is the affordance (no label):
-              points right when collapsed, down when expanded (disclosure
-              convention). Single CSS-truncated line; expands on tap. */}
+          {/* Original-text preview — the caret is the affordance (no label) and
+              only appears when the collapsed line is truncated: right when
+              collapsed, down when expanded (disclosure convention). If the
+              original fits on one line, it's shown plain with no caret. */}
           {showOriginal && (
-            <div
-              className="mt-1 text-[11px] text-slate-400 cursor-pointer select-none"
-              onClick={() => setExpanded((e) => !e)}
-              title={message.original_text}
-              role="button"
-              tabIndex={0}
-              aria-label={expanded ? 'Collapse original text' : 'Show original text'}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded((x) => !x); }
-              }}
-            >
-              {expanded ? (
+            expanded ? (
+              <div
+                className="mt-1 text-[11px] text-slate-400 cursor-pointer select-none"
+                onClick={() => setExpanded(false)}
+                title={message.original_text}
+                role="button"
+                tabIndex={0}
+                aria-label="Collapse original text"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(false); }
+                }}
+              >
                 <div className="flex items-start gap-1">
                   <ChevronDown size={12} strokeWidth={2.2} className="shrink-0 mt-0.5" />
                   <div className="min-w-0">{message.original_text}</div>
                 </div>
-              ) : (
+              </div>
+            ) : (
+              <div
+                className={`mt-1 text-[11px] text-slate-400 select-none ${isTruncated ? 'cursor-pointer' : ''}`}
+                onClick={isTruncated ? () => setExpanded(true) : undefined}
+                title={message.original_text}
+                role={isTruncated ? 'button' : undefined}
+                tabIndex={isTruncated ? 0 : undefined}
+                aria-label={isTruncated ? 'Show original text' : undefined}
+                onKeyDown={isTruncated ? (e) => {
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(true); }
+                } : undefined}
+              >
                 <div className="flex items-baseline gap-1">
-                  <ChevronRight size={12} strokeWidth={2.2} className="shrink-0 self-center" />
-                  <span className="min-w-0 truncate">{message.original_text}</span>
+                  {isTruncated && <ChevronRight size={12} strokeWidth={2.2} className="shrink-0 self-center" />}
+                  <span ref={origRef} className="min-w-0 truncate">{message.original_text}</span>
                 </div>
-              )}
-            </div>
+              </div>
+            )
           )}
         </div>
 
