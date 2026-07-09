@@ -314,9 +314,13 @@ Cursor has its own AI built in (`Cmd-K` for inline edits, the chat panel for que
 
 ### 90-day PAT rotation
 
-**Next trigger date: 2026-08-31** (Vercel token expires; GitHub and Supabase expire 2026-09-01 — rotate all three in the same sitting to keep one calendar slot).
+**Next LIVE trigger date: 2026-10-06** — the `SCHEMA_DUMP_TOKEN` CI PAT expires (see "Live CI credentials" below). The three Hermes-era tokens expire earlier (Vercel 2026-08-31; GitHub + Supabase 2026-09-01) but are **dormant** (VPS shelved), so they're not a live blocker — revoke or let them lapse.
 
-Three credentials to rotate: `GITHUB_TOKEN` (GitHub fine-grained PAT, expires 2026-09-01), `SUPABASE_ACCESS_TOKEN` (Supabase personal access token, expires 2026-09-01), `VERCEL_TOKEN` (Vercel personal access token, expires 2026-08-31).
+Three Hermes-era credentials: `GITHUB_TOKEN` (GitHub fine-grained PAT, expires 2026-09-01), `SUPABASE_ACCESS_TOKEN` (Supabase personal access token, expires 2026-09-01), `VERCEL_TOKEN` (Vercel personal access token, expires 2026-08-31). These live in `~/.hermes/.env` on the shelved VPS (Hermes paused — see hermes.md) and are effectively **dormant**; rotate/revoke opportunistically.
+
+**Live CI credentials (keep these valid — used by the `schema-dump` GitHub Action):**
+- `SCHEMA_DUMP_TOKEN` — a fine-grained PAT (repo **Contents: read+write**) owned by an account on the `main` branch-protection **bypass** list. The Action pushes `docs/schema.sql` with it, because the default `github-actions[bot]` can't push to protected `main` (branch protection, 2026-07-08). **Created 2026-07-08; expires 2026-10-06 (90 days).** *Rotate:* regenerate the fine-grained PAT → update the `SCHEMA_DUMP_TOKEN` repo secret (Settings → Secrets and variables → Actions) → Actions tab → "Dump DB schema" → **Run workflow** to confirm the push still lands. The PAT owner must stay on the branch-protection bypass.
+- `SUPABASE_DB_URL` — prod Postgres connection string used by the same workflow's `pg_dump`. Only needs updating if the DB password is rotated.
 
 Full rotation procedure lives in `/docs/verification.md` "Hermes access credentials — Spec 3" post-rotation checklist. Summary:
 1. Generate new tokens in each dashboard (tag `hermes-prod-rotated-YYYY-MM-DD`; save to password manager).
@@ -331,7 +335,8 @@ Full rotation procedure lives in `/docs/verification.md` "Hermes access credenti
 
 | Date | Outcome | Notes |
 |---|---|---|
-| 2026-06-03 | Initial setup — Spec 3 | Tokens created; no rotation needed |
+| 2026-06-03 | Initial setup — Spec 3 | Hermes tokens created; no rotation needed |
+| 2026-07-08 | `SCHEMA_DUMP_TOKEN` created | Fine-grained PAT for the schema-dump CI push past branch protection; workflow verified GREEN. Expires 2026-10-06. |
 
 ---
 
