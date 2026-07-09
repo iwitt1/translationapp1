@@ -58,17 +58,14 @@ export default function ConversationList({ conversations, activeId, onSelect, on
               </div>
 
               <div className="min-w-0 flex-1">
+                {/* No read/unread marker by design — a reliable one needs a
+                    persistent read cursor (parking-lot "Unread state"). */}
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-medium truncate">{c.displayName}</span>
                   <span className="text-[11px] text-slate-400 shrink-0">{shortTime(c.lastActivity)}</span>
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-sm text-slate-500 truncate">{c.snippet || 'No messages yet'}</span>
-                  {c.unread > 0 && (
-                    <span className="shrink-0 h-5 min-w-5 px-1 rounded-full bg-violet-600 text-white text-[11px] grid place-items-center">
-                      {c.unread}
-                    </span>
-                  )}
                 </div>
                 <span className="inline-block mt-1 text-[10px] uppercase tracking-wide text-slate-400">
                   {contextTypeLabel(c.context_type) || c.context_type}

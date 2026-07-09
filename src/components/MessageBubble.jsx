@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { CHAT_APP_TENANT_ID } from '../lib/config';
 import { PROMPT_VERSION } from '../../lib/translatePrompt.js';
@@ -16,10 +16,10 @@ Renders one message. Two display modes:
     echoed back). Optimistic state (pending / failed + retry) lives here.
 
   • RECEIVED + translated: the big bubble is the TRANSLATION (into the viewer's
-    preferred language); a secondary "Original:" line shows the source text,
-    CSS-truncated to a single line, expandable on tap (full text on hover via
-    title). If no translation was needed (same language / no source), the bubble
-    just shows the original and the sub-line is omitted.
+    preferred language); a secondary caret-toggled line shows the source text
+    (no "Original" label — the caret is the affordance), CSS-truncated to a
+    single line, expandable on tap (full text on hover via title). If no
+    translation was needed (same language / no source), the sub-line is omitted.
 
 The translate + cache + server-side profile-inference logic is unchanged from the
 pre-Phase-3 app (it already worked); only the display markup and the optimistic
@@ -34,6 +34,9 @@ Props:
   showSenderName    — true in group conversations for received messages
   senderName        — display name to show above the bubble when showSenderName
   onRetry           — () => void; called when the user taps a failed send to resend
+  onTranslated      — (messageId, translatedText) => void; fired when a received
+                      message's translation resolves (cache hit or fresh), so the
+                      list can show the translated text as the conversation preview
 */
 export default function MessageBubble({
   message,
@@ -44,6 +47,7 @@ export default function MessageBubble({
   showSenderName = false,
   senderName = '',
   onRetry,
+  onTranslated,
 }) {
   const [translatedText, setTranslatedText] = useState('');
   const [loading, setLoading] = useState(true);
@@ -89,6 +93,7 @@ export default function MessageBubble({
 
         if (cached?.translated_text) {
           setTranslatedText(cached.translated_text);
+          onTranslated?.(message.id, cached.translated_text);
           return;
         }
 
@@ -134,6 +139,7 @@ export default function MessageBubble({
 
         const finalText = result?.translated_text || message.original_text;
         setTranslatedText(finalText);
+        onTranslated?.(message.id, finalText);
 
         // ── 5. Cache result ───────────────────────────────────────────────
         supabase
@@ -204,7 +210,9 @@ export default function MessageBubble({
             </div>
           )}
 
-          {/* "Original:" preview — single CSS-truncated line, expands on tap */}
+          {/* Original-text preview — the caret is the affordance (no label):
+              points right when collapsed, down when expanded (disclosure
+              convention). Single CSS-truncated line; expands on tap. */}
           {showOriginal && (
             <div
               className="mt-1 text-[11px] text-slate-400 cursor-pointer select-none"
@@ -212,23 +220,19 @@ export default function MessageBubble({
               title={message.original_text}
               role="button"
               tabIndex={0}
-              aria-label={expanded ? 'Collapse original text' : 'Expand original text'}
+              aria-label={expanded ? 'Collapse original text' : 'Show original text'}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded((x) => !x); }
               }}
             >
               {expanded ? (
                 <div className="flex items-start gap-1">
-                  <ChevronUp size={12} strokeWidth={2.2} className="shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-medium text-slate-500">Original:</span>{' '}
-                    {message.original_text}
-                  </div>
+                  <ChevronDown size={12} strokeWidth={2.2} className="shrink-0 mt-0.5" />
+                  <div className="min-w-0">{message.original_text}</div>
                 </div>
               ) : (
                 <div className="flex items-baseline gap-1">
-                  <ChevronDown size={12} strokeWidth={2.2} className="shrink-0 self-center" />
-                  <span className="font-medium text-slate-500 shrink-0">Original:</span>
+                  <ChevronRight size={12} strokeWidth={2.2} className="shrink-0 self-center" />
                   <span className="min-w-0 truncate">{message.original_text}</span>
                 </div>
               )}

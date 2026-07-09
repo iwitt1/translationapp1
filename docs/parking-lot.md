@@ -160,12 +160,16 @@ Today the username picked at onboarding is claimed via `change_username()` (migr
 - **Trigger:** first real complaint about being locked into a signup typo, or when we revisit username policy (policies.md §1).
 - **Surfaced:** 2026-07-08 during the Phase 2.4 settings-screen build (Isaac parked it).
 
-### Unread state / unread counts
+### Unread state — persistent read cursor + read/unread marker
 **Priority:** Med · **Blocks:** none
 
-Per-conversation unread indicators + counts. The read-cursor already exists (`conversation_members.last_read_at`); this is the compute + display layer. Split out of the (now-shipped) conversation switcher.
-- **Why interesting:** Standard chat affordance; its absence is felt as soon as you have multiple conversations.
-- **Trigger:** Multi-conversation use is real now; natural to fold into the `list_conversations` enrichment RPC (Phase 3 follow-ups).
+Persistent, correct read/unread. **Preferred marker treatment (Isaac, 2026-07-08): bold row, no count badge** (bold the conversation name/snippet when unread). **No interim marker ships** — a trial ephemeral bold-row (and the earlier in-memory count badge) was **removed 2026-07-08** because in-memory unread resets on reload (everything reads as *read* after a refresh), which is misleading. The list currently shows no read/unread affordance until this persistent version is built:
+- **Read cursor write path:** `conversation_members.last_read_at` exists (migration 017) but has **no writer** — needs a `mark_conversation_read(p_conversation_id)` RPC (SECURITY DEFINER; `conversation_members` has no UPDATE policy, all writes go through RPCs), called on `openConversation`.
+- **Compute unread** from messages with `created_at > last_read_at` (and `sender_id != me`) in the `loadConversations` enrichment; drive the bold row off that instead of in-memory count.
+- **Manual "mark as read/unread"** action (⋯ menu) — Isaac wants the toggle; also writes/rewinds `last_read_at`.
+- **Realtime:** a new inbound message re-bolds; opening clears it (and persists across reload/devices).
+- **Why interesting:** Standard chat affordance; the ephemeral version resets on refresh, which is felt.
+- **Trigger:** promote when polishing chat quality; small migration + enrichment + one RPC.
 
 ### Message-history search (within conversations)
 **Priority:** Med · **Blocks:** none

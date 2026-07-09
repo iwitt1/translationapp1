@@ -92,6 +92,11 @@ export default function App() {
   const conversationsRef = useRef([]);
   useEffect(() => { conversationsRef.current = conversations; }, [conversations]);
 
+  // Mirror the active thread's messages so a translation callback can check
+  // whether a just-translated message is the conversation's latest one.
+  const messagesRef = useRef([]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+
   /* ====================== AUTH ====================== */
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -197,6 +202,10 @@ export default function App() {
     if (error) { console.error('listConversations error:', error); return; }
     if (!convs?.length) { setConversations([]); return; }
 
+    // The list preview should read in the viewer's language, so the snippet of a
+    // last inbound message uses its cached translation when one exists.
+    const targetLang = linguisticProfile?.preferred_language || 'en';
+
     const enriched = await Promise.all(convs.map(async (c) => {
       const { data: members } = await listConversationMembers(c.id);
       const memberRows = members || [];
@@ -208,11 +217,24 @@ export default function App() {
 
       const { data: last } = await supabase
         .from('messages')
-        .select('original_text, created_at')
+        .select('id, sender_id, original_text, created_at')
         .eq('conversation_id', c.id)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
+
+      // Prefer the cached translation of the last inbound message for the preview;
+      // fall back to the original (own messages, or not-yet-translated).
+      let snippet = last?.original_text || '';
+      if (last && last.sender_id !== userId) {
+        const { data: tr } = await supabase
+          .from('message_translations')
+          .select('translated_text')
+          .eq('message_id', last.id)
+          .eq('language', targetLang)
+          .maybeSingle();
+        if (tr?.translated_text) snippet = tr.translated_text;
+      }
 
       const displayName = c.kind === 'group'
         ? (c.title || 'Group')
@@ -224,7 +246,7 @@ export default function App() {
         otherMembers: otherNames,
         memberCount: memberRows.length,
         memberNames,
-        snippet: last?.original_text || '',
+        snippet,
         lastActivity: last?.created_at || c.updated_at,
         hasMessages: !!last,
         unread: 0,
@@ -339,6 +361,18 @@ export default function App() {
       next.sort((a, b) => new Date(b.lastActivity) - new Date(a.lastActivity));
       return next;
     });
+  }
+
+  // A received message finished translating (from MessageBubble). If it's the
+  // latest message in the open thread, mirror the translation into that
+  // conversation's list preview so the snippet reads in the viewer's language.
+  function handleMessageTranslated(messageId, translatedText) {
+    const msgs = messagesRef.current;
+    if (!msgs.length || msgs[msgs.length - 1].id !== messageId) return;
+    const convId = activeIdRef.current;
+    setConversations((prev) =>
+      prev.map((c) => (c.id === convId ? { ...c, snippet: translatedText } : c))
+    );
   }
 
   function openConversation(id) {
@@ -607,6 +641,7 @@ export default function App() {
             onSetContextType={handleSetContextType}
             onInvite={() => setShowInvite(true)}
             onLeave={handleLeave}
+            onMessageTranslated={handleMessageTranslated}
             className={mobilePane === 'list' ? 'hidden md:flex' : 'flex'}
           />
         ) : (

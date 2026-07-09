@@ -31,6 +31,8 @@ Props:
   onSetContextType  — (value) => void
   onInvite          — () => void
   onLeave           — () => void
+  onMessageTranslated — (messageId, translatedText) => void; bubbles up from a
+                        MessageBubble when its translation resolves (list preview)
 */
 export default function ConversationView({
   conversation,
@@ -44,6 +46,7 @@ export default function ConversationView({
   onSetContextType,
   onInvite,
   onLeave,
+  onMessageTranslated,
   className = '',
 }) {
   const [draft, setDraft] = useState('');
@@ -176,6 +179,7 @@ export default function ConversationView({
             showSenderName={isGroup}
             senderName={memberNames[m.sender_id] || ''}
             onRetry={() => onRetry(m)}
+            onTranslated={onMessageTranslated}
           />
         ))}
       </div>

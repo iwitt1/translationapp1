@@ -897,13 +897,13 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │   ├── conversations-gate-test.mjs Phase 3 Step 1 conversations schema + RPC gate (run on staging)
 │   └── messages-rls-gate-test.mjs  Phase 3 Step 2 membership-scoped messages RLS gate — adversarial matrix + explicit realtime check (run on staging)
 ├── src/
-│   ├── App.jsx               Orchestrator: auth state machine, conversation list, active thread, two realtime subscriptions (messages + conversation_members), optimistic send + reconcile, modals
+│   ├── App.jsx               Orchestrator: auth state machine, conversation list (preview shows the translated last inbound message — cached translation at load + MessageBubble onTranslated callback live), active thread, two realtime subscriptions (messages + conversation_members), optimistic send + reconcile, modals
 │   ├── main.jsx              React entry point
 │   ├── index.css             Tailwind directives
 │   ├── components/           Presentational pieces (Phase 3 conversation UI; markup ported from mockups/phase3-conversations.html)
 │   │   ├── ConversationList.jsx     Sidebar list of conversations (+ avatar/initials/time helpers, exported)
 │   │   ├── ConversationView.jsx     Thread: header + overflow menu (register selector + "?" explainer) + messages + composer
-│   │   ├── MessageBubble.jsx        Per-message translate/cache/infer + "Original:" single-line expandable preview + optimistic pending/failed states
+│   │   ├── MessageBubble.jsx        Per-message translate/cache/infer + caret-toggled source-text preview (no "Original" label; caret right=collapsed/down=expanded) + onTranslated callback (feeds the list preview) + optimistic pending/failed states
 │   │   ├── NewConversationModal.jsx People-picker (discovery RPCs) → create_conversation (direct dedupe / group)
 │   │   ├── InviteModal.jsx          Mints a conversation invite (create_invite) → copyable ?join=<token> link
 │   │   └── SettingsModal.jsx        Account settings (app-bar gear): username change (gated) / display name / language / discoverability + relocated sign-out
