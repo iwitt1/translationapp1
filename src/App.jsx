@@ -26,7 +26,7 @@ import SettingsModal from './components/SettingsModal';
 Orchestrator only. It owns:
   • the auth state machine (loading / email_input / onboarding / chat)
   • the conversation list + the active conversation
-  • the active thread's messages + the single realtime subscription
+  • the active thread's messages + the two realtime subscriptions (messages + memberships)
   • optimistic send + DB reconcile
   • the new-conversation / invite modals and leave/context-type actions
 
@@ -35,11 +35,16 @@ lib/discovery.js, lib/translation.js) and the presentational pieces are in compo
 This keeps the chat UI decoupled from the translation engine surface (the standing
 layer-separation rule) and from the exact RPC shapes.
 
-Realtime model: ONE messages-INSERT subscription. Migration 018 made realtime
-membership-scoped, so the channel only ever delivers rows from conversations the
-viewer is a member of — we don't filter client-side. Each row updates the active
-thread (if it belongs to it) and always refreshes the matching list row's
-snippet/time/unread.
+Realtime model: TWO membership-scoped subscriptions (migrations 018 + 022 make
+realtime RLS-scoped, so a channel only ever delivers rows from conversations the
+viewer is a member of — no client-side filtering).
+  1. messages-INSERT — updates the active thread (if the row belongs to it) and
+     refreshes the matching list row's snippet/time/unread. If the row's
+     conversation isn't in the list yet (fresh, or previously an empty "ghost"),
+     it reloads the list so the conversation appears live on its first message.
+  2. conversation_members-INSERT (own rows) — fires when the viewer is added to a
+     conversation; reloads the list so a created-with-you / invited-you thread
+     shows up without a manual refresh.
 */
 export default function App() {
   // ── auth ──
@@ -80,6 +85,12 @@ export default function App() {
   // activeId in a ref so the realtime callback (registered once) reads the latest.
   const activeIdRef = useRef(null);
   useEffect(() => { activeIdRef.current = activeId; }, [activeId]);
+
+  // Mirror the conversation list into a ref so the once-registered realtime
+  // callbacks can tell whether an incoming row belongs to a conversation that's
+  // already in the list (without re-registering on every list change).
+  const conversationsRef = useRef([]);
+  useEffect(() => { conversationsRef.current = conversations; }, [conversations]);
 
   /* ====================== AUTH ====================== */
   useEffect(() => {
@@ -223,9 +234,9 @@ export default function App() {
     // Hide empty "ghost" conversations (created but no message sent yet) so they
     // don't clutter the other member's list — EXCEPT the one the user is actively
     // viewing (keepId), so a creator can still type into a fresh thread. Once a
-    // message exists it reappears for everyone on the next load. (Surfacing a
-    // brand-new conversation via realtime before a reload is a separate parked
-    // gap — parking-lot "No conversation-list realtime".)
+    // message exists the conversation surfaces live: onRealtimeInsert reloads the
+    // list when a message lands for a conversation not currently shown (migration
+    // 022 + the conversation_members channel handle the being-added case).
     const visible = enriched
       .filter((c) => c.hasMessages || c.id === keepId)
       .sort((a, b) => new Date(b.lastActivity) - new Date(a.lastActivity));
@@ -251,13 +262,30 @@ export default function App() {
       await loadConversations();
     })();
 
-    const channel = supabase
+    // Two channels, both membership-scoped by RLS (migrations 018 + 022):
+    //  1. messages     — new messages in conversations I'm in (drives the thread
+    //     + list snippet/unread; also surfaces a NOT-yet-listed conversation on
+    //     its first message via onRealtimeInsert's reload-on-unknown).
+    //  2. conversation_members — I was added to a conversation (direct someone
+    //     starts with me, group I'm created into, invite I redeem elsewhere);
+    //     reload the list so it appears without a manual refresh.
+    const messagesChannel = supabase
       .channel('messages-stream')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' },
         (payload) => onRealtimeInsert(payload.new))
       .subscribe();
 
-    return () => supabase.removeChannel(channel);
+    const membersChannel = supabase
+      .channel('conversation-members-stream')
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'conversation_members', filter: `account_id=eq.${userId}` },
+        () => loadConversations(activeIdRef.current))
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(messagesChannel);
+      supabase.removeChannel(membersChannel);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authView, userId]);
 
@@ -275,6 +303,15 @@ export default function App() {
 
   // Realtime INSERT handler — see the model note at the top of the file.
   function onRealtimeInsert(row) {
+    // First message in a conversation I'm a member of but that isn't in my list
+    // yet (a fresh conversation, or one previously hidden as an empty "ghost"):
+    // pull the list so it appears live. The membership channel handles being
+    // added; this handles the conversation becoming non-empty.
+    if (!conversationsRef.current.some((c) => c.id === row.conversation_id)) {
+      loadConversations(activeIdRef.current);
+      return;
+    }
+
     if (row.conversation_id === activeIdRef.current) {
       setMessages((prev) => {
         if (prev.some((m) => m.id === row.id)) return prev; // dedupe by id
@@ -507,13 +544,9 @@ export default function App() {
   /* ====================== CHAT ====================== */
   return (
     <main className="h-screen bg-slate-100 flex flex-col">
-      {/* Build marker — git commit hash stamped at deploy time */}
-      <div className="fixed bottom-2 left-2 z-50 text-xs text-slate-400 font-mono select-none">
-        {__COMMIT_HASH__}
-      </div>
-
-      {/* Persistent top app bar (mobile + desktop). Sign-out lives here in its own
-          row, so it can never overlap the conversation list's "+" button. */}
+      {/* Persistent top app bar (mobile + desktop). The account entry (gear →
+          Settings) lives here; the build/deploy marker was moved off the chat
+          chrome into the Settings modal footer (no longer overlays the UI). */}
       <header className="shrink-0 flex items-center justify-between gap-2 px-4 h-12 bg-white border-b border-slate-200">
         <div className="flex items-center gap-1.5">
           <svg width="26" height="26" viewBox="0 0 512 512" aria-hidden="true" className="shrink-0">

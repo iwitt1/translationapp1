@@ -66,6 +66,7 @@
 - [Username at onboarding — migration 020 (2026-07-07) — ✅ GREEN on staging; PROD ROLLED OUT same day](#username-at-onboarding--migration-020-2026-07-07---green-on-staging-prod-rolled-out-same-day)
 - [Spec 8 + 9 — Demo-readiness polish (2026-07-07) — ✅ GREEN on staging; merged to main, prod smoke pending](#spec-8--9--demo-readiness-polish-2026-07-07---green-on-staging-merged-to-main-prod-smoke-pending)
 - [Spec 10 — Account settings screen (2026-07-08) — ✅ on prod, smoke GREEN](#spec-10--account-settings-screen-2026-07-08--️-on-prod-2026-07-08-smoke-green)
+- [Conversation-list realtime (2026-07-08) — ⏳ staging-first pending](#conversation-list-realtime-2026-07-08--️-staging-first-pending)
 
 **Meta**
 
@@ -1915,6 +1916,36 @@ App smoke (Vercel Preview against staging):
 
 ---
 
+## Conversation-list realtime (2026-07-08) — ⏳ staging-first pending
+
+**What shipped:** Migration `022_realtime_conversation_members.sql` publishes `conversation_members` to `supabase_realtime`. `App.jsx` opens a second realtime channel on `conversation_members` INSERTs (filtered to the viewer's own rows) that reloads the list on being added, plus a reload-on-unknown-conversation guard in the `messages` handler so a conversation surfaces live on its first message. See decisions.md 2026-07-08 "Conversation-list realtime".
+
+**Run 022 on `translationapp1-staging` first, then this smoke, then replay to prod.** Needs two accounts (A, B) on two browsers.
+
+Migration:
+
+- [ ] `pg_publication_tables` for `supabase_realtime` lists **both** `messages` and `conversation_members`.
+
+Live behavior (no manual reload anywhere in these steps):
+
+- [ ] **Added to a new direct + first message:** A starts a direct with B and sends "hola" → the thread appears in B's list live, with the snippet + unread bump.
+- [ ] **Added to an active group:** A adds B to a group that already has messages → the group appears in B's list live.
+- [ ] **Invite redeemed elsewhere:** B (signed in on a second browser/device) redeems A's invite link on browser 1 → the conversation appears on browser 2's list live.
+- [ ] **Empty conversation stays hidden until first message:** A creates a direct with B but sends nothing → it does **not** clutter B's list; it appears the instant A sends the first message (ghost-hiding preserved).
+- [ ] **Active thread unaffected:** while B has a different thread open, none of the above steal focus or reorder the open thread incorrectly; the active selection is preserved across the reload.
+- [ ] No duplicate list rows after the create-then-message sequence; no console errors.
+
+**Known failure modes to watch:**
+
+| Symptom | Likely cause |
+|---|---|
+| New conversation never appears live | 022 not applied on this env, or `conversation_members` missing from the publication |
+| Appears only after the *second* message | reload-on-unknown guard not firing — check `conversationsRef` is current and the membership channel is subscribed |
+| Everyone sees everyone's membership events | RLS/realtime scoping — `conversation_members_select_member` must gate delivery; the channel filter is defense-in-depth, not the boundary |
+| Active thread resets on reload | `loadConversations` must be called with `activeIdRef.current` as `keepId` so the open thread is preserved |
+
+---
+
 ## How to use this doc
 
 - Before shipping a feature, draft its verification section first. Easier than scrambling after.
@@ -1929,6 +1960,7 @@ App smoke (Vercel Preview against staging):
 
 *Reverse chronological. One line per change; project events link to `decisions.md`.*
 
+- **2026-07-08** — Added "Conversation-list realtime" section (migration 022 + second App.jsx channel; staging-first pending). (→ decisions.md 2026-07-08 "Conversation-list realtime")
 - **2026-07-08** — Added "Spec 10 — Account settings screen" section (settings modal + migration 021; staging-first pending). (→ decisions.md 2026-07-08 "Account settings screen")
 - **2026-07-07** — Added "Spec 8 + 9 — Demo-readiness polish" section (language-list + lucide icons, staging gate GREEN); updated same day once merged to `main` (commit `1c37b14`). (→ decisions.md 2026-07-07 "Spec 8 + 9 shipped")
 - **2026-07-07** — Docs legibility cleanup: added Contents TOC; header de-blobbed; this Changelog added. Also added the "Username at onboarding — migration 020" section (gate GREEN + prod). (→ decisions.md 2026-07-07)

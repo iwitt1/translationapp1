@@ -192,7 +192,7 @@ Explicit event logging for the signup funnel beyond what account state already c
 **Priority:** Med · **Blocks:** none
 
 The conversation-aware `App.jsx` rewrite shipped with three deliberate MVP corners, all fine for the first smoke pass but worth closing before real multi-user load:
-- **No conversation-list realtime.** **→ PROMOTED to roadmap Phase 2.4 (Med) 2026-07-07.** A conversation that someone else *creates with you* or *invites you to* doesn't appear until a manual reload — the single realtime channel is on `messages` only, so list membership changes aren't pushed. **Sketch:** add a `conversations` / `conversation_members` realtime channel, or a lightweight per-user activity feed, and refresh the list on membership events.
+- **No conversation-list realtime.** **→ RESOLVED 2026-07-08 (migration 022 + second channel).** *(was: PROMOTED to roadmap Phase 2.4 (Med) 2026-07-07.)* Migration 022 publishes `conversation_members` to `supabase_realtime`; `App.jsx` adds a `conversation_members`-INSERT channel filtered to the viewer's own rows (RLS-scoped) that reloads the list on being added, plus a reload-on-unknown-conversation guard in the messages handler so a conversation surfaces live on its first message. `conversations` deliberately *not* published (no metadata-change subscriber yet). See decisions.md 2026-07-08.
 - **List enrichment is N+1.** `loadConversations()` fetches members + the latest message *per conversation* in `Promise.all`. Fine at a handful of conversations; a latency problem at scale. **Sketch:** fold into a single `list_conversations` RPC that returns each row already decorated with display name, last-message snippet/time, and unread count (also the natural home for server-computed unread).
 - **`?join=<token>` doesn't deep-link.** Redeeming an invite reloads the conversation list but doesn't open the joined thread (the `redeem_invite` RPC returns `'joined'`, not the conversation id). **Sketch:** have `redeem_invite` return the target conversation id so App can `openConversation()` it.
 - **Register "?" tooltip clips off-screen** (logged during the 2026-06-12 staging smoke). The explainer popover in the `ConversationView` overflow menu is absolutely positioned and runs past the viewport edge on narrow widths. **Sketch:** flip/clamp the popover within the viewport (or anchor it left of the "?"); fold into the broader UI-polish pass (Sonnet) rather than a one-off. Cosmetic — feature works.
@@ -313,7 +313,7 @@ All PKs use `gen_random_uuid()` (uuid v4, random). Random v4 PKs fragment btree 
 
 The `messages`-on-realtime-publication item was originally configured via the Supabase Studio UI. Migration `004_enable_realtime_publication.sql` (2026-05-18) backfilled it. But the broader category of risk remains: other Supabase configuration may exist in prod via UI clicks and not in the migrations folder. Candidate suspects (need an audit pass):
 
-- Realtime publications on other tables (we currently only know `messages` is published)
+- Realtime publications on other tables (known published: `messages` (004) + `conversation_members` (022); audit whether anything else was UI-added)
 - RLS policies (none exist yet, but Phase 2 introduces many — they MUST live in migrations from day one)
 - Database functions / triggers (none currently expected, but worth checking)
 - Storage bucket policies (no Storage usage yet)

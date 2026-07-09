@@ -283,14 +283,20 @@ export default function SettingsModal({ open, onClose, profile, linguisticProfil
           {error && <p className="text-xs text-rose-500 mt-4 flex items-center gap-1"><AlertCircle size={14} strokeWidth={2.2} /> {error}</p>}
         </div>
 
-        {/* sign out (relocated from the app bar) */}
-        <button
-          onClick={onSignOut}
-          className="flex items-center gap-2 w-full border-t border-slate-200 px-4 py-3.5 text-sm text-slate-600 hover:bg-slate-50 text-left"
-        >
-          <LogOut size={18} strokeWidth={2.2} />
-          Sign out
-        </button>
+        {/* sign out (relocated from the app bar) + build/deploy marker (relocated
+            off the chat chrome — bottom-right, small + greyed, no longer overlays) */}
+        <div className="border-t border-slate-200 flex items-center justify-between">
+          <button
+            onClick={onSignOut}
+            className="flex items-center gap-2 px-4 py-3.5 text-sm text-slate-600 hover:bg-slate-50 text-left"
+          >
+            <LogOut size={18} strokeWidth={2.2} />
+            Sign out
+          </button>
+          <span className="px-4 text-[10px] text-slate-300 font-mono select-none" title="Build">
+            {__COMMIT_HASH__}
+          </span>
+        </div>
       </div>
     </div>
   );

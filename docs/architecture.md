@@ -657,6 +657,8 @@ field.
 4. Frontend inserts a row into `messages` with original text, detected language, conversation_id, tenant_id.
 5. Supabase Realtime pushes the row to subscribed clients in the same conversation (scoped by RLS).
 
+**Realtime channels (client, `App.jsx`).** Two membership-scoped `postgres_changes` subscriptions, both relying on RLS to deliver only rows the viewer may see (migrations 018 + 022): (1) `messages`-INSERT — drives the active thread + list snippet/unread, and reloads the list when a message lands for a conversation not currently shown (a fresh or previously-empty conversation appears live on its first message); (2) `conversation_members`-INSERT filtered to the viewer's own rows — reloads the list when the viewer is added to a conversation (a direct started with them, a group they're added to, an invite redeemed on another device). Published tables: `messages` (004), `conversation_members` (022). `conversations` is intentionally unpublished — no metadata-change (title/context_type) live-update subscriber exists yet.
+
 ### View path (target state)
 
 1. A new message arrives via Realtime (or is loaded on page open).
@@ -884,7 +886,8 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │   ├── 018_phase3_messages_rls.sql           Phase 3 Step 2 / Spec 7: flips messages + message_translations RLS tenant-scoped → membership-scoped (is_active_member). Drops+recreates the same 5 policy names from 008; policies-only, no DDL/data change; messages stay immutable; replay to prod AFTER 017
 │   ├── 019_unify_context_type_vocab.sql       Unify conversations.context_type CHECK + create_conversation/set_conversation_context_type inline guards on the engine vocab (casual/dating/professional/academic). ALTER + CREATE OR REPLACE; defensive remap; does NOT touch detected_register
 │   ├── 020_onboarding_username.sql       Onboarding requires a user-chosen username; complete_onboarding() (3-arg) claims it atomically with activation; change_username() allows self-revert; display_name denylist
-│   └── 021_settings_screen.sql       Phase 2.4 settings: set_preferred_language() + set_display_name() RPCs; account_settings.discoverable_by_email default true→false + handle_new_user trigger + backfill
+│   ├── 021_settings_screen.sql       Phase 2.4 settings: set_preferred_language() + set_display_name() RPCs; account_settings.discoverable_by_email default true→false + handle_new_user trigger + backfill
+│   └── 022_realtime_conversation_members.sql  Phase 2.4: publishes conversation_members to supabase_realtime (idempotent, mirrors 004) so the list updates live when you're added to a conversation
 ├── scripts/
 │   ├── rls-adversarial-test.mjs   Phase 2 Step 3 RLS gate (run on staging)
 │   ├── discovery-gate-test.mjs    Phase 2 Step 4 discovery gate (run on staging)
@@ -894,7 +897,7 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │   ├── conversations-gate-test.mjs Phase 3 Step 1 conversations schema + RPC gate (run on staging)
 │   └── messages-rls-gate-test.mjs  Phase 3 Step 2 membership-scoped messages RLS gate — adversarial matrix + explicit realtime check (run on staging)
 ├── src/
-│   ├── App.jsx               Orchestrator: auth state machine, conversation list, active thread, single realtime subscription, optimistic send + reconcile, modals
+│   ├── App.jsx               Orchestrator: auth state machine, conversation list, active thread, two realtime subscriptions (messages + conversation_members), optimistic send + reconcile, modals
 │   ├── main.jsx              React entry point
 │   ├── index.css             Tailwind directives
 │   ├── components/           Presentational pieces (Phase 3 conversation UI; markup ported from mockups/phase3-conversations.html)

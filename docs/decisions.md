@@ -24,6 +24,7 @@
 
 **Roadmap & security**
 
+- [2026-07-08 — Conversation-list realtime: publish conversation_members + a second App.jsx channel (Phase 2.4, migration 022)](#2026-07-08--conversation-list-realtime-publish-conversation_members--a-second-appjsx-channel-phase-24-migration-022)
 - [2026-07-08 — Account settings screen (Phase 2.4) + migration 021: settings RPCs, discoverability default → username-only](#2026-07-08--account-settings-screen-phase-24--migration-021-settings-rpcs-discoverability-default--username-only)
 - [2026-07-07 — Spec 8 + 9 shipped: expanded language list + lucide-react UI icons (Phase 2.4)](#2026-07-07--spec-8--9-shipped-expanded-language-list--lucide-react-ui-icons-phase-24)
 - [2026-07-07 — Roadmap promotions (Phase 2.4) + RLS gap on tenants/event tables](#2026-07-07--roadmap-promotions-phase-24--rls-gap-on-tenantsevent-tables)
@@ -153,6 +154,18 @@
 
 
 ---
+
+## 2026-07-08 — Conversation-list realtime: publish conversation_members + a second App.jsx channel (Phase 2.4, migration 022)
+
+**Decision:** Made the conversation list update live. Migration 022 publishes `conversation_members` to the `supabase_realtime` publication; `App.jsx` adds a second `postgres_changes` channel on `conversation_members` INSERTs **filtered to the viewer's own rows** (`account_id=eq.<uid>`) that reloads the list when the viewer is added to a conversation, and a **reload-on-unknown-conversation** guard in the existing `messages` handler so a conversation the viewer isn't yet showing (fresh, or previously hidden as an empty "ghost") surfaces the moment its first message lands. Built directly in Cowork; Isaac commits + runs staging-first.
+**Context:** The list only refreshed on manual reload for conversations someone else created-with-you or invited-you-to — a real demo friction point (roadmap Phase 2.4). The single realtime channel was on `messages` only, and the `messages` handler ignored rows for conversations not already in the list.
+**Alternatives considered:**
+- *What to publish* — `conversation_members` only (chosen) vs. also `conversations` (rejected for now; the client keys its refresh off "was I added?" — a membership-row event — and there's no live consumer of conversation *metadata* changes yet, so publishing `conversations` would just add replication load). Revisit if/when title/context_type need to update live.
+- *Trigger model* — membership channel + a reload-on-unknown-conversation guard on the messages channel (chosen; the membership channel catches being-added-to-an-already-active thread, the messages guard catches the empty-conversation-gets-its-first-message case, and together they respect the existing ghost-hiding without re-introducing empty-conversation clutter) vs. relaxing ghost-hiding to show empty conversations on membership-add (rejected; would reintroduce the ghost clutter the Phase 2.2 fix removed) vs. a bespoke per-user activity-feed table (rejected; heavier, and the membership row already *is* the event).
+- *Filtering* — server-side `account_id=eq.<uid>` filter on the members channel (chosen; less client noise) on top of the RLS scoping that already restricts delivery.
+**Reasoning:** Realtime honors RLS — Supabase applies each table's SELECT policy for `authenticated` to `postgres_changes`. `conversation_members_select_member` (017) permits `account_id = auth.uid()`, so a user's own membership INSERTs are delivered and nobody else's; same membership-scoped guarantee the `messages` channel already leans on (018 / Spec 7). Publication-only migration = lowest-risk backend change (no RLS/DDL/data).
+**Implications:** Being added to a conversation, and a new conversation's first message, both appear without a reload. Two channels now open per session (negligible at demo scale). Ghost-hiding still governs *visibility* — an empty conversation you're added to stays hidden until it has a message (intended). If live title/context_type updates are wanted later, publish `conversations` and add a third handler.
+**Revisit when:** conversation metadata needs live updates (publish `conversations`); or realtime volume grows enough to want narrower channels / a dedicated realtime tier (parking-lot "dedicated realtime infrastructure").
 
 ## 2026-07-08 — Account settings screen (Phase 2.4) + migration 021: settings RPCs, discoverability default → username-only
 
