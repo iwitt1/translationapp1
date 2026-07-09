@@ -66,7 +66,7 @@
 - [Username at onboarding — migration 020 (2026-07-07) — ✅ GREEN on staging; PROD ROLLED OUT same day](#username-at-onboarding--migration-020-2026-07-07---green-on-staging-prod-rolled-out-same-day)
 - [Spec 8 + 9 — Demo-readiness polish (2026-07-07) — ✅ GREEN on staging; merged to main, prod smoke pending](#spec-8--9--demo-readiness-polish-2026-07-07---green-on-staging-merged-to-main-prod-smoke-pending)
 - [Spec 10 — Account settings screen (2026-07-08) — ✅ on prod, smoke GREEN](#spec-10--account-settings-screen-2026-07-08--️-on-prod-2026-07-08-smoke-green)
-- [Conversation-list realtime (2026-07-08) — ⏳ staging-first pending](#conversation-list-realtime-2026-07-08--️-staging-first-pending)
+- [Conversation-list realtime (2026-07-08) — ✅ on prod, smoke GREEN](#conversation-list-realtime-2026-07-08--️-on-prod-2026-07-08-smoke-green)
 
 **Meta**
 
@@ -1916,11 +1916,11 @@ App smoke (Vercel Preview against staging):
 
 ---
 
-## Conversation-list realtime (2026-07-08) — ⏳ staging-first pending
+## Conversation-list realtime (2026-07-08) — ✅ on prod 2026-07-08, smoke GREEN
 
-**What shipped:** Migration `022_realtime_conversation_members.sql` publishes `conversation_members` to `supabase_realtime`. `App.jsx` opens a second realtime channel on `conversation_members` INSERTs (filtered to the viewer's own rows) that reloads the list on being added, plus a reload-on-unknown-conversation guard in the `messages` handler so a conversation surfaces live on its first message. See decisions.md 2026-07-08 "Conversation-list realtime".
+**What shipped:** Migration `022_realtime_conversation_members.sql` publishes `conversation_members` to `supabase_realtime`. `App.jsx` opens a second realtime channel on `conversation_members` INSERTs (filtered to the viewer's own rows) that reloads the list on being added, plus a reload-on-unknown-conversation guard in the `messages` handler so a conversation surfaces live on its first message. Shipped with the caret-truncation tweak + translated list preview (same branch). See decisions.md 2026-07-08 "Conversation-list realtime".
 
-**Run 022 on `translationapp1-staging` first, then this smoke, then replay to prod.** Needs two accounts (A, B) on two browsers.
+**Shipped staging → prod:** 022 applied prod-first, then the frontend merged to `main`; two-account prod smoke GREEN 2026-07-08.
 
 Migration:
 
@@ -1960,6 +1960,7 @@ Live behavior (no manual reload anywhere in these steps):
 
 *Reverse chronological. One line per change; project events link to `decisions.md`.*
 
+- **2026-07-08** — Conversation-list realtime confirmed on prod (022 applied, two-account smoke GREEN); shipped with the caret-truncation tweak + translated list preview. Section flipped to ✅.
 - **2026-07-08** — Added "Conversation-list realtime" section (migration 022 + second App.jsx channel; staging-first pending). (→ decisions.md 2026-07-08 "Conversation-list realtime")
 - **2026-07-08** — Added "Spec 10 — Account settings screen" section (settings modal + migration 021; staging-first pending). (→ decisions.md 2026-07-08 "Account settings screen")
 - **2026-07-07** — Added "Spec 8 + 9 — Demo-readiness polish" section (language-list + lucide icons, staging gate GREEN); updated same day once merged to `main` (commit `1c37b14`). (→ decisions.md 2026-07-07 "Spec 8 + 9 shipped")

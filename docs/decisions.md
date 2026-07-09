@@ -24,6 +24,7 @@
 
 **Roadmap & security**
 
+- [2026-07-08 — Branch protection on `main` after going public; deploy via admin bypass](#2026-07-08--branch-protection-on-main-after-going-public-deploy-via-admin-bypass)
 - [2026-07-08 — Make the repo public: full history, docs kept as-is (Phase 2.4)](#2026-07-08--make-the-repo-public-full-history-docs-kept-as-is-phase-24)
 - [2026-07-08 — Conversation-list realtime: publish conversation_members + a second App.jsx channel (Phase 2.4, migration 022)](#2026-07-08--conversation-list-realtime-publish-conversation_members--a-second-appjsx-channel-phase-24-migration-022)
 - [2026-07-08 — Account settings screen (Phase 2.4) + migration 021: settings RPCs, discoverability default → username-only](#2026-07-08--account-settings-screen-phase-24--migration-021-settings-rpcs-discoverability-default--username-only)
@@ -156,6 +157,15 @@
 
 ---
 
+## 2026-07-08 — Branch protection on `main` after going public; deploy via admin bypass
+
+**Decision:** Keep `main` a **protected branch** (require-PR), with **Isaac (repo admin) on the bypass list** so terminal `git push` to `main` still deploys prod directly. Collaborators/agents must go through a PR.
+**Context:** After making the repo public, a routine `git push origin main` was rejected — twice, by two different GitHub mechanisms: first a **ruleset** (`GH013`), then a **classic branch-protection rule** (`GH006`). Going public unlocked branch protection for free (it was paid-only on private repos — the Phase 1.5 deferral we'd parked).
+**Alternatives considered:** *Merge every deploy via PR* (rejected for a solo dev — ceremony/friction on each ship; kept available as the path for any non-admin). *Delete protection entirely* (rejected — protection is worth keeping now that it's free; it guards `main` against accidental/agent pushes, the original Phase 1.5 intent). *Admin bypass + keep protection* (chosen — Isaac keeps his fast direct-push flow, everyone/everything else is gated).
+**Reasoning:** The bypass gives velocity for the one trusted operator while the rule still blocks the accidental-push and any future collaborator/agent from touching `main` directly. GitHub enforces via two independent systems (Settings → Branches classic rules **and** Settings → Rules rulesets); a require-PR in *either* blocks, so both must permit the bypass — noted in operations.md §3 so a future confused push has the answer.
+**Implications:** "Prod = push to `main`" (operations.md runbook) now implicitly means "push to `main` as the bypassed admin." A non-admin (or an agent acting as one) must open a PR. If Isaac ever wants a review/CI gate on his own pushes too, remove the bypass and switch to the PR flow.
+**Revisit when:** a collaborator/agent gets write access (the PR gate becomes load-bearing, keep it); or CI checks are added that should gate prod (require them on the branch); or the friction of protection outweighs its value for a still-solo repo (relax it).
+
 ## 2026-07-08 — Make the repo public: full history, docs kept as-is (Phase 2.4)
 
 **Decision:** Publish `github.com/iwitt1/translationapp1` as a **public** repo with its **full commit history** and `/docs/` **kept intact** (no scrub, no squash). Closes the Phase 2.4 "repo cleanup for public sharing" item and unblocks the Phase 2.3 case-study repo link.
@@ -167,7 +177,7 @@
 
 ## 2026-07-08 — Conversation-list realtime: publish conversation_members + a second App.jsx channel (Phase 2.4, migration 022)
 
-**Decision:** Made the conversation list update live. Migration 022 publishes `conversation_members` to the `supabase_realtime` publication; `App.jsx` adds a second `postgres_changes` channel on `conversation_members` INSERTs **filtered to the viewer's own rows** (`account_id=eq.<uid>`) that reloads the list when the viewer is added to a conversation, and a **reload-on-unknown-conversation** guard in the existing `messages` handler so a conversation the viewer isn't yet showing (fresh, or previously hidden as an empty "ghost") surfaces the moment its first message lands. Built directly in Cowork; Isaac commits + runs staging-first.
+**Decision:** Made the conversation list update live. Migration 022 publishes `conversation_members` to the `supabase_realtime` publication; `App.jsx` adds a second `postgres_changes` channel on `conversation_members` INSERTs **filtered to the viewer's own rows** (`account_id=eq.<uid>`) that reloads the list when the viewer is added to a conversation, and a **reload-on-unknown-conversation** guard in the existing `messages` handler so a conversation the viewer isn't yet showing (fresh, or previously hidden as an empty "ghost") surfaces the moment its first message lands. Built directly in Cowork. **Shipped to prod 2026-07-08** — 022 applied prod-first, frontend merged to `main`, two-account smoke GREEN. Shipped alongside the Phase 2.4 bubble/list polish (caret dropped its "Original" label and now appears only when the preview is truncated; list preview shows the translated last inbound message).
 **Context:** The list only refreshed on manual reload for conversations someone else created-with-you or invited-you-to — a real demo friction point (roadmap Phase 2.4). The single realtime channel was on `messages` only, and the `messages` handler ignored rows for conversations not already in the list.
 **Alternatives considered:**
 - *What to publish* — `conversation_members` only (chosen) vs. also `conversations` (rejected for now; the client keys its refresh off "was I added?" — a membership-row event — and there's no live consumer of conversation *metadata* changes yet, so publishing `conversations` would just add replication load). Revisit if/when title/context_type need to update live.

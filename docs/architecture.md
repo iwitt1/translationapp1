@@ -903,7 +903,7 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │   ├── components/           Presentational pieces (Phase 3 conversation UI; markup ported from mockups/phase3-conversations.html)
 │   │   ├── ConversationList.jsx     Sidebar list of conversations (+ avatar/initials/time helpers, exported)
 │   │   ├── ConversationView.jsx     Thread: header + overflow menu (register selector + "?" explainer) + messages + composer
-│   │   ├── MessageBubble.jsx        Per-message translate/cache/infer + caret-toggled source-text preview (no "Original" label; caret right=collapsed/down=expanded) + onTranslated callback (feeds the list preview) + optimistic pending/failed states
+│   │   ├── MessageBubble.jsx        Per-message translate/cache/infer + caret-toggled source-text preview (no "Original" label; caret shown only when the line is truncated, right=collapsed/down=expanded, ResizeObserver-measured) + onTranslated callback (feeds the list preview) + optimistic pending/failed states
 │   │   ├── NewConversationModal.jsx People-picker (discovery RPCs) → create_conversation (direct dedupe / group)
 │   │   ├── InviteModal.jsx          Mints a conversation invite (create_invite) → copyable ?join=<token> link
 │   │   └── SettingsModal.jsx        Account settings (app-bar gear): username change (gated) / display name / language / discoverability + relocated sign-out
