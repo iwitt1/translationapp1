@@ -478,9 +478,21 @@ export default function App() {
   }
 
   /* ====================== SCREENS ====================== */
+  // Brand lockup for the signed-out screens (loading / email entry /
+  // onboarding). The chat view has its own top-app-bar lockup; these screens
+  // reuse the favicon asset (public/favicon.svg) rather than duplicating the
+  // inline SVG.
+  const brandLockup = (
+    <div className="flex items-center justify-center gap-2 mb-4">
+      <img src="/favicon.svg" alt="" className="h-9 w-9" />
+      <span className="font-bold text-xl text-slate-800" style={{ fontFamily: "'Outfit', sans-serif" }}>Jistchat</span>
+    </div>
+  );
+
   if (authView === 'loading') {
     return (
-      <main className="min-h-screen flex items-center justify-center text-slate-400 text-sm">
+      <main className="min-h-screen flex flex-col items-center justify-center bg-slate-100 text-slate-400 text-sm">
+        {brandLockup}
         Loading…
       </main>
     );
@@ -488,7 +500,8 @@ export default function App() {
 
   if (authView === 'email_input') {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-slate-100">
+      <main className="min-h-screen flex flex-col items-center justify-center bg-slate-100">
+        {brandLockup}
         <div className="p-6 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3 w-80">
           <h1 className="font-semibold text-lg">Sign in</h1>
           {authSent ? (
@@ -518,7 +531,8 @@ export default function App() {
 
   if (authView === 'onboarding') {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-slate-100">
+      <main className="min-h-screen flex flex-col items-center justify-center bg-slate-100">
+        {brandLockup}
         <div className="p-6 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-4 w-80">
           <h1 className="font-semibold text-lg">Set up your profile</h1>
           <form onSubmit={handleOnboarding} className="space-y-3">
