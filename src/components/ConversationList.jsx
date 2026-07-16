@@ -80,11 +80,53 @@ export default function ConversationList({ conversations, activeId, onSelect, on
 }
 
 // ── small presentational helpers (shared shape with the mockup) ──────────────
-const PALETTE = ['bg-rose-500', 'bg-violet-500', 'bg-emerald-500', 'bg-amber-500', 'bg-sky-500', 'bg-fuchsia-500'];
+// 12 distinct hues for avatars + group-chat sender attribution. Each pairs an avatar
+// background (white initials on it) with a matching saturated text color for the
+// sender-name label. Kept to ~12 deliberately: past this, hues stop being
+// distinguishable, and because attribution always shows the name + initials too,
+// color is reinforcement, not the sole identifier. (Spec 12, 2026-07-16.)
+const PALETTE = [
+  { bg: 'bg-rose-500',    text: 'text-rose-600' },
+  { bg: 'bg-orange-500',  text: 'text-orange-600' },
+  { bg: 'bg-amber-600',   text: 'text-amber-700' },
+  { bg: 'bg-lime-600',    text: 'text-lime-700' },
+  { bg: 'bg-emerald-500', text: 'text-emerald-600' },
+  { bg: 'bg-teal-500',    text: 'text-teal-600' },
+  { bg: 'bg-cyan-600',    text: 'text-cyan-700' },
+  { bg: 'bg-sky-500',     text: 'text-sky-600' },
+  { bg: 'bg-indigo-500',  text: 'text-indigo-600' },
+  { bg: 'bg-violet-500',  text: 'text-violet-600' },
+  { bg: 'bg-fuchsia-500', text: 'text-fuchsia-600' },
+  { bg: 'bg-pink-500',    text: 'text-pink-600' },
+];
 
-export function avatarColor(s = '') {
-  const sum = [...s].reduce((a, c) => a + c.charCodeAt(0), 0);
-  return PALETTE[sum % PALETTE.length];
+function colorIndex(key = '') {
+  const sum = [...String(key)].reduce((a, c) => a + c.charCodeAt(0), 0);
+  return sum % PALETTE.length;
+}
+
+// Avatar background class for a stable key (a display name, or any string). Back-compat:
+// existing callers pass a display name and get a single bg class back.
+export function avatarColor(key = '') {
+  return PALETTE[colorIndex(key)].bg;
+}
+
+// Per-conversation color map: { [account_id]: { bg, text } }, guaranteeing NO two
+// members share a color (up to PALETTE.length members). Base color is a stable
+// account_id hash; on a collision the later member (by sorted id) bumps to the next
+// free slot. Deterministic + stable across reloads; no persistence needed. (Spec 12.)
+export function assignConversationColors(memberIds = []) {
+  const ids = [...memberIds].sort();
+  const used = new Set();
+  const map = {};
+  for (const id of ids) {
+    let idx = colorIndex(id);
+    let guard = 0;
+    while (used.has(idx) && guard < PALETTE.length) { idx = (idx + 1) % PALETTE.length; guard++; }
+    used.add(idx);
+    map[id] = PALETTE[idx];
+  }
+  return map;
 }
 
 export function initials(s = '') {

@@ -70,6 +70,12 @@ const {
   RLS_TEST_PASSWORD: PASSWORD,
   RLS_TEST_CONFIRM_STAGING: CONFIRM,
   STAGING_API_BASE_URL: API_BASE_RAW,
+  // Optional: Vercel "Protection Bypass for Automation" secret. If the Preview has
+  // Deployment Protection (Vercel Authentication) on, set this so the gate's requests
+  // pass the edge check instead of getting a 401 SSO challenge. Leave unset if the
+  // Preview is unprotected. (Vercel → Settings → Deployment Protection → Protection
+  // Bypass for Automation → generate; sent as the x-vercel-protection-bypass header.)
+  VERCEL_AUTOMATION_BYPASS_SECRET: BYPASS,
 } = process.env;
 
 const API_BASE = (API_BASE_RAW || '').replace(/\/+$/, '');
@@ -109,6 +115,9 @@ const bad = (label, extra) => { fail++; console.log(`  ✗ ${label}${extra ? ` �
 async function callTranslate(token) {
   const headers = { 'Content-Type': 'application/json' };
   if (token !== undefined && token !== null) headers.Authorization = `Bearer ${token}`;
+  // Pass the Vercel edge protection check if a bypass secret is configured, so the
+  // request reaches the app's own auth layer (what we're actually testing).
+  if (BYPASS) headers['x-vercel-protection-bypass'] = BYPASS;
   const res = await fetch(`${API_BASE}/api/v1/translate`, {
     method: 'POST',
     headers,
@@ -179,12 +188,13 @@ async function main() {
 
   // ── R. Refresh / rotation ────────────────────────────────────────────────────
   console.log('R. Refresh / rotation');
+  let refresh2 = null;
   const { data: s2, error: refErr } = await client.auth.refreshSession({ refresh_token: refresh1 });
   if (refErr || !s2?.session?.access_token) {
     bad('R1 refresh rotates tokens', refErr?.message || 'no session returned');
   } else {
     const access2 = s2.session.access_token;
-    const refresh2 = s2.session.refresh_token;
+    refresh2 = s2.session.refresh_token;
     (access2 && access2 !== access1)
       ? ok('R1a refresh issues a NEW access token')
       : bad('R1a refresh issues a NEW access token', 'access token unchanged');
@@ -200,15 +210,64 @@ async function main() {
     }
   }
 
-  // R3: replay the OLD refresh token after the reuse interval (default ~10s) → rejected.
-  // Done last: reuse detection may revoke the session by design.
-  console.log('· waiting 12s past the refresh-token reuse interval …');
-  await sleep(12000);
-  const { data: s3, error: reuseErr } = await client.auth.refreshSession({ refresh_token: refresh1 });
-  if (reuseErr || !s3?.session?.access_token) {
-    ok('R3 replayed OLD refresh token → rejected (rotation/reuse detection on)');
+  // R3: replay the OLD refresh token, comfortably past the reuse interval → rejected.
+  // Two robustness details learned 2026-07-16:
+  //   • Wait must clear the interval with margin. Supabase default reuse interval is
+  //     10s; a 12s wait failed (only 2s of margin once clock skew + round-trip count).
+  //     Default here is 20s; override with REFRESH_REUSE_WAIT_SECONDS if the project's
+  //     interval is set higher.
+  //   • Replay from a FRESH client, not `client`. gotrue-js caches the current session
+  //     in-memory; reusing the same client for the replay can send the *rotated* token
+  //     instead of refresh1. A new client with no stored session sends exactly what we
+  //     pass, so this genuinely tests reuse of the old token.
+  // Done last: reuse detection revokes the session family by design.
+  // Raw HTTP against the GoTrue token endpoint — no supabase-js session caching in the
+  // way, so we see exactly what the server returns for a replayed old refresh token.
+  const rawRefresh = async (rt) => {
+    const res = await fetch(`${SB_URL}/auth/v1/token?grant_type=refresh_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}` },
+      body: JSON.stringify({ refresh_token: rt }),
+    });
+    let body = null; try { body = await res.json(); } catch {}
+    return { status: res.status, body };
+  };
+
+  // Build a REAL reuse-attack scenario. Replaying refresh1 while its child refresh2 is
+  // still UNUSED is the legitimate network-retry grace path — GoTrue correctly returns
+  // the child, not an error. Reuse *detection* only fires on a genuine fork: a
+  // superseded ancestor presented after its chain has moved on. So first consume
+  // refresh2 → refresh3 (now refresh1's child is itself used), THEN replay refresh1.
+  let refresh3 = null;
+  if (refresh2) {
+    const rot2 = await rawRefresh(refresh2);
+    refresh3 = rot2.body?.refresh_token || null;
+    console.log(`· second rotation (refresh2 → refresh3) → HTTP ${rot2.status}${refresh3 ? '' : ' (no child returned)'}`);
+  }
+  const reuseWaitMs = Number(process.env.REFRESH_REUSE_WAIT_SECONDS || 20) * 1000;
+  console.log(`· waiting ${reuseWaitMs / 1000}s past the refresh-token reuse interval …`);
+  await sleep(reuseWaitMs);
+
+  const r3 = await rawRefresh(refresh1);
+  const r3msg = r3.body?.error_description || r3.body?.error || r3.body?.msg
+    || (r3.body?.access_token ? '(returned an access_token)' : '');
+  console.log(`  · R3 raw replay of SUPERSEDED refresh1 (child consumed) → HTTP ${r3.status} ${r3msg}`);
+  if (r3.status >= 400 || !r3.body?.access_token) {
+    ok('R3 reuse of a superseded refresh token → rejected (reuse detection on)');
+    // Confirm the security guarantee: detection should revoke the whole family, so the
+    // legit current token (refresh3) is now dead too.
+    if (refresh3) {
+      const chk = await rawRefresh(refresh3);
+      console.log(`  · diag: legit current token (refresh3) after the reuse attempt → HTTP ${chk.status}` +
+        (chk.body?.access_token ? ' (still valid — family NOT revoked)' : ' (rejected — family revoked ✓)'));
+    }
   } else {
-    bad('R3 replayed OLD refresh token → rejected', 'old refresh token was still accepted');
+    bad('R3 reuse of a superseded refresh token → rejected', `accepted (HTTP ${r3.status})`);
+    if (refresh3) {
+      const chk = await rawRefresh(refresh3);
+      console.log(`  · diag: legit current token (refresh3) → HTTP ${chk.status}` +
+        (chk.body?.access_token ? ' (still valid → family NOT revoked)' : ' (rejected → family revoked)'));
+    }
   }
 
   await client.auth.signOut().catch(() => {});

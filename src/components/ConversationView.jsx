@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { ArrowLeft, MoreVertical, UserPlus, Send } from 'lucide-react';
 import MessageBubble from './MessageBubble';
-import { avatarColor, initials } from './ConversationList';
+import { avatarColor, initials, assignConversationColors } from './ConversationList';
 import { getContextTypes } from '../lib/vocabularies';
 
 /*
@@ -69,6 +69,15 @@ export default function ConversationView({
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length, conversation.id]);
+
+  // Per-conversation sender colors: stable account_id hash, de-collided so no two
+  // members share a hue within this thread (Spec 12). Keyed off memberNames (all
+  // known members) and memoized on a stable id string so bubbles don't rerender.
+  const memberKey = Object.keys(memberNames).sort().join(',');
+  const senderColors = useMemo(
+    () => assignConversationColors(Object.keys(memberNames)),
+    [memberKey], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   const isGroup = conversation.kind === 'group';
   const subtitle = isGroup
@@ -168,20 +177,26 @@ export default function ConversationView({
 
       {/* ── messages ── */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto bg-slate-50 px-3 md:px-6 py-4 space-y-3">
-        {messages.map((m, i) => (
-          <MessageBubble
-            key={m.id}
-            message={m}
-            linguisticProfile={linguisticProfile}
-            userId={userId}
-            contextType={conversation.context_type}
-            history={messages.slice(Math.max(0, i - 3), i)}
-            showSenderName={isGroup}
-            senderName={memberNames[m.sender_id] || ''}
-            onRetry={() => onRetry(m)}
-            onTranslated={onMessageTranslated}
-          />
-        ))}
+        {messages.map((m, i) => {
+          const prev = messages[i - 1];
+          const isRunStart = !prev || prev.sender_id !== m.sender_id;
+          return (
+            <MessageBubble
+              key={m.id}
+              message={m}
+              linguisticProfile={linguisticProfile}
+              userId={userId}
+              contextType={conversation.context_type}
+              history={messages.slice(Math.max(0, i - 3), i)}
+              showSenderName={isGroup}
+              senderName={memberNames[m.sender_id] || ''}
+              senderColor={senderColors[m.sender_id]}
+              isRunStart={isRunStart}
+              onRetry={() => onRetry(m)}
+              onTranslated={onMessageTranslated}
+            />
+          );
+        })}
       </div>
 
       {/* ── composer ── */}

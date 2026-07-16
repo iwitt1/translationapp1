@@ -50,7 +50,7 @@
 **Phase 2.1 / 2.2 — Auth hardening + demo readiness**
 
 - [Phase 2.1 — Token auth on backend API calls (SHIPPED TO PROD 2026-06-23 — prod smoke GREEN)](#phase-21--token-auth-on-backend-api-calls-shipped-to-prod-2026-06-23--prod-smoke-green)
-- [Phase 2.1 — Refresh / rotation behavior (gate written 2026-07-16 — ⏳ RUN PENDING on staging)](#phase-21--refresh--rotation-behavior-gate-written-2026-07-16--️-run-pending-on-staging)
+- [Phase 2.1 — Refresh / rotation behavior (✅ GREEN 7/7 on staging, 2026-07-16)](#phase-21--refresh--rotation-behavior--green-77-on-staging-2026-07-16)
 - [Phase 2.2 — Public demo readiness (domain + email + persistent login) — verified 2026-06-23](#phase-22--public-demo-readiness-domain--email--persistent-login--verified-2026-06-23)
 - [Phase 2.2 — Share-ready multi-user smoke (3+ external accounts) (checklist 2026-07-16 — ⏳ RUN PENDING on prod)](#phase-22--share-ready-multi-user-smoke-3-external-accounts-checklist-2026-07-16--️-run-pending-on-prod)
 
@@ -1781,14 +1781,18 @@ The proposed `api-auth-gate-test.mjs` was folded into `scripts/auth-refresh-gate
 
 ---
 
-## Phase 2.1 — Refresh / rotation behavior (gate written 2026-07-16 — ⏳ RUN PENDING on staging)
+## Phase 2.1 — Refresh / rotation behavior (✅ GREEN 7/7 on staging, 2026-07-16)
+
+**Run 2026-07-16 (staging Preview, via bypass token) — GREEN 7/7.** Endpoint auth boundary (A1–A3), token rotation (R1a/R1b), rotated-token acceptance (R2), and reuse rejection (R3) all pass. This closes the last open Phase 2.1 item; Phase 2.1 is done.
+
+**One debugging lesson worth keeping (it cost three reruns):** replaying an old refresh token whose child is still **unused** is the *legitimate* network-retry grace path — GoTrue correctly returns the child, not an error. Reuse *detection* only fires on a genuine fork: a superseded ancestor presented *after* its chain has moved on. The gate now builds that fork (rotate twice so `refresh1`'s child is consumed, then replay `refresh1`) → GoTrue returns `HTTP 400 Invalid Refresh Token: Already Used`. Observed nuance: the reused token is rejected but the current legit token is **not** force-revoked (the whole family stays alive) — the core protection (a stale/stolen old token is refused) holds, which is what this item requires; full-family revocation is a stricter policy we didn't need to assert.
 
 **Why this exists:** the last open Phase 2.1 item. Since Phase 2.1 the backend rejects requests without a valid user JWT (`server/lib/auth.js` → `getClaims`), and the frontend's `apiFetch()` reads `supabase.auth.getSession()` on **every** call — so the browser client's background token auto-refresh is now load-bearing. If refresh/rotation silently broke, a user who sat idle past the ~1h access-token lifetime would start getting 401s on send. This confirms the rotation path holds end-to-end.
 
 **What "verified" means here:**
 1. A rotated (freshly refreshed) access token still authenticates at the API (200).
 2. Refresh **issues a new access token AND rotates the refresh token** (not a no-op).
-3. Replaying the **old** refresh token after the reuse interval is **rejected** (refresh-token rotation / reuse detection is on) — so a stolen/stale refresh token can't be replayed indefinitely.
+3. Reusing a **superseded** refresh token (one whose child has already been consumed) is **rejected** with `Already Used` — so a stolen/stale old token can't be replayed. (Replaying a token whose child is still unused legitimately returns that child; that's grace, not a gap.)
 
 ### Gate (scripted — no waiting for natural expiry)
 `scripts/auth-refresh-gate-test.mjs` forces the rotation explicitly instead of waiting ~1h for the access token to expire.
@@ -1798,16 +1802,20 @@ The proposed `api-auth-gate-test.mjs` was folded into `scripts/auth-refresh-gate
 - Optional `STAGING_SUPABASE_SERVICE_ROLE_KEY` makes it standalone (ensures the test user has a password). Otherwise the user must already have one (any prior RLS gate sets it).
 - Refuses to run against prod (`app.jistchat.com`) or without the staging confirm flag.
 
+**⚠️ Vercel Deployment Protection (the gotcha that bit the first run 2026-07-16).** Preview deployments have **Vercel Authentication** on by default — the edge returns a 401 SSO challenge (`_vercel_sso_nonce` cookie, body `{"error":{"message":"Protected deployment"}}`) to *every* request, so A3/R2 fail with 401 while A1/A2 "pass" for the wrong reason. Diagnose with a raw `curl -i <preview>/api/v1/translate …` and look for the `_vercel_sso` cookie / `vercel_auth_enabled:true`. Two fixes: (a) turn off Vercel Authentication for the Preview (Vercel → Settings → Deployment Protection), or **(b, preferred)** enable **Protection Bypass for Automation**, copy the secret, and set `VERCEL_AUTOMATION_BYPASS_SECRET=<secret>` in `.env.rls-test` — the gate sends it as the `x-vercel-protection-bypass` header so requests reach the app's own auth with protection left on. **Option (b) is what got the 2026-07-16 run green.**
+
+**Reuse detection (R3) config — confirmed 2026-07-16:** "Detect and revoke potentially compromised refresh tokens" is **ON** with a **10s** reuse interval on **both** `translationapp1-staging` and prod (`main`) — no config change needed. To actually exercise it, the gate rotates twice (`refresh1`→`refresh2`→`refresh3`) so `refresh1` is a superseded ancestor, waits **20s** past the reuse interval, then raw-POSTs the GoTrue token endpoint with `refresh1` (raw HTTP, so gotrue-js's in-memory session can't substitute the current token). Override the wait with `REFRESH_REUSE_WAIT_SECONDS` if a project's interval is set higher.
+
 **Run:**
 ```
 node scripts/auth-refresh-gate-test.mjs
 ```
-Exit 0 = GREEN. It burns ~2 cheap `mode:'detect'` (gpt-4o-mini) calls when `STAGING_API_BASE_URL` is set; the 401 checks short-circuit before OpenAI.
+Exit 0 = GREEN. It burns ~2 cheap `mode:'detect'` (gpt-4o-mini) calls when `STAGING_API_BASE_URL` is set; the 401 checks short-circuit before OpenAI. Takes ~25s (20s reuse-interval wait).
 
-- [ ] **A1 no token → 401** · **A2 garbage token → 401** · **A3 valid token → 200** (endpoint auth boundary; needs `STAGING_API_BASE_URL`)
-- [ ] **R1 refresh rotates** — new access token *and* new refresh token
-- [ ] **R2 rotated access token → 200** at the endpoint (needs `STAGING_API_BASE_URL`)
-- [ ] **R3 old refresh token replayed → rejected** after the reuse interval
+- [x] **A1 no token → 401** · **A2 garbage token → 401** · **A3 valid token → 200** (endpoint auth boundary) — GREEN 2026-07-16 (via bypass token)
+- [x] **R1 refresh rotates** — new access token *and* new refresh token — GREEN 2026-07-16
+- [x] **R2 rotated access token → 200** at the endpoint — GREEN 2026-07-16
+- [x] **R3 superseded refresh token reused → rejected** (`400 Already Used`) — GREEN 2026-07-16
 
 ### Manual cross-check (optional, belt-and-suspenders)
 The scripted R1–R3 covers rotation deterministically. If you also want to see the *browser* auto-refresh path (what real users hit): on staging, temporarily shorten the Auth **access-token lifetime** (Supabase → Authentication → Sessions) to a few minutes, sign in, leave the tab idle past that window, then send a message — it should translate (200), proving `apiFetch`'s `getSession()` picked up the auto-refreshed token. Restore the lifetime after.
@@ -1816,8 +1824,9 @@ The scripted R1–R3 covers rotation deterministically. If you also want to see 
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Sign-in fails in the gate | test user has no password, or email+password sign-in disabled on staging | set `STAGING_SUPABASE_SERVICE_ROLE_KEY` (auto-sets password), or set it in the dashboard; enable password sign-in on staging |
-| R3 passes the OLD token (no rejection) | ran inside the ~10s reuse-interval grace window | the gate already waits 12s; if changed, keep the wait > the configured reuse interval |
-| R2 is 401 but A3 was 200 | endpoint verified the *first* token but rejects the rotated one | shouldn't happen (same JWKS/secret) — check the Preview is on the branch you think, and asymmetric-key rotation didn't invalidate mid-run |
+| **A3 + R2 both 401 (valid token rejected)** | **Vercel Deployment Protection on the Preview** — the 401 is the edge SSO challenge, not your app (curl shows `_vercel_sso` cookie / `Protected deployment`) | set `VERCEL_AUTOMATION_BYPASS_SECRET` in `.env.rls-test` (preferred), or disable Vercel Authentication for the Preview |
+| A3 is a *JSON* 401 (`Invalid or expired token`) with a valid token | Preview env points at a **different** Supabase project than the token | Vercel → Env Vars → Preview → `VITE_SUPABASE_URL` must be the staging ref, not prod |
+| R3 "accepted" — old token returns a token | **usually not a gap:** replaying a token whose child is still unused is the legitimate grace path (returns the child). The gate now consumes the child first (double rotation) so it tests a real fork. If it still accepts after that, check the reuse interval and bump `REFRESH_REUSE_WAIT_SECONDS`, and verify reuse detection is on |
 | A1–A3/R2 all skipped | `STAGING_API_BASE_URL` unset | set it to a live Preview to exercise the endpoint, not just Supabase |
 
 ---
@@ -2045,13 +2054,32 @@ Live behavior (no manual reload anywhere in these steps):
 
 ---
 
+## Spec 12 — Group-chat sender attribution (built 2026-07-16, ⏳ staging smoke pending)
+
+**What was built (Cowork, frontend-only — no migration):** colored initials avatar + colored sender name on received messages in **group** conversations, keyed on `account_id`, grouped by run. `ConversationList.jsx` — `PALETTE` expanded 6→12 `{bg,text}` hues; `avatarColor(key)` kept back-compat (returns the bg class); new `assignConversationColors(memberIds)` produces a per-conversation `{account_id → {bg,text}}` map with within-conversation de-collision (stable `account_id` hash, bump-to-next-free-slot on clash). `ConversationView.jsx` builds that map (memoized on the member set) and passes `senderColor` + `isRunStart` per message. `MessageBubble.jsx` renders the avatar + colored name only on a run start; continuations indent under the avatar column. Sent + direct-received layouts unchanged. **Local build:** `vite build` GREEN (1842 modules); all 12 new Tailwind color classes confirmed present in the emitted CSS.
+
+**Staging smoke (Preview branch → staging Supabase; needs a 3-account group):**
+- [ ] In a **group** thread, each received sender shows a **colored initials avatar + name** in a matching color; the three members are visibly distinct.
+- [ ] **Stable color:** the same person keeps their color across reloads and across different conversations (unless a per-conversation de-collision applies).
+- [ ] **Run grouping:** consecutive messages from one sender show the avatar + name only on the first; continuations indent and align under it.
+- [ ] **Direct (1:1) chats:** no avatar/name on received messages (unchanged).
+- [ ] **Own messages:** right-aligned, no avatar/name (unchanged).
+- [ ] **No regression:** translation renders, the "Original" caret expand/collapse still works, optimistic send/failed-retry still work.
+- [ ] (If quick) a rename keeps the same color (account_id keying, not display name).
+
+**Known notes:** `violet-500` is in the palette and own bubbles are `violet-600` — distinguishable (opposite side, own has no avatar), left as-is. Past 12 members colors wrap (reuse), and the name/initials still disambiguate. Ship: merge the branch to `main` after the smoke passes; reconcile roadmap.md Phase 2.5 + this section on prod smoke; append a decisions.md line if desired (design already recorded in specs.md Spec 12).
+
+---
+
 ## Changelog
 
 *Reverse chronological. One line per change; project events link to `decisions.md`.*
 
+- **2026-07-16** — Added "Spec 12 — Group-chat sender attribution" section (built Cowork, frontend-only; local build GREEN; staging smoke pending). (→ specs.md Spec 12)
+
 - **2026-07-08** — Conversation-list realtime confirmed on prod (022 applied, two-account smoke GREEN); shipped with the caret-truncation tweak + translated list preview. Section flipped to ✅.
 - **2026-07-08** — Added "Conversation-list realtime" section (migration 022 + second App.jsx channel; staging-first pending). (→ decisions.md 2026-07-08 "Conversation-list realtime")
-- **2026-07-16** — Added "Phase 2.1 — Refresh / rotation behavior" section (gate `scripts/auth-refresh-gate-test.mjs`, absorbs the proposed `api-auth-gate-test.mjs`; run pending) + "Phase 2.2 — Share-ready multi-user smoke" checklist (3+ external accounts on prod; run pending). (→ decisions.md 2026-07-16)
+- **2026-07-16** — Added "Phase 2.1 — Refresh / rotation behavior" section + gate `scripts/auth-refresh-gate-test.mjs` (absorbs the proposed `api-auth-gate-test.mjs`); **GREEN 7/7 on staging** (A1–A3 endpoint auth via a Vercel Protection-Bypass token — Deployment-Protection gotcha documented; R1/R2 rotation; R3 reuse-of-superseded-token → `400 Already Used` after a double-rotation fork). Closes Phase 2.1. Also added the "Phase 2.2 — Share-ready multi-user smoke" checklist (3+ external accounts on prod; run pending). (→ decisions.md 2026-07-16)
 - **2026-07-08** — Added "Spec 10 — Account settings screen" section (settings modal + migration 021; staging-first pending). (→ decisions.md 2026-07-08 "Account settings screen")
 - **2026-07-07** — Added "Spec 8 + 9 — Demo-readiness polish" section (language-list + lucide icons, staging gate GREEN); updated same day once merged to `main` (commit `1c37b14`). (→ decisions.md 2026-07-07 "Spec 8 + 9 shipped")
 - **2026-07-07** — Docs legibility cleanup: added Contents TOC; header de-blobbed; this Changelog added. Also added the "Username at onboarding — migration 020" section (gate GREEN + prod). (→ decisions.md 2026-07-07)

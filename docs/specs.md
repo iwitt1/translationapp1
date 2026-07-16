@@ -4,8 +4,83 @@
 >
 > Spec lifecycle: **draft** → **approved** → **in-flight** → **shipped** → **archived**. When a spec ships, mark it `shipped` here with the commit reference and move the verification details to `/docs/verification.md`. Archive specs after one cycle of "shipped" review (typically 2-4 weeks) — move them to a future `/docs/specs-archive.md` if/when this file exceeds ~600 lines.
 
-**Last updated:** 2026-07-08 — added **Spec 10** (account settings screen), Cowork-executed. Full history in [Changelog](#changelog).
+**Last updated:** 2026-07-16 — added **Spec 11** (add-to-conversation: search-to-add + "X was added" system message + migration 023) and **Spec 12** (group-chat sender attribution), both from 3-user testing; **approved 2026-07-16, Cowork-built** (build pending Isaac's go-ahead; migration 023 run by Isaac on staging). Full history in [Changelog](#changelog).
 **Owner:** Isaac (iwitt1)
+
+---
+
+## Spec 11 — Add-to-conversation: search-to-add + "X was added" system message — Cowork-built (migration 023 = Isaac-run on staging)
+
+**Linked roadmap item:** Phase 2.5 — Group-chat polish → add-member UX
+**Author:** Isaac (drafted with Cowork, from 3-user share-ready testing 2026-07-16)
+**Drafted:** 2026-07-16
+**Status:** **approved** — open questions resolved 2026-07-16 (below); **build pending Isaac's go-ahead** (Cowork-built, staging-first; migration 023 Isaac-run on staging before the frontend).
+
+### Goal
+The current invite flow is link-first: `InviteModal` mints a join link and you copy/send it. Flip the primary path to **search a username/email and add the person directly** to the conversation, with **"copy link instead"** demoted to a secondary fallback. When someone is added, drop an iMessage-style **"X was added to the conversation"** system message into the feed — persisted, visible to every member, and surviving reload. Adding a third person to a 1:1 `direct` conversation **promotes it to `group`** (this also closes the known parking-lot quirk).
+
+### Acceptance criteria — UI (Cursor)
+- `InviteModal` becomes an "Add people" modal whose **primary** action is a people-picker: port `NewConversationModal`'s discovery search (`findAccountByEmail` / `searchAccountsByUsername`, picked-chips, avatar rows) — same server contract, no client-side filtering.
+- Picking one or more accounts and confirming calls the new `addConversationMember` path (below) for each; the modal closes on success and the thread refreshes.
+- A **secondary** "Copy link instead" control — styled as a plain hyperlink/text button, **not** the primary CTA — mints the existing conversation invite (`createConversationInvite`) and copies it to the clipboard (reuse the current copy behavior).
+- On a successful add, the feed shows a centered system message **"{display_name} was added to the conversation"** for all members, in realtime and after reload (rendered as a centered pill, not a chat bubble; never translated).
+- Adding into a `direct` conversation promotes it to `group`; the conversation-list label reflects the change.
+- Errors surface inline (blocked/blocking account, non-member caller, already-a-member no-ops cleanly).
+
+### Acceptance criteria — backend (migration 023, Isaac runs on staging first)
+- `messages.kind` column: `text NOT NULL DEFAULT 'user'`, `CHECK (kind IN ('user','system'))`. Existing rows backfill to `'user'` via the default. Membership-scoped RLS (018) already covers reads; **ALTER, not recreate** (operations.md §3).
+- System messages: `sender_id` NULL + a structured payload capturing event type (`member_added`) and the target `account_id` (see open question on storage).
+- `add_conversation_member(p_conversation_id, p_account_id)` — SECURITY DEFINER, tenant-scoped: caller must be an **active member**; respects `blocks` (both directions); inserts/reactivates `conversation_members` (idempotent if already active); **promotes `conversations.kind` `direct`→`group` and NULLs its `dedupe_key`** (parking-lot option (a) — without the null, a later `create_conversation(direct, samepair)` would dedupe back into the now-3-person thread); inserts the `'system'` "member_added" message. Returns the affected membership row. **Also apply the same promotion in `redeem_invite`** (the copy-link fallback path) so both add routes behave identically.
+- `conversations.js` gains an `addConversationMember(conversationId, accountId)` wrapper.
+
+### Out of scope
+Removing members / kicking; roles or admin permissions (any active member can add, for now); invite expiry/max-uses UI; a system message for *leaves* (only adds this spec); DM-initiation policy enforcement (still parked).
+
+### Resolved (2026-07-16)
+1. **System-message storage → `messages` column (decided).** Add `payload jsonb` on `messages` (holds `{event:'member_added', target_account_id}`) with `kind='system'` — reuses the existing membership-scoped RLS + the realtime `messages` channel + the `MessageBubble` render path (branch on `kind`). The separate-`conversation_events`-table alternative was rejected (extra subscription + RLS for no gain here).
+2. **Add policy → open direct-add (decided).** Any active member can add any discoverable, non-blocking account; **not** restricted to existing contacts (fine for demo scale). policies.md gets an entry on ship. Re-tighten later if abuse shows up.
+
+### Technical sketch
+Migration 023: `messages.kind` (+ `payload jsonb` if option 1) → `add_conversation_member` RPC → direct→group promotion inside the RPC. Frontend: rename/rework `InviteModal` (keep filename or → `AddPeopleModal`), reusing `discovery.js` + the `NewConversationModal` picker markup; `App.jsx` already subscribes to `messages` INSERT so `system` rows arrive live — `ConversationView`/`MessageBubble` branch on `kind==='system'` to render the pill and skip translation/inference. Files: `migrations/023_*.sql`, `src/lib/conversations.js`, `src/components/InviteModal.jsx`, `src/components/MessageBubble.jsx`, `src/components/ConversationView.jsx`, `src/App.jsx`.
+
+### Verification plan (→ verification.md, on ship)
+Migration 023 embedded checks (column default+CHECK, RPC grants, block-deny, non-member-deny, direct→group promotion, idempotent re-add, system-row insert). Then a 3-account staging smoke: A adds C by username → C is a member; "C was added" shows for A/B/C live + after reload; the copy-link fallback still joins a 4th; adding into a direct chat promotes it to group. Docs to reconcile on ship: architecture.md §7 (`messages.kind`/payload + the new RPC in the DB-functions list), policies.md (add policy), roadmap.md, parking-lot.md ("direct→group promotion on invite" → RESOLVED), regenerate `schema.sql`, decisions.md entry (storage + policy choices). Migration runs **staging first**, then prod-replay-before-frontend-merge (deploy-order rule).
+
+---
+
+## Spec 12 — Group-chat sender attribution: colored avatar + name (Option B) — Cowork-built
+
+**Linked roadmap item:** Phase 2.5 — Group-chat polish → sender attribution
+**Author:** Isaac (drafted with Cowork; Option B + color approach chosen from the 2026-07-16 mockups)
+**Drafted:** 2026-07-16
+**Status:** **in-flight** — built 2026-07-16 (Cowork, frontend-only, no migration); local `vite build` GREEN + all 12 palette classes verified in the emitted CSS; **staging smoke pending** (Preview branch + a 3-account group). Verification: verification.md "Spec 12 — Group-chat sender attribution".
+
+### Goal
+In a group conversation you can't tell who sent which received message at a glance — no avatar, no color, name (if any) undifferentiated. Add the iMessage/Signal pattern (Option B from the mockup): a **colored initials avatar + colored sender name** on received messages in groups. Consistent per-person color is the load-bearing cue for this app's multilingual audience — someone who can't read the name can still track "the purple person."
+
+### Acceptance criteria
+- In a **group** conversation, each **received** message shows a colored initials avatar (reuse `ConversationList`'s `avatarColor()` + `initials()`) to the left of the bubble, and the sender's display name above it, both tinted with the same per-sender color.
+- Color is a **stable function of the sender's `account_id`** (not `display_name`) against a **12-color palette** (see Color assignment below), so the same person is usually the same color everywhere and renames don't drift it.
+- **Within a conversation, no two members share a color** (up to 12 members) via a deterministic de-collision pass — the actual legibility guarantee.
+- **Run grouping:** the avatar + name render only on the **first message of a consecutive run** from the same sender; later messages in the run align/indent with no repeated avatar or name.
+- **Direct (1:1)** conversations: received messages show no avatar/name (unchanged). **Own/sent** messages: never show avatar/name, stay right-aligned (unchanged).
+- No regression to `MessageBubble`'s translation, "Original" caret, or optimistic-send behavior.
+
+### Out of scope
+Profile photos (initials only — no upload yet); online/presence dots; tap-avatar-to-profile; user-customizable colors; attribution in direct chats.
+
+### Color assignment (decided 2026-07-16)
+Hybrid: a global `account_id` hash into a **12-color palette**, then **de-collide within each conversation**. Same person is usually the same color everywhere (recognizability, and it's stateless — no DB column); within any given conversation the render pass guarantees distinctness. Rationale + best-practice comparison (WhatsApp/Signal per-conversation vs. Telegram small global hash) in the 2026-07-16 session; recorded in decisions.md on ship.
+- **Palette:** expand `PALETTE` in `ConversationList.jsx` from the current 6 to **12** genuinely-distinct hues (Tailwind `bg-*-500`-class equivalents, white initials, legible in light + dark). Not more than ~12–16 — beyond that hues stop being distinguishable, and since the name + initials always accompany the color, color is *reinforcement*, not the sole identifier.
+- **Base color:** `hash(account_id) % 12`. Re-key `avatarColor()` off `display_name` → an explicit key arg (default preserves current callers; the people-picker keeps passing `display_name`, message attribution passes `account_id`).
+- **De-collision (the guarantee):** `ConversationView` computes an `account_id → colorClass` map **once per conversation** — sort active members by `account_id`, assign each its base color, and if a color is already taken by an earlier member, bump to the next free palette slot. Deterministic and stable across reloads. Only wraps (reuses a color) past 12 members — rare, and the name/initials still disambiguate.
+- **No persistence storage.** Cross-conversation consistency falls out of the hash; a per-conversation collision may locally shift one person's color, which is expected and fine.
+
+### Technical sketch
+`ConversationView` builds the per-conversation `account_id → colorClass` map (from `listConversationMembers` + the de-collision pass) and, per received message, computes `isRunStart` (compare `sender_id` to the previous message). It passes `showAvatar` + `senderColorClass` + `isRunStart` alongside the existing `showSenderName`/`senderName` into `MessageBubble`, which renders the avatar/name block only on `showAvatar && isRunStart`. `ConversationList.avatarColor(key)` takes an explicit key and the expanded 12-color `PALETTE`. Files: `src/components/ConversationView.jsx`, `src/components/MessageBubble.jsx`, `src/components/ConversationList.jsx`.
+
+### Verification plan (→ verification.md, on ship)
+3-account group on staging: each of three senders shows a distinct, stable color on both avatar and name; consecutive messages from one sender group under a single avatar/name; a rename keeps the same color (`account_id` keying); direct chats show no attribution; own messages unchanged; translation + "Original" caret intact. Reconcile roadmap.md + parking-lot.md on ship.
 
 ---
 
@@ -748,6 +823,7 @@ The earlier Resume notes section (session 1, 2026-05-21) was built on a misdiagn
 
 *Reverse chronological. One line per change; project events link to `decisions.md`.*
 
+- **2026-07-16** — Added Spec 11 (add-to-conversation: search-to-add + "X was added" system message + migration 023 `messages.kind`+`payload`/`add_conversation_member`/direct→group) + Spec 12 (group-chat sender attribution, avatar+name Option B, 12-color hash + within-conversation de-collision) for new roadmap Phase 2.5; both from 3-user testing, **approved 2026-07-16, Cowork-built** (migration 023 Isaac-run on staging). Open questions resolved: system-message storage → `messages` column, add policy → open direct-add, color keying → `account_id`. (→ roadmap.md Phase 2.5)
 - **2026-07-07** — Added Spec 8 (onboarding language list: ~40 native-name languages) + Spec 9 (core-controls symbology via lucide-react) for roadmap Phase 2.4; both Cursor/Sonnet-executed. (→ roadmap.md Phase 2.4)
 - **2026-07-07** — Docs legibility cleanup: header de-blobbed; added this Changelog + a "mostly historical" banner. (→ decisions.md 2026-07-07 "Docs legibility cleanup + new conventions")
 - **2026-06-18** — Specs 6 & 7 marked shipped to prod (Phase 3 cutover, migrations 017/018). (→ decisions.md 2026-06-18)

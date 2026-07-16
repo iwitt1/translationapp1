@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { CHAT_APP_TENANT_ID } from '../lib/config';
 import { PROMPT_VERSION } from '../../lib/translatePrompt.js';
 import { API_URL, INFER_API_URL, PROFILE_INFERENCE_ENABLED, normalizeLang, apiFetch } from '../lib/translation';
+import { initials } from './ConversationList';
 
 /*
 ========================================================
@@ -33,6 +34,10 @@ Props:
   history           — last N messages before this one (context injection)
   showSenderName    — true in group conversations for received messages
   senderName        — display name to show above the bubble when showSenderName
+  senderColor       — { bg, text } Tailwind classes for this sender's avatar + name
+                      (from the per-conversation de-collided palette; group only)
+  isRunStart        — true when this message starts a new run from its sender; the
+                      avatar + name render only on run starts, continuations indent
   onRetry           — () => void; called when the user taps a failed send to resend
   onTranslated      — (messageId, translatedText) => void; fired when a received
                       message's translation resolves (cache hit or fresh), so the
@@ -46,6 +51,8 @@ export default function MessageBubble({
   history,
   showSenderName = false,
   senderName = '',
+  senderColor = null,
+  isRunStart = true,
   onRetry,
   onTranslated,
 }) {
@@ -203,13 +210,12 @@ export default function MessageBubble({
     return () => ro.disconnect();
   }, [showOriginal, expanded, translatedText, message.original_text]);
 
-  return (
-    <div className={`flex ${isSender ? 'justify-end' : 'justify-start'}`}>
-      <div className="max-w-[78%] md:max-w-[65%]">
-        {showSenderName && !isSender && (
-          <div className="text-[11px] text-slate-400 mb-0.5 ml-1">{senderName}</div>
-        )}
+  const attributed = showSenderName && !isSender;
+  const avatarBg = senderColor?.bg || 'bg-slate-400';
+  const nameText = senderColor?.text || 'text-slate-500';
 
+  const bubbleBlock = (
+    <>
         <div
           className={`rounded-2xl px-3.5 py-2 ${
             isSender
@@ -288,6 +294,38 @@ export default function MessageBubble({
             </>
           )}
         </div>
+    </>
+  );
+
+  // Group-received: colored initials avatar + colored name, rendered only on the
+  // first message of a run; continuation messages indent past the avatar column so
+  // they align under the run. Sent + direct-received keep the original layout.
+  if (attributed) {
+    return (
+      <div className="flex justify-start">
+        <div className="flex gap-2 max-w-[85%] md:max-w-[70%]">
+          <div className="w-7 shrink-0">
+            {isRunStart && (
+              <div className={`h-7 w-7 rounded-full grid place-items-center text-white text-[11px] font-semibold ${avatarBg}`}>
+                {initials(senderName)}
+              </div>
+            )}
+          </div>
+          <div className="min-w-0">
+            {isRunStart && (
+              <div className={`text-[11px] mb-0.5 ml-1 font-medium ${nameText}`}>{senderName}</div>
+            )}
+            {bubbleBlock}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`flex ${isSender ? 'justify-end' : 'justify-start'}`}>
+      <div className="max-w-[78%] md:max-w-[65%]">
+        {bubbleBlock}
       </div>
     </div>
   );
