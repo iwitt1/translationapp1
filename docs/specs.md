@@ -14,7 +14,7 @@
 **Linked roadmap item:** Phase 2.5 — Group-chat polish → add-member UX
 **Author:** Isaac (drafted with Cowork, from 3-user share-ready testing 2026-07-16)
 **Drafted:** 2026-07-16
-**Status:** **approved** — open questions resolved 2026-07-16 (below); **build pending Isaac's go-ahead** (Cowork-built, staging-first; migration 023 Isaac-run on staging before the frontend).
+**Status:** **in-flight** — built 2026-07-16 (Cowork): migration `023_add_member_and_system_messages.sql` + frontend (`conversations.js`, `InviteModal`, `ConversationView`, `App.jsx`); local `vite build` GREEN. **Next: run 023 on staging, then a 3-account Preview smoke** (verification.md "Spec 11 — Add-to-conversation + system message"). Then prod-replay 023 before the frontend merge.
 
 ### Goal
 The current invite flow is link-first: `InviteModal` mints a join link and you copy/send it. Flip the primary path to **search a username/email and add the person directly** to the conversation, with **"copy link instead"** demoted to a secondary fallback. When someone is added, drop an iMessage-style **"X was added to the conversation"** system message into the feed — persisted, visible to every member, and surviving reload. Adding a third person to a 1:1 `direct` conversation **promotes it to `group`** (this also closes the known parking-lot quirk).
@@ -53,7 +53,7 @@ Migration 023 embedded checks (column default+CHECK, RPC grants, block-deny, non
 **Linked roadmap item:** Phase 2.5 — Group-chat polish → sender attribution
 **Author:** Isaac (drafted with Cowork; Option B + color approach chosen from the 2026-07-16 mockups)
 **Drafted:** 2026-07-16
-**Status:** **in-flight** — built 2026-07-16 (Cowork, frontend-only, no migration); local `vite build` GREEN + all 12 palette classes verified in the emitted CSS; **staging smoke pending** (Preview branch + a 3-account group). Verification: verification.md "Spec 12 — Group-chat sender attribution".
+**Status:** **staging GREEN 2026-07-16** (Cowork, frontend-only, no migration); local `vite build` GREEN + palette classes verified in CSS; confirmed on a Preview (CLI-deployed). **Merge `feat/spec12-sender-attribution` → `main` to ship** (carries the 2.1 wrap-up too). Verification: verification.md "Spec 12 — Group-chat sender attribution".
 
 ### Goal
 In a group conversation you can't tell who sent which received message at a glance — no avatar, no color, name (if any) undifferentiated. Add the iMessage/Signal pattern (Option B from the mockup): a **colored initials avatar + colored sender name** on received messages in groups. Consistent per-person color is the load-bearing cue for this app's multilingual audience — someone who can't read the name can still track "the purple person."

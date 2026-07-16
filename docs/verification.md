@@ -2054,7 +2054,42 @@ Live behavior (no manual reload anywhere in these steps):
 
 ---
 
-## Spec 12 — Group-chat sender attribution (built 2026-07-16, ⏳ staging smoke pending)
+## Spec 11 — Add-to-conversation + "X was added" system message (built 2026-07-16, ⏳ migration 023 + staging smoke pending)
+
+**What was built (Cowork):**
+- **Migration 023** (`023_add_member_and_system_messages.sql`): `messages.kind` (`'user'` default / `'system'`, CHECK) + `messages.payload jsonb`; `add_conversation_member(conversation, account)` RPC (SECURITY DEFINER, tenant-scoped, block-gated, idempotent); `_member_added_finalize()` internal helper that promotes `direct`→`group` (+ nulls `dedupe_key`) past 2 members and posts the `member_added` system message; `redeem_invite` amended to run the same finalize on a real join. In-transaction verification block (rolls back on failure). **ALTER not recreate.**
+- **Frontend:** `conversations.js` `addConversationMember()` wrapper; `InviteModal` reworked into an "Add to …" modal — a discovery people-picker (ported from `NewConversationModal`) as the primary action, with "Copy invite link instead" demoted to a secondary text button; `ConversationView` renders `kind='system'` rows as a centered pill (`systemMessageText`), never translated; `App.jsx` handles system rows in realtime (append + reload members/kind, no snippet change), skips `kind='system'` in the list-preview query, and passes `existingMemberIds` + `onAdded` to the modal. Local `vite build` GREEN.
+
+### Deploy order (staging first, then prod-replay-before-frontend-merge)
+1. Run **migration 023 on staging** (`translationapp1-staging`). Expect `NOTICE: migration 023 verification passed` + commit.
+2. Deploy the frontend to a Preview (branch push, or `vercel` CLI) → it targets staging.
+3. Run the smoke below. Green → replay 023 on **prod**, then merge the frontend to `main`.
+
+### Staging smoke (needs 3 accounts: A, B, C)
+- [ ] **Migration verify:** the `NOTICE` fired and it committed; `messages` has `kind` (default `user`) + `payload`; `add_conversation_member` executable by `authenticated`, `_member_added_finalize` **not**.
+- [ ] **Search-to-add (primary):** in a group A owns, open Add → search C by **username** and by **exact email** → C resolves (existing members + self are hidden) → Add → C becomes a member.
+- [ ] **System message:** "C was added to the conversation" appears as a centered pill in the thread for **A and B live** (realtime) and for **C on load**, and survives reload.
+- [ ] **No translation / no crash on system rows:** the pill isn't run through translate; the list preview doesn't show a blank/last-system snippet (it uses the last real message).
+- [ ] **Direct→group promotion:** in a **direct** A↔B chat, add C → the conversation becomes a group (label updates to a group; `conversations.kind='group'`, `dedupe_key` NULL); a later "new direct with B" does **not** dedupe back into it.
+- [ ] **Copy-link fallback:** "Copy invite link instead" mints a link + copies it; redeeming it from a 4th account still joins (and posts its own "added" pill).
+- [ ] **Guards:** a non-member can't add (RPC `not a member`); a blocked/blocking account can't be added (`cannot add this user`); re-adding an existing active member is a no-op (no duplicate pill).
+
+### Known notes / failure modes
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| rpc 404 `add_conversation_member not found` | migration 023 not applied on this env, or PostgREST cache stale | apply 023; NOTIFY pgrst / restart via dashboard |
+| Pill shows "Someone was added" | the added account's name isn't in `memberNames` yet | App reloads members on the system row; a stale render self-heals on the reload — confirm `onAdded`/realtime reload fired |
+| Promoted group titled "Group" | a promoted direct has no `title` | expected for v1 (display falls back to "Group"); a nicer name is a later polish |
+| System row rendered as an empty bubble | `ConversationView` `kind==='system'` branch not hit (old bundle) | hard-refresh the Preview; confirm the row has `kind='system'` |
+
+**Ship:** replay 023 on prod (before the frontend merge), merge to `main`; then reconcile architecture.md §7 (`messages.kind`/`payload` + the new RPCs in the DB-functions list), policies.md (open direct-add), regenerate `schema.sql`, and append the decisions.md entry (system-message storage = column; open direct-add; direct→group option a).
+
+---
+
+## Spec 12 — Group-chat sender attribution (✅ staging GREEN 2026-07-16; merge to main pending)
+
+**Staging result 2026-07-16: GREEN** — confirmed on a Preview (deployed via `vercel` CLI after the git-integration Preview didn't auto-trigger; see note). Attribution renders correctly in group threads. Merge `feat/spec12-sender-attribution` → `main` to ship (that branch also carries the 2.1 wrap-up commit).
+
 
 **What was built (Cowork, frontend-only — no migration):** colored initials avatar + colored sender name on received messages in **group** conversations, keyed on `account_id`, grouped by run. `ConversationList.jsx` — `PALETTE` expanded 6→12 `{bg,text}` hues; `avatarColor(key)` kept back-compat (returns the bg class); new `assignConversationColors(memberIds)` produces a per-conversation `{account_id → {bg,text}}` map with within-conversation de-collision (stable `account_id` hash, bump-to-next-free-slot on clash). `ConversationView.jsx` builds that map (memoized on the member set) and passes `senderColor` + `isRunStart` per message. `MessageBubble.jsx` renders the avatar + colored name only on a run start; continuations indent under the avatar column. Sent + direct-received layouts unchanged. **Local build:** `vite build` GREEN (1842 modules); all 12 new Tailwind color classes confirmed present in the emitted CSS.
 
@@ -2075,7 +2110,8 @@ Live behavior (no manual reload anywhere in these steps):
 
 *Reverse chronological. One line per change; project events link to `decisions.md`.*
 
-- **2026-07-16** — Added "Spec 12 — Group-chat sender attribution" section (built Cowork, frontend-only; local build GREEN; staging smoke pending). (→ specs.md Spec 12)
+- **2026-07-16** — Added "Spec 11 — Add-to-conversation + system message" section (migration 023 + frontend built Cowork; local build GREEN; migration + staging smoke pending). (→ specs.md Spec 11)
+- **2026-07-16** — Added "Spec 12 — Group-chat sender attribution" section (built Cowork, frontend-only; local build GREEN; staging GREEN). (→ specs.md Spec 12)
 
 - **2026-07-08** — Conversation-list realtime confirmed on prod (022 applied, two-account smoke GREEN); shipped with the caret-truncation tweak + translated list preview. Section flipped to ✅.
 - **2026-07-08** — Added "Conversation-list realtime" section (migration 022 + second App.jsx channel; staging-first pending). (→ decisions.md 2026-07-08 "Conversation-list realtime")

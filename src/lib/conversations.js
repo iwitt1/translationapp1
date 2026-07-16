@@ -64,6 +64,17 @@ export async function redeemInvite(token) {
   return supabase.rpc('redeem_invite', { p_token: token });
 }
 
+// add_conversation_member(p_conversation_id, p_account_id) → void. Adds a discovered
+// account to a conversation the caller is an active member of (migration 023). Server-
+// side: block-gated, idempotent, promotes direct→group past 2 members + posts a
+// 'member_added' system message. The search-to-add path (vs the copy-link invite).
+export async function addConversationMember(conversationId, accountId) {
+  return supabase.rpc('add_conversation_member', {
+    p_conversation_id: conversationId,
+    p_account_id: accountId,
+  });
+}
+
 // ── Queries ───────────────────────────────────────────────────────────────
 
 // Conversations the caller is an active member of (RLS-scoped), newest activity first.

@@ -178,6 +178,16 @@ export default function ConversationView({
       {/* ── messages ── */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto bg-slate-50 px-3 md:px-6 py-4 space-y-3">
         {messages.map((m, i) => {
+          // System event rows (member_added, …): a centered pill, never translated.
+          if (m.kind === 'system') {
+            return (
+              <div key={m.id} className="flex justify-center">
+                <span className="text-[11px] text-slate-500 bg-slate-100 rounded-full px-3 py-1">
+                  {systemMessageText(m, memberNames)}
+                </span>
+              </div>
+            );
+          }
           const prev = messages[i - 1];
           const isRunStart = !prev || prev.sender_id !== m.sender_id;
           return (
@@ -226,4 +236,15 @@ export default function ConversationView({
       </div>
     </section>
   );
+}
+
+// Renders a system/event message row (messages.kind = 'system', payload carries the
+// event). Names resolve from the conversation's memberNames map. (Spec 11.)
+function systemMessageText(m, memberNames = {}) {
+  const p = m.payload || {};
+  if (p.event === 'member_added') {
+    const name = memberNames[p.target_account_id] || 'Someone';
+    return `${name} was added to the conversation`;
+  }
+  return '';
 }

@@ -219,6 +219,7 @@ export default function App() {
         .from('messages')
         .select('id, sender_id, original_text, created_at')
         .eq('conversation_id', c.id)
+        .neq('kind', 'system')          // system rows (e.g. "X was added") aren't a preview snippet
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -330,6 +331,17 @@ export default function App() {
     // pull the list so it appears live. The membership channel handles being
     // added; this handles the conversation becoming non-empty.
     if (!conversationsRef.current.some((c) => c.id === row.conversation_id)) {
+      loadConversations(activeIdRef.current);
+      return;
+    }
+
+    // System event rows (e.g. member_added): append to the open thread, then refresh
+    // the conversation so the member list + any direct→group promotion (and the added
+    // person's name for the pill) are current. No snippet/unread change.
+    if (row.kind === 'system') {
+      if (row.conversation_id === activeIdRef.current) {
+        setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+      }
       loadConversations(activeIdRef.current);
       return;
     }
@@ -674,6 +686,8 @@ export default function App() {
         open={showInvite}
         conversationId={activeConversation?.id}
         conversationName={activeConversation?.displayName || 'this conversation'}
+        existingMemberIds={activeConversation ? Object.keys(activeConversation.memberNames) : []}
+        onAdded={() => loadConversations(activeIdRef.current)}
         onClose={() => setShowInvite(false)}
       />
       <SettingsModal
