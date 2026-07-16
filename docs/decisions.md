@@ -24,6 +24,7 @@
 
 **Roadmap & security**
 
+- [2026-07-16 — Kill the two Hermes-era Phase 2.1 items (stray `hermes_test` row + sandbox git-pull auth)](#2026-07-16--kill-the-two-hermes-era-phase-21-items-stray-hermes_test-row--sandbox-git-pull-auth)
 - [2026-07-08 — Branch protection on `main` after going public; deploy via admin bypass](#2026-07-08--branch-protection-on-main-after-going-public-deploy-via-admin-bypass)
 - [2026-07-08 — Make the repo public: full history, docs kept as-is (Phase 2.4)](#2026-07-08--make-the-repo-public-full-history-docs-kept-as-is-phase-24)
 - [2026-07-08 — Conversation-list realtime: publish conversation_members + a second App.jsx channel (Phase 2.4, migration 022)](#2026-07-08--conversation-list-realtime-publish-conversation_members--a-second-appjsx-channel-phase-24-migration-022)
@@ -156,6 +157,17 @@
 
 
 ---
+
+## 2026-07-16 — Kill the two Hermes-era Phase 2.1 items (stray `hermes_test` row + sandbox git-pull auth)
+
+**Decision:** Close both remaining Hermes-tainted Phase 2.1 checklist items as **won't-do**: (a) leave the stray `hermes_test` row in prod `translation_events` in place; (b) do **not** fix the Cowork↔Hermes sandbox `git pull` auth gap. This leaves Phase 2.1 with a single open item — refresh/rotation verification (#1).
+**Context:** Both items were written 2026-06-03/06-23 while Hermes was the intended third agent. Hermes has since been **shelved** (Cowork + Cursor is the working toolchain; parking-lot / project instructions). Wrapping up 2.1–2.3 forced the question of whether these two are still worth doing. **Doc discrepancy found mid-sweep (surfaced, not silently fixed):** the roadmap listed the stray row as still-present needing a manual `DELETE`, but operations.md ("Prod cutover — EXECUTED 2026-06-11") documents the cutover `TRUNCATE` of `translation_events` **already cleared** that stray `hermes_test` prod row. So the roadmap item has been **stale since 2026-06-11** — the two docs disagreed and this reconciles them.
+**Alternatives considered:** *Keep #2 (delete the row)* — rejected: per operations.md it's already gone, so there's nothing to delete; even if it somehow survived, a one-line prod `DELETE` is ceremony/risk out of proportion to one benign row in an append-only event log. *Keep #3 reframed as a Cowork-workflow fix* — rejected: the sandbox never needs to pull. *Keep both as-is* — rejected: they'd sit open forever, blocking a clean 2.1 close for no product value.
+**Reasoning:**
+- **#2 stray row** (`id 0f1ff660-33df-4bbc-a44f-bbde739bec11`, written during Spec 4b testing): **most likely already removed** by the 2026-06-11 prod-cutover `TRUNCATE translation_events` (operations.md explicitly notes it "also cleared the stray `hermes_test` prod row that the INSERT-only writer role couldn't delete"). The roadmap's open item predates and didn't reflect that. Verifiable anytime with a **read-only** `SELECT * FROM translation_events WHERE id = '0f1ff660-33df-4bbc-a44f-bbde739bec11';` in the prod SQL editor — expect **0 rows**. Even in the unlikely event a row is present, it's a single benign entry in an append-only analytics log with no downstream effect; `hermes_writer` is INSERT-only by design (2026-06-02) and Hermes is shelved, so there's no ongoing writer — filter or delete then, not worth a prod mutation now.
+- **#3 git-pull auth gap**: the item's whole purpose was letting the Cowork **sandbox** pull *Hermes's* between-session pushes. With Hermes shelved there is no agent pushing between sessions, and the session-start protocol already has **Isaac** run `git pull --ff-only` in the repo directly. Per the project's own rule the sandbox does **read-only inspection only** and never runs git — so it never needs to authenticate. The gap is moot.
+**Implications:** Phase 2.1's "done" now hinges only on refresh/rotation verification. The duplicate tracking of the git-pull item under Phase 1.5 "Cowork ↔ Hermes interface follow-ups" is also dropped (marked in roadmap). No known stray row remains in the prod event log (cleared at the 06-11 cutover); the one-line SELECT above confirms it if ever in doubt.
+**Revisit when:** Hermes (or any between-session autonomous agent) is reactivated — then a sandbox-side authenticated pull becomes load-bearing again (reopen #3), and a clean event log may matter enough to delete the stray row (#2).
 
 ## 2026-07-08 — Branch protection on `main` after going public; deploy via admin bypass
 

@@ -50,7 +50,9 @@
 **Phase 2.1 / 2.2 — Auth hardening + demo readiness**
 
 - [Phase 2.1 — Token auth on backend API calls (SHIPPED TO PROD 2026-06-23 — prod smoke GREEN)](#phase-21--token-auth-on-backend-api-calls-shipped-to-prod-2026-06-23--prod-smoke-green)
+- [Phase 2.1 — Refresh / rotation behavior (gate written 2026-07-16 — ⏳ RUN PENDING on staging)](#phase-21--refresh--rotation-behavior-gate-written-2026-07-16--️-run-pending-on-staging)
 - [Phase 2.2 — Public demo readiness (domain + email + persistent login) — verified 2026-06-23](#phase-22--public-demo-readiness-domain--email--persistent-login--verified-2026-06-23)
+- [Phase 2.2 — Share-ready multi-user smoke (3+ external accounts) (checklist 2026-07-16 — ⏳ RUN PENDING on prod)](#phase-22--share-ready-multi-user-smoke-3-external-accounts-checklist-2026-07-16--️-run-pending-on-prod)
 
 **Phase 3 — Real conversation model**
 
@@ -1767,8 +1769,8 @@ The core gate: **a translated message from another user causes that sender's pro
 - [ ] **End-to-end UI smoke.** Logged-in user sends a message across a language pair → translation renders (translate call carried the token), and a `translation_events` row appears with a **non-null `user_id`** and the correct `tenant_id` (was null/hardcoded). Profile inference still lands on the sender's row.
 - [ ] **Logged-out path.** With no session, the app shouldn't be able to translate (the wrapper sends no token → 401) — confirm it fails closed rather than silently translating.
 
-### Proposed gate (follow-up, not yet written)
-`scripts/api-auth-gate-test.mjs` in the Step 3/4/5/6 style: mint a real user token via the service-role admin API, assert 401 for no-token / bad-token and 200 for valid-token across all three endpoints, `RLS_TEST_CONFIRM_STAGING=yes`, never prod. (Offered; build if we want this in CI.)
+### Gate (WRITTEN 2026-07-16 — `scripts/auth-refresh-gate-test.mjs`)
+The proposed `api-auth-gate-test.mjs` was folded into `scripts/auth-refresh-gate-test.mjs` (which also covers refresh/rotation — see the next section). It signs in a staging test user and asserts **401 for no-token / garbage-token** and **200 for a valid token** at `/api/v1/translate`, `RLS_TEST_CONFIRM_STAGING=yes`, refuses prod. Run it whenever the auth helper or `apiFetch` changes.
 
 ### Known notes / failure modes
 | Symptom | Likely cause | Fix |
@@ -1776,6 +1778,47 @@ The core gate: **a translated message from another user causes that sender's pro
 | All calls 401 even with a valid token | Asymmetric keys not enabled and network fallback failing, or `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` missing in the env | Enable asymmetric keys on staging; confirm the two `VITE_` vars exist in the Preview environment |
 | 500 "Auth not configured" | `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` unset in this environment | Set both (Preview already has them; local `server/.env` for dev) |
 | Local dev: every translate 401s | `server/.env` missing the two `VITE_SUPABASE_*` vars | Add them; restart `node server/index.js` |
+
+---
+
+## Phase 2.1 — Refresh / rotation behavior (gate written 2026-07-16 — ⏳ RUN PENDING on staging)
+
+**Why this exists:** the last open Phase 2.1 item. Since Phase 2.1 the backend rejects requests without a valid user JWT (`server/lib/auth.js` → `getClaims`), and the frontend's `apiFetch()` reads `supabase.auth.getSession()` on **every** call — so the browser client's background token auto-refresh is now load-bearing. If refresh/rotation silently broke, a user who sat idle past the ~1h access-token lifetime would start getting 401s on send. This confirms the rotation path holds end-to-end.
+
+**What "verified" means here:**
+1. A rotated (freshly refreshed) access token still authenticates at the API (200).
+2. Refresh **issues a new access token AND rotates the refresh token** (not a no-op).
+3. Replaying the **old** refresh token after the reuse interval is **rejected** (refresh-token rotation / reuse detection is on) — so a stolen/stale refresh token can't be replayed indefinitely.
+
+### Gate (scripted — no waiting for natural expiry)
+`scripts/auth-refresh-gate-test.mjs` forces the rotation explicitly instead of waiting ~1h for the access token to expire.
+
+- Reuses `./.env.rls-test`. Needs `STAGING_SUPABASE_URL`, `STAGING_SUPABASE_ANON_KEY`, `RLS_TEST_A_EMAIL`, `RLS_TEST_PASSWORD`, `RLS_TEST_CONFIRM_STAGING=yes`.
+- **Set `STAGING_API_BASE_URL`** to a live Vercel Preview base (`https://<branch>.vercel.app`) to exercise the real endpoint (checks A1–A3 + R2). If unset, only the Supabase-side rotation (R1, R3) runs — still meaningful, but doesn't prove the *endpoint* accepts the rotated token.
+- Optional `STAGING_SUPABASE_SERVICE_ROLE_KEY` makes it standalone (ensures the test user has a password). Otherwise the user must already have one (any prior RLS gate sets it).
+- Refuses to run against prod (`app.jistchat.com`) or without the staging confirm flag.
+
+**Run:**
+```
+node scripts/auth-refresh-gate-test.mjs
+```
+Exit 0 = GREEN. It burns ~2 cheap `mode:'detect'` (gpt-4o-mini) calls when `STAGING_API_BASE_URL` is set; the 401 checks short-circuit before OpenAI.
+
+- [ ] **A1 no token → 401** · **A2 garbage token → 401** · **A3 valid token → 200** (endpoint auth boundary; needs `STAGING_API_BASE_URL`)
+- [ ] **R1 refresh rotates** — new access token *and* new refresh token
+- [ ] **R2 rotated access token → 200** at the endpoint (needs `STAGING_API_BASE_URL`)
+- [ ] **R3 old refresh token replayed → rejected** after the reuse interval
+
+### Manual cross-check (optional, belt-and-suspenders)
+The scripted R1–R3 covers rotation deterministically. If you also want to see the *browser* auto-refresh path (what real users hit): on staging, temporarily shorten the Auth **access-token lifetime** (Supabase → Authentication → Sessions) to a few minutes, sign in, leave the tab idle past that window, then send a message — it should translate (200), proving `apiFetch`'s `getSession()` picked up the auto-refreshed token. Restore the lifetime after.
+
+### Known failure modes
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Sign-in fails in the gate | test user has no password, or email+password sign-in disabled on staging | set `STAGING_SUPABASE_SERVICE_ROLE_KEY` (auto-sets password), or set it in the dashboard; enable password sign-in on staging |
+| R3 passes the OLD token (no rejection) | ran inside the ~10s reuse-interval grace window | the gate already waits 12s; if changed, keep the wait > the configured reuse interval |
+| R2 is 401 but A3 was 200 | endpoint verified the *first* token but rejects the rotated one | shouldn't happen (same JWKS/secret) — check the Preview is on the branch you think, and asymmetric-key rotation didn't invalidate mid-run |
+| A1–A3/R2 all skipped | `STAGING_API_BASE_URL` unset | set it to a live Preview to exercise the endpoint, not just Supabase |
 
 ---
 
@@ -1791,6 +1834,52 @@ The core gate: **a translated message from another user causes that sender's pro
 - [ ] **Share-ready smoke** — sign up 3+ external accounts, run direct + group flows on prod (the flows the Phase 3 cutover deferred behind the old email cap).
 
 See roadmap.md Phase 2.2, decisions.md 2026-06-23, operations.md (topology + deploy runbook).
+
+---
+
+## Phase 2.2 — Share-ready multi-user smoke (3+ external accounts) (checklist 2026-07-16 — ⏳ RUN PENDING on prod)
+
+**Why this exists:** the last open Phase 2.2 item. Every prior prod smoke was capped at 2 users by the old ~2–4/hr magic-link email limit. With Resend live (rate cap removed), we can finally exercise the 3-plus-user flows the Phase 3 cutover had to defer — group conversations, invite/join by a third party, and multi-party translation with correct sender attribution. This is a **manual smoke on prod** (`app.jistchat.com`), run by Isaac.
+
+**Run against prod — this is a share-readiness check on the live app.** (The staging-first rule governs schema/code changes; there are none here — this is exercising already-shipped behavior with real accounts.) Do **not** run destructive/gate scripts against prod.
+
+### Prerequisites
+- [ ] **3+ real email addresses** you control (or aliases — e.g. Gmail `+` aliases land in one inbox and are distinct accounts). Call them **A, B, C**.
+- [ ] Two devices/browsers (or browser + incognito + a third profile) so ≥2 sessions are live at once for realtime checks.
+- [ ] Confirm each magic link **arrives** (inbox, not spam) — this doubles as the deliverability check flagged in the Phase 2.2 email item.
+
+### 1. Signup / onboarding (all three)
+- [ ] Each of A, B, C signs up on `app.jistchat.com` by magic link **without hitting a rate limit** (the whole point — 3 signups in quick succession succeed).
+- [ ] Each completes onboarding: display name + **chosen username** + language; lands in chat. Pick **different languages** (e.g. A=English, B=Spanish, C=Japanese) so translation is actually exercised.
+
+### 2. Discovery + contact add
+- [ ] A finds B by **exact username**; A finds B by **exact email**; partial email returns nothing (handle minimization / no enumeration).
+- [ ] A adds B; from B's side the contact resolves (mutual-acceptance mechanism behaves).
+
+### 3. Direct conversation (A ↔ B, cross-language)
+- [ ] A starts a **direct** conversation with B and sends a message → B sees it **translated into B's language**; tapping "Original" shows A's typed text.
+- [ ] B replies → A sees it translated into A's language. Sender name renders correctly on both sides; A's own messages show as-typed (never translated to self).
+- [ ] **Realtime:** the message appears for the other party **without a manual reload** (conversation-list realtime + message channel).
+- [ ] No **ghost conversation**: a conversation A starts but doesn't send in should not appear in B's list until the first message.
+
+### 4. Group conversation (A + B + C)
+- [ ] A creates a **group** conversation including B and C (or creates direct then invites — see §5) → all three are members; each sees the others' messages **translated into their own language**.
+- [ ] With three distinct languages, a single message fans out to two different translations correctly; **sender names** are right for every message (no mis-attribution in a 3-party thread).
+- [ ] Per-conversation **context/register** setting (⋯ menu) persists across reload and visibly shifts tone.
+
+### 5. Invite / join by link (third party)
+- [ ] A mints an **invite link** and C redeems it → C joins the conversation (`redeem_invite`), auto-added, and can read/post as an active member.
+- [ ] Known quirk to confirm still-cosmetic-only: inviting a third party into a **direct** chat doesn't promote it to `group` in the label (parking-lot "direct→group promotion on invite") — note if it's gotten worse, otherwise leave parked.
+
+### 6. Auth durability under real use
+- [ ] Each account **survives a refresh / new tab** without re-authenticating (persistent login).
+- [ ] Leave a session idle, come back, send a message → still works (ties to the refresh/rotation gate; here it's the human-scale confirmation).
+- [ ] Accidental sign-out is guarded (confirm dialog); sign-out control doesn't overlap the "+"/compose control on a phone width.
+
+### Result
+- [ ] All of §1–§6 pass on prod → **Phase 2.2 done** (and the Phase 3 "3rd-user/group deferred" note clears).
+
+Record the run date + outcome here and tick the roadmap Phase 2.2 "Share-ready smoke" box. Log any new bug as a parking-lot entry (Priority/Blocks), not a silent fix.
 
 ---
 
@@ -1962,6 +2051,7 @@ Live behavior (no manual reload anywhere in these steps):
 
 - **2026-07-08** — Conversation-list realtime confirmed on prod (022 applied, two-account smoke GREEN); shipped with the caret-truncation tweak + translated list preview. Section flipped to ✅.
 - **2026-07-08** — Added "Conversation-list realtime" section (migration 022 + second App.jsx channel; staging-first pending). (→ decisions.md 2026-07-08 "Conversation-list realtime")
+- **2026-07-16** — Added "Phase 2.1 — Refresh / rotation behavior" section (gate `scripts/auth-refresh-gate-test.mjs`, absorbs the proposed `api-auth-gate-test.mjs`; run pending) + "Phase 2.2 — Share-ready multi-user smoke" checklist (3+ external accounts on prod; run pending). (→ decisions.md 2026-07-16)
 - **2026-07-08** — Added "Spec 10 — Account settings screen" section (settings modal + migration 021; staging-first pending). (→ decisions.md 2026-07-08 "Account settings screen")
 - **2026-07-07** — Added "Spec 8 + 9 — Demo-readiness polish" section (language-list + lucide icons, staging gate GREEN); updated same day once merged to `main` (commit `1c37b14`). (→ decisions.md 2026-07-07 "Spec 8 + 9 shipped")
 - **2026-07-07** — Docs legibility cleanup: added Contents TOC; header de-blobbed; this Changelog added. Also added the "Username at onboarding — migration 020" section (gate GREEN + prod). (→ decisions.md 2026-07-07)

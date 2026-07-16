@@ -895,7 +895,9 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │   ├── abandonment-gate-test.mjs  Phase 2 Step 6 abandonment + abuse-monitoring gate (run on staging)
 │   ├── deletion-gate-test.mjs     Phase 2 Step 7 data-deletion gate (run on staging)
 │   ├── conversations-gate-test.mjs Phase 3 Step 1 conversations schema + RPC gate (run on staging)
-│   └── messages-rls-gate-test.mjs  Phase 3 Step 2 membership-scoped messages RLS gate — adversarial matrix + explicit realtime check (run on staging)
+│   ├── messages-rls-gate-test.mjs  Phase 3 Step 2 membership-scoped messages RLS gate — adversarial matrix + explicit realtime check (run on staging)
+│   ├── auth-refresh-gate-test.mjs  Phase 2.1 token-auth (no-token/garbage/valid → 401/401/200) + refresh-token rotation & reuse-detection gate (run on staging; needs STAGING_API_BASE_URL for the endpoint checks)
+│   └── model-comparison-test.mjs   Translate model/effort comparison harness (23 frozen cases × configs; used 2026-07-07 to pick gpt-5.4:low + prompt v2.1.0)
 ├── src/
 │   ├── App.jsx               Orchestrator: auth state machine, conversation list (preview shows the translated last inbound message — cached translation at load + MessageBubble onTranslated callback live), active thread, two realtime subscriptions (messages + conversation_members), optimistic send + reconcile, modals
 │   ├── main.jsx              React entry point
@@ -1013,6 +1015,7 @@ Plain-English definitions for jargon used here. Keeps the door open for non-tech
 
 *Reverse chronological. One line per change; project events link to `decisions.md`.*
 
+- **2026-07-16** — §13 file map: added `scripts/auth-refresh-gate-test.mjs` (Phase 2.1 auth + refresh/rotation gate) and the previously-omitted `scripts/model-comparison-test.mjs`. (→ decisions.md 2026-07-16)
 - **2026-07-07** — §10: flagged the known RLS gap on `tenants`/`translation_events`/`agent_events` (parked High; see decisions.md "Roadmap promotions + RLS gap").
 - **2026-07-07** — Docs legibility cleanup: added Contents TOC; header de-blobbed; §7 wired to + slimmed against the new generated `docs/schema.sql` (per-table column grids removed; ~1,124 → ~970 lines); §13 file map updated (migration 020, `schema.sql`, `archive/`; phase2-implementation retired). (→ decisions.md 2026-07-07 "Docs legibility cleanup + new conventions")
 - **2026-06-23** — Phase 2.1 token auth (§10/§11/§13) + Phase 2.2 production domain/email/sessions (§11). (→ decisions.md 2026-06-23)
