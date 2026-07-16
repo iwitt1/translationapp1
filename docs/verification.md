@@ -2086,9 +2086,9 @@ Live behavior (no manual reload anywhere in these steps):
 
 ---
 
-## Spec 12 — Group-chat sender attribution (✅ staging GREEN 2026-07-16; merge to main pending)
+## Spec 12 — Group-chat sender attribution (✅ staging GREEN + merged to main 2026-07-16, commit c681d2b)
 
-**Staging result 2026-07-16: GREEN** — confirmed on a Preview (deployed via `vercel` CLI after the git-integration Preview didn't auto-trigger; see note). Attribution renders correctly in group threads. Merge `feat/spec12-sender-attribution` → `main` to ship (that branch also carries the 2.1 wrap-up commit).
+**Staging result 2026-07-16: GREEN** — confirmed on a Preview (deployed via `vercel` CLI after the git-integration Preview didn't auto-trigger; see note). Attribution renders correctly in group threads. **Merged to `main` 2026-07-16 (fast-forward, commit `c681d2b`) → on prod via Vercel** (the merge also carried the 2.1 wrap-up commit). Frontend-only, no migration. Recommended: a quick prod eyeball of a group thread when convenient.
 
 
 **What was built (Cowork, frontend-only — no migration):** colored initials avatar + colored sender name on received messages in **group** conversations, keyed on `account_id`, grouped by run. `ConversationList.jsx` — `PALETTE` expanded 6→12 `{bg,text}` hues; `avatarColor(key)` kept back-compat (returns the bg class); new `assignConversationColors(memberIds)` produces a per-conversation `{account_id → {bg,text}}` map with within-conversation de-collision (stable `account_id` hash, bump-to-next-free-slot on clash). `ConversationView.jsx` builds that map (memoized on the member set) and passes `senderColor` + `isRunStart` per message. `MessageBubble.jsx` renders the avatar + colored name only on a run start; continuations indent under the avatar column. Sent + direct-received layouts unchanged. **Local build:** `vite build` GREEN (1842 modules); all 12 new Tailwind color classes confirmed present in the emitted CSS.

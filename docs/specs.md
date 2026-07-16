@@ -53,7 +53,7 @@ Migration 023 embedded checks (column default+CHECK, RPC grants, block-deny, non
 **Linked roadmap item:** Phase 2.5 — Group-chat polish → sender attribution
 **Author:** Isaac (drafted with Cowork; Option B + color approach chosen from the 2026-07-16 mockups)
 **Drafted:** 2026-07-16
-**Status:** **staging GREEN 2026-07-16** (Cowork, frontend-only, no migration); local `vite build` GREEN + palette classes verified in CSS; confirmed on a Preview (CLI-deployed). **Merge `feat/spec12-sender-attribution` → `main` to ship** (carries the 2.1 wrap-up too). Verification: verification.md "Spec 12 — Group-chat sender attribution".
+**Status:** **shipped — merged to `main` 2026-07-16 (fast-forward, commit `c681d2b`), on prod via Vercel** (Cowork, frontend-only, no migration). Staging GREEN on a CLI-deployed Preview; local `vite build` GREEN + palette classes verified in CSS. Merge also carried the 2.1 wrap-up commit. Prod eyeball recommended. Verification: verification.md "Spec 12 — Group-chat sender attribution".
 
 ### Goal
 In a group conversation you can't tell who sent which received message at a glance — no avatar, no color, name (if any) undifferentiated. Add the iMessage/Signal pattern (Option B from the mockup): a **colored initials avatar + colored sender name** on received messages in groups. Consistent per-person color is the load-bearing cue for this app's multilingual audience — someone who can't read the name can still track "the purple person."
