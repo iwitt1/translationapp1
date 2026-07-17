@@ -11,6 +11,7 @@ import {
   createConversation,
   leaveConversation,
   setConversationContextType,
+  setConversationTitle,
   redeemInvite,
 } from './lib/conversations';
 import ConversationList from './components/ConversationList';
@@ -238,7 +239,7 @@ export default function App() {
       }
 
       const displayName = c.kind === 'group'
-        ? (c.title || 'Group')
+        ? (c.title || groupNameFromMembers(otherNames))
         : (otherNames[0] || 'Conversation');
 
       return {
@@ -479,6 +480,17 @@ export default function App() {
     }
   }
 
+  async function handleSetTitle(title) {
+    if (!activeConversation) return;
+    const convId = activeConversation.id;
+    const { error } = await setConversationTitle(convId, title);
+    if (error) {
+      console.error('set_conversation_title failed:', error);
+      return;
+    }
+    loadConversations(convId); // refresh the header + list name
+  }
+
   async function handleLeave() {
     if (!activeConversation) return;
     const convId = activeConversation.id;
@@ -665,6 +677,7 @@ export default function App() {
             onSend={handleSend}
             onRetry={handleRetry}
             onSetContextType={handleSetContextType}
+            onSetTitle={handleSetTitle}
             onInvite={() => setShowInvite(true)}
             onLeave={handleLeave}
             onMessageTranslated={handleMessageTranslated}
@@ -700,4 +713,12 @@ export default function App() {
       />
     </main>
   );
+}
+
+// Display name for an unnamed group: the other members' names joined, truncated for
+// long lists ("Ana, Kenji +3"). A user-set title always wins over this. (Spec 13.)
+function groupNameFromMembers(names = []) {
+  if (!names.length) return 'Group';
+  if (names.length <= 3) return names.join(', ');
+  return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
 }

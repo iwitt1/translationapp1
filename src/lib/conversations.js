@@ -48,6 +48,16 @@ export async function setConversationContextType(conversationId, contextType) {
   });
 }
 
+// set_conversation_title(p_conversation_id, p_title) → void (migration 024).
+// Caller must be an active member; empty/whitespace clears the title (NULL), and the
+// UI falls back to the member-list name.
+export async function setConversationTitle(conversationId, title) {
+  return supabase.rpc('set_conversation_title', {
+    p_conversation_id: conversationId,
+    p_title: title,
+  });
+}
+
 // create_invite(p_kind, p_max_uses, p_expires_at, p_target_conversation_id) → token text.
 // We always mint 'conversation'-kind invites here. Defaults: multi-use, no expiry.
 export async function createConversationInvite(conversationId, { maxUses = null, expiresAt = null } = {}) {

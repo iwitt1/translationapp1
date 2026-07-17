@@ -9,6 +9,34 @@
 
 ---
 
+## Spec 13 — Group naming (smart default + user-set title) — Cowork-built (migration 024 = Isaac-run on staging)
+
+**Linked roadmap item:** Phase 2.5 — Group-chat polish → name conversations / groups (promoted from parking-lot)
+**Author:** Isaac (with Cowork)
+**Drafted / built:** 2026-07-16
+**Status:** **built 2026-07-16 (Cowork)** — migration `024_set_conversation_title.sql` + frontend; local `vite build` GREEN. **Run 024 on staging + Preview smoke pending**, then prod-replay before the frontend merge.
+
+### Goal
+Groups should be named, like any messenger. Two parts: (1) an **unnamed** group (including a `direct` just promoted by Spec 11) displays the **other members' names** joined ("Ana, Kenji, Cai", truncated "Ana, Kenji +3") instead of the literal "Group"; (2) a member can **set/rename** the group title, which then wins over the default.
+
+### What was built
+- **Migration 024:** `set_conversation_title(p_conversation_id, p_title)` — SECURITY DEFINER, member-gated (`is_active_member`), tenant-scoped; trims input, empty→NULL (clears → member-list fallback), 100-char cap. Mirrors `set_conversation_context_type`. In-transaction verification block. Function-only, no table change.
+- **Frontend:** `conversations.js` `setConversationTitle()` wrapper; `App.jsx` `groupNameFromMembers()` used in `loadConversations()`'s `displayName` (replaces the literal "Group") + `handleSetTitle()`; `ConversationView` ⋯ menu gains a **Group name** rename field (groups only; Enter or Save → `onSetTitle`).
+
+### Acceptance criteria
+- Unnamed group shows the joined other-member names (≤3 full, else "A, B +N"); a Spec 11-promoted direct→group now reads as its members, not "Group".
+- Renaming in the ⋯ menu persists (`conversations.title`) and updates the header + list; clearing it (empty) reverts to the member-list default.
+- A non-member can't rename (RPC `not a member`); title >100 chars rejected.
+- Direct 1:1 conversations still show the other person's name (unchanged); rename field is groups-only.
+
+### Out of scope
+Realtime propagation of a rename to other members (conversations table isn't in the realtime publication — they see it on next load; parking-lot "conversations metadata realtime"); per-member nicknames; group avatars/photos.
+
+### Verification plan (→ verification.md)
+Migration 024 embedded checks + staging smoke: unnamed group shows member names; rename persists + reverts on clear; non-member/too-long rejected; direct chats unchanged. Migration staging-first, prod-replay before frontend merge.
+
+---
+
 ## Spec 11 — Add-to-conversation: search-to-add + "X was added" system message — Cowork-built (migration 023 = Isaac-run on staging)
 
 **Linked roadmap item:** Phase 2.5 — Group-chat polish → add-member UX

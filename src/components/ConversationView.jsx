@@ -29,6 +29,7 @@ Props:
   onSend            — (text) => void
   onRetry           — (message) => void   (resend a failed optimistic message)
   onSetContextType  — (value) => void
+  onSetTitle        — (title) => void  (rename a group; empty clears → member-list name)
   onInvite          — () => void
   onLeave           — () => void
   onMessageTranslated — (messageId, translatedText) => void; bubbles up from a
@@ -44,6 +45,7 @@ export default function ConversationView({
   onSend,
   onRetry,
   onSetContextType,
+  onSetTitle,
   onInvite,
   onLeave,
   onMessageTranslated,
@@ -51,8 +53,17 @@ export default function ConversationView({
 }) {
   const [draft, setDraft] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(conversation.title || '');
   const menuRef = useRef(null);
   const scrollRef = useRef(null);
+
+  // Reseed the rename field when switching conversations.
+  useEffect(() => { setTitleDraft(conversation.title || ''); }, [conversation.id, conversation.title]);
+
+  function saveTitle() {
+    onSetTitle?.(titleDraft);
+    setMenuOpen(false);
+  }
 
   // Close the overflow menu on any outside click.
   useEffect(() => {
@@ -125,6 +136,27 @@ export default function ConversationView({
 
           {menuOpen && (
             <div className="absolute right-0 mt-1 w-64 bg-white border border-slate-200 rounded-xl shadow-lg py-1 z-20 text-sm">
+              {/* group name (rename) — groups only */}
+              {isGroup && (
+                <>
+                  <div className="px-3 py-2">
+                    <div className="text-xs font-medium text-slate-500 mb-1">Group name</div>
+                    <div className="flex gap-1.5">
+                      <input
+                        value={titleDraft}
+                        onChange={(e) => setTitleDraft(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveTitle(); } }}
+                        placeholder="Name this group…"
+                        aria-label="Group name"
+                        className="flex-1 min-w-0 text-xs rounded-lg border border-slate-300 px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-violet-500"
+                      />
+                      <button onClick={saveTitle} className="text-xs font-medium text-violet-600 px-1.5 shrink-0">Save</button>
+                    </div>
+                  </div>
+                  <div className="border-t border-slate-100 my-1" />
+                </>
+              )}
+
               {/* register / tone selector + explainer */}
               <div className="px-3 py-2">
                 <div className="flex items-center gap-1.5 mb-1">

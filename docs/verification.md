@@ -2054,6 +2054,33 @@ Live behavior (no manual reload anywhere in these steps):
 
 ---
 
+## Spec 13 — Group naming (built 2026-07-16, ⏳ migration 024 + staging smoke pending)
+
+**What was built (Cowork):** migration `024_set_conversation_title.sql` (`set_conversation_title` RPC — member-gated, tenant-scoped, empty→NULL, 100-char cap; in-transaction verify block) + frontend: `App.jsx` `groupNameFromMembers()` in the `loadConversations` `displayName` (unnamed group → member names, "A, B +N"), `handleSetTitle`; `conversations.js` `setConversationTitle()`; `ConversationView` ⋯ menu **Group name** rename field (groups only). Local `vite build` GREEN.
+
+### Deploy order
+1. Run **024 on staging** (`NOTICE: migration 024 verification passed`).
+2. Deploy the frontend to a Preview (branch push or `vercel` CLI).
+3. Smoke below. Green → replay 024 on **prod**, merge frontend to `main`.
+
+### Staging smoke
+- [ ] **Migration verify:** notice fired + committed; `set_conversation_title` executable by `authenticated`, not `anon`.
+- [ ] **Smart default:** an **unnamed** group shows the other members' names ("Ana, Kenji" / "Ana, Kenji +2"), not "Group". A **Spec 11-promoted** direct→group now reads as its members.
+- [ ] **Rename:** ⋯ → Group name → type a name → Save/Enter → header + list update; persists across reload.
+- [ ] **Clear:** empty the name + Save → reverts to the member-list default.
+- [ ] **Guards:** rename field is groups-only (no rename on a 1:1); a non-member can't rename (RPC `not a member`); >100 chars rejected.
+- [ ] **Direct unchanged:** 1:1 chats still show the other person's name.
+
+### Known notes
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Rename doesn't appear for the other member until reload | `conversations` isn't in the realtime publication (only `conversation_members` is) | expected for v1; parked ("conversations metadata realtime") |
+| rpc 404 `set_conversation_title` | 024 not applied on this env | apply 024; NOTIFY pgrst / restart |
+
+**Ship:** replay 024 on prod before the frontend merge; then mark specs.md/roadmap.md shipped + regenerate `schema.sql` (CI). No new decisions.md entry needed (a straightforward promotion; design in specs.md Spec 13).
+
+---
+
 ## Spec 11 — Add-to-conversation + "X was added" system message (✅ shipped to prod 2026-07-16)
 
 **Result 2026-07-16:** migration 023 applied on staging → 3-account Preview smoke GREEN → 023 replayed on prod → frontend merged to `main` + deployed via `vercel --prod` → prod add-member smoke GREEN. Deferred: group-naming polish (parking-lot "Name conversations / groups", High).
