@@ -30,7 +30,7 @@ Customize the emails sent for **signup** (magic link) and **invites** — brandi
 - **Surfaced:** 2026-07-07 (Isaac).
 
 ### Name conversations / groups (user-set title + smart default)
-**Priority:** High · **Blocks:** none · **→ PROMOTED to roadmap Phase 2.5 / Spec 13 (2026-07-16); built, staging pending.** Kept here for design detail.
+**Priority:** High · **Blocks:** none · **→ SHIPPED to prod 2026-07-16 (Spec 13): smart member-list default + user-set title + `group_renamed` system message.** Kept here for design detail; open follow-ons (per-member nicknames, group avatars) remain future ideas.
 
 Every mainstream messenger lets you name a group and shows a sensible name when you haven't — expected behavior, currently missing. Two parts:
 - **User-settable name.** Let a member rename a conversation (set `conversations.title`). Groups accept a title at creation (`NewConversationModal`), but there's no rename afterward, and directs / promoted groups have none. Add a rename affordance (e.g. in the `ConversationView` ⋯ menu) backed by a small `set_conversation_title` RPC — member-gated + tenant-scoped, mirroring `set_conversation_context_type`.

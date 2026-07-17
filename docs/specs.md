@@ -14,7 +14,7 @@
 **Linked roadmap item:** Phase 2.5 — Group-chat polish → name conversations / groups (promoted from parking-lot)
 **Author:** Isaac (with Cowork)
 **Drafted / built:** 2026-07-16
-**Status:** **built 2026-07-16 (Cowork)** — migration `024_set_conversation_title.sql` + frontend; local `vite build` GREEN. **Run 024 on staging + Preview smoke pending**, then prod-replay before the frontend merge.
+**Status:** **shipped — on prod 2026-07-16** (Cowork): migration `024_set_conversation_title.sql` (amended to post the rename system message) + frontend. Staging smoke GREEN → 024 replayed on prod → merged to `main` → prod smoke GREEN (rename pill confirmed live). Verification: verification.md "Spec 13 — Group naming".
 
 ### Goal
 Groups should be named, like any messenger. Two parts: (1) an **unnamed** group (including a `direct` just promoted by Spec 11) displays the **other members' names** joined ("Ana, Kenji, Cai", truncated "Ana, Kenji +3") instead of the literal "Group"; (2) a member can **set/rename** the group title, which then wins over the default.

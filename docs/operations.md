@@ -173,6 +173,8 @@ This triggers a **Vercel Preview** build against **staging**. Find the Preview U
 
 **Schema changes are separate.** Deploying code does **not** run database migrations. For any `/migrations/*.sql`, follow the **Migration workflow** below (staging Supabase first, then prod) — the SQL is run by hand in the Supabase SQL editor, independent of the git push.
 
+**Fallback if git→Vercel auto-deploy stalls (CLI deploy).** On 2026-07-16 the GitHub→Vercel integration briefly stopped firing — pushes to `main` and to branches produced **no** Vercel build (git was fine; the webhook wasn't). Workaround used that day: deploy directly with the Vercel CLI — `npx vercel` for a Preview (staging env), `npx vercel --prod` for production (run from `main` only; **never** from a feature branch whose migration isn't on prod yet). **Auto-deploy self-restored the same day** (both Preview and prod), so this is only a fallback; if a push ever doesn't build, first check Settings → Git is still connected, then use the CLI.
+
 **Avoiding the accidental-prod-push:**
 - Make `git branch --show-current` a reflex before every commit. If it says `main`, run `git checkout -b some-branch` first.
 - Treat `git push` while on `main` as "deploy to production" — only do it when that's the intent.
@@ -351,6 +353,8 @@ Full rotation procedure lives in `/docs/verification.md` "Hermes access credenti
 ## Changelog
 
 *Reverse chronological. One line per change; migration/project events link to `decisions.md`.*
+
+- **2026-07-16** — §3: added a "CLI deploy fallback" note after the git→Vercel auto-deploy briefly stopped firing (Previews + prod); worked around with `npx vercel` / `vercel --prod`, auto-deploy self-restored the same day.
 
 - **2026-07-07** — §3 git runbook: documented the recurring "index.lock"/"packed-refs.lock: File exists" false-failure (seen in the Cowork sandbox and on Isaac's own Mac terminal during the Spec 8 + 9 session). (→ decisions.md 2026-07-07 "Spec 8 + 9 shipped")
 - **2026-07-07** — Docs legibility cleanup: header de-blobbed; added this Changelog; §3 migration workflow gained a `docs/schema.sql` regen step; §5/§6 numbering fixed (were swapped). (→ decisions.md 2026-07-07 "Docs legibility cleanup + new conventions")

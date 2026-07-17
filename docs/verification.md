@@ -2054,7 +2054,10 @@ Live behavior (no manual reload anywhere in these steps):
 
 ---
 
-## Spec 13 — Group naming (built 2026-07-16, ⏳ migration 024 + staging smoke pending)
+## Spec 13 — Group naming (✅ shipped to prod 2026-07-16)
+
+**Result 2026-07-16:** migration 024 (amended for the rename system message) on staging → Preview smoke GREEN → 024 replayed on prod → merged to `main` → prod smoke GREEN (rename pill confirmed live). Per-viewer default confirmed (you don't see your own name); renamed title shared for all.
+
 
 **What was built (Cowork):** migration `024_set_conversation_title.sql` (`set_conversation_title` RPC — member-gated, tenant-scoped, empty→NULL, 100-char cap; in-transaction verify block) + frontend: `App.jsx` `groupNameFromMembers()` in the `loadConversations` `displayName` (unnamed group → member names, "A, B +N"), `handleSetTitle`; `conversations.js` `setConversationTitle()`; `ConversationView` ⋯ menu **Group name** rename field (groups only). Local `vite build` GREEN.
 
