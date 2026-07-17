@@ -20,8 +20,8 @@
 Groups should be named, like any messenger. Two parts: (1) an **unnamed** group (including a `direct` just promoted by Spec 11) displays the **other members' names** joined ("Ana, Kenji, Cai", truncated "Ana, Kenji +3") instead of the literal "Group"; (2) a member can **set/rename** the group title, which then wins over the default.
 
 ### What was built
-- **Migration 024:** `set_conversation_title(p_conversation_id, p_title)` — SECURITY DEFINER, member-gated (`is_active_member`), tenant-scoped; trims input, empty→NULL (clears → member-list fallback), 100-char cap. Mirrors `set_conversation_context_type`. In-transaction verification block. Function-only, no table change.
-- **Frontend:** `conversations.js` `setConversationTitle()` wrapper; `App.jsx` `groupNameFromMembers()` used in `loadConversations()`'s `displayName` (replaces the literal "Group") + `handleSetTitle()`; `ConversationView` ⋯ menu gains a **Group name** rename field (groups only; Enter or Save → `onSetTitle`).
+- **Migration 024:** `set_conversation_title(p_conversation_id, p_title)` — SECURITY DEFINER, member-gated (`is_active_member`), tenant-scoped; trims input, empty→NULL (clears → member-list fallback), 100-char cap. Mirrors `set_conversation_context_type`. **On an actual change (groups only) it posts a `group_renamed` / `group_name_cleared` system message** (kind='system', 023) carrying the actor + new title — so a rename shows in the thread and, because system rows ride the messages realtime channel, **propagates to other members live** (not just on reload). In-transaction verification block. Function-only, no table change.
+- **Frontend:** `conversations.js` `setConversationTitle()` wrapper; `App.jsx` `groupNameFromMembers()` used in `loadConversations()`'s `displayName` (replaces the literal "Group") + `handleSetTitle()`; `ConversationView` ⋯ menu gains a **Group name** rename field (groups only; Enter or Save → `onSetTitle`), and `systemMessageText` renders the two rename events. **Per-viewer default:** `groupNameFromMembers` is fed `otherNames` (already filtered to `account_id !== userId`), so each member sees the *other* members' names, never their own; a set title is stored once and shown identically to everyone.
 
 ### Acceptance criteria
 - Unnamed group shows the joined other-member names (≤3 full, else "A, B +N"); a Spec 11-promoted direct→group now reads as its members, not "Group".
@@ -30,7 +30,7 @@ Groups should be named, like any messenger. Two parts: (1) an **unnamed** group 
 - Direct 1:1 conversations still show the other person's name (unchanged); rename field is groups-only.
 
 ### Out of scope
-Realtime propagation of a rename to other members (conversations table isn't in the realtime publication — they see it on next load; parking-lot "conversations metadata realtime"); per-member nicknames; group avatars/photos.
+Per-member nicknames; group avatars/photos. *(Rename propagation to other members is now handled live via the `group_renamed` system message, so it's no longer deferred.)*
 
 ### Verification plan (→ verification.md)
 Migration 024 embedded checks + staging smoke: unnamed group shows member names; rename persists + reverts on clear; non-member/too-long rejected; direct chats unchanged. Migration staging-first, prod-replay before frontend merge.

@@ -10,9 +10,12 @@
 --   - Trims the input; an empty/whitespace title becomes NULL, which clears the name
 --     and lets the frontend fall back to the member-list default ("Ana, Kenji …").
 --   - Length-capped (100 chars).
+--   - On an actual change (groups only), posts a 'group_renamed' / 'group_name_cleared'
+--     system message (kind='system', migration 023) — so a rename shows in the thread
+--     AND propagates to other members live via the messages realtime channel.
 --
--- No schema/table change — function only. Staging first, then prod replay before the
--- frontend merge (the UI calls this RPC; deploy-order-safe since old UI ignores it).
+-- No schema/table change — function only. Requires 023 (messages.kind/payload). Staging
+-- first, then prod replay before the frontend merge (deploy-order-safe: old UI ignores it).
 -- ═════════════════════════════════════════════════════════════════════════════
 
 begin;
@@ -27,6 +30,8 @@ declare
   v_uid    uuid := auth.uid();
   v_tenant uuid := public.auth_tenant_id();
   v_clean  text;
+  v_old    text;
+  v_kind   text;
 begin
   if v_uid is null or v_tenant is null then
     raise exception 'set_conversation_title: not authenticated' using errcode = '28000';
@@ -41,9 +46,27 @@ begin
     raise exception 'set_conversation_title: title too long (max 100)';
   end if;
 
+  select title, kind into v_old, v_kind
+  from public.conversations
+  where id = p_conversation_id and tenant_id = v_tenant;
+
   update public.conversations
   set title = v_clean, updated_at = now()
   where id = p_conversation_id and tenant_id = v_tenant;
+
+  -- System message on an actual change (groups only). `is distinct from` treats NULLs
+  -- correctly, so a no-op save posts nothing. Rides the messages realtime channel, so
+  -- other members see the rename live (not just on reload).
+  if v_kind = 'group' and v_clean is distinct from v_old then
+    insert into public.messages
+      (conversation_id, sender_id, original_text, source_language, tenant_id, kind, payload)
+    values
+      (p_conversation_id, null, null, null, v_tenant, 'system',
+       case when v_clean is not null
+         then jsonb_build_object('event', 'group_renamed', 'actor_account_id', v_uid, 'title', v_clean)
+         else jsonb_build_object('event', 'group_name_cleared', 'actor_account_id', v_uid)
+       end);
+  end if;
 end;
 $$;
 

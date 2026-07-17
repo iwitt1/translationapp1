@@ -278,5 +278,13 @@ function systemMessageText(m, memberNames = {}) {
     const name = memberNames[p.target_account_id] || 'Someone';
     return `${name} was added to the conversation`;
   }
+  if (p.event === 'group_renamed') {
+    const name = memberNames[p.actor_account_id] || 'Someone';
+    return `${name} renamed the group to “${p.title}”`;
+  }
+  if (p.event === 'group_name_cleared') {
+    const name = memberNames[p.actor_account_id] || 'Someone';
+    return `${name} removed the group name`;
+  }
   return '';
 }

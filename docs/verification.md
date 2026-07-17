@@ -2063,21 +2063,25 @@ Live behavior (no manual reload anywhere in these steps):
 2. Deploy the frontend to a Preview (branch push or `vercel` CLI).
 3. Smoke below. Green → replay 024 on **prod**, merge frontend to `main`.
 
+> **Note (2026-07-16):** migration 024 was amended to also post a rename system message — **re-run 024 on staging** (it's `CREATE OR REPLACE`, idempotent) before re-smoking.
+
 ### Staging smoke
 - [ ] **Migration verify:** notice fired + committed; `set_conversation_title` executable by `authenticated`, not `anon`.
-- [ ] **Smart default:** an **unnamed** group shows the other members' names ("Ana, Kenji" / "Ana, Kenji +2"), not "Group". A **Spec 11-promoted** direct→group now reads as its members.
-- [ ] **Rename:** ⋯ → Group name → type a name → Save/Enter → header + list update; persists across reload.
-- [ ] **Clear:** empty the name + Save → reverts to the member-list default.
+- [ ] **Smart default (per-viewer):** an **unnamed** group shows the *other* members' names ("Ana, Kenji" / "Ana, Kenji +2") — crucially **not your own name** — not "Group". A **Spec 11-promoted** direct→group now reads as its members.
+- [ ] **Rename + system message:** ⋯ → Group name → type a name → Save/Enter → header + list update AND a **"X renamed the group to Y" pill** appears in the thread — **live for the other member** (no reload), and on load. Persists across reload.
+- [ ] **Clear:** empty the name + Save → reverts to the member-list default; a **"X removed the group name" pill** appears.
+- [ ] **No-op:** saving the same name again posts **no** pill (`is distinct from` guard).
 - [ ] **Guards:** rename field is groups-only (no rename on a 1:1); a non-member can't rename (RPC `not a member`); >100 chars rejected.
 - [ ] **Direct unchanged:** 1:1 chats still show the other person's name.
 
 ### Known notes
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Rename doesn't appear for the other member until reload | `conversations` isn't in the realtime publication (only `conversation_members` is) | expected for v1; parked ("conversations metadata realtime") |
+| Rename pill / new title doesn't reach the other member live | the `group_renamed` system row didn't deliver (they're not subscribed / not an active member) | it rides the messages realtime channel like member_added; confirm the other client is in the conversation and subscribed |
 | rpc 404 `set_conversation_title` | 024 not applied on this env | apply 024; NOTIFY pgrst / restart |
+| Rename saved but no pill | conversation isn't `kind='group'`, or the title didn't actually change | system message is groups-only + change-only by design |
 
-**Ship:** replay 024 on prod before the frontend merge; then mark specs.md/roadmap.md shipped + regenerate `schema.sql` (CI). No new decisions.md entry needed (a straightforward promotion; design in specs.md Spec 13).
+**Ship:** replay the amended 024 on prod before the frontend merge; then mark specs.md/roadmap.md shipped + regenerate `schema.sql` (CI). No new decisions.md entry needed (design in specs.md Spec 13).
 
 ---
 
