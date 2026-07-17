@@ -284,6 +284,11 @@ corrections / quality-review store; sketches further down.)*
 > `messages_insert_own` — the `_same_tenant` suffix is now a slight misnomer; the predicate is tenant
 > **and** membership).
 
+- **`kind`** (`'user'` default | `'system'`, CHECK) + **`payload`** (jsonb) — added migration **023 (Spec 11)**.
+  `system` rows are events (e.g. `{"event":"member_added","target_account_id":…}`) with `sender_id` NULL and
+  no text; they ride the same 018 membership-scoped SELECT RLS + realtime, are never translated, and render as a
+  centered pill. User messages default to `kind='user'`; any "every row is a person's message" query must filter
+  `kind='user'` (e.g. the conversation-list preview).
 - **`sender_id`** — migrated from the typed username string (text) to `uuid` FK `auth.users(id)`
   **ON DELETE SET NULL** (008): deleting an account nulls the author link but keeps the message —
   the data-deletion de-identification path (§10 / Step 7).
@@ -630,9 +635,11 @@ SELECT-only).
 - **`create_conversation(p_kind, p_member_ids, p_title, p_context_type)`** → uuid — builds the distinct member set (incl. caller); rejects `<2` members and `direct ≠ 2`; enforces the single-tenant invariant; block-gated. Resolves dedupe from `tenants.conversation_policy` (fallback `CONVERSATION.DEFAULTS`); when `dedupe`, sets `dedupe_key` and **finds-or-creates** race-safely (INSERT, catch `unique_violation` → re-SELECT). Caller = `owner` on a fresh conversation.
 - **`leave_conversation(p_conversation_id)`** → void — **soft-leave**: stamps `left_at` on the caller's active membership. No-op-safe.
 - **`set_conversation_context_type(p_conversation_id, p_context_type)`** → void — validates against the CHECK set, requires the caller be an active member, updates `context_type` + `updated_at`.
+- **`add_conversation_member(p_conversation_id, p_account_id)`** → void — **migration 023 (Spec 11)**. Adds an account to a conversation the caller is an active member of: tenant-scoped, block-gated (`active_block_exists`), idempotent (partial-unique-safe). Runs `_member_added_finalize`, which **promotes `direct`→`group` + nulls `dedupe_key`** past 2 active members and inserts a `member_added` system message. The search-to-add path (vs. the copy-link invite).
+- **`_member_added_finalize(p_conversation_id, p_added_account, p_tenant)`** → void — internal `SECURITY DEFINER` helper, **not granted to `authenticated`**; the shared promote-and-post-system-message step used by both `add_conversation_member` and `redeem_invite` (023).
 
-(`create_invite` / `redeem_invite` were also amended in 017 for `conversation`-kind invites — see the
-Step 5 RPC list above.)
+(`create_invite` / `redeem_invite` were amended in 017 for `conversation`-kind invites, and `redeem_invite`
+again in 023 to run `_member_added_finalize` on a real join — see the Step 5 RPC list above.)
 
 ### Phase 2.4 settings functions (migration 021)
 
@@ -887,7 +894,8 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │   ├── 019_unify_context_type_vocab.sql       Unify conversations.context_type CHECK + create_conversation/set_conversation_context_type inline guards on the engine vocab (casual/dating/professional/academic). ALTER + CREATE OR REPLACE; defensive remap; does NOT touch detected_register
 │   ├── 020_onboarding_username.sql       Onboarding requires a user-chosen username; complete_onboarding() (3-arg) claims it atomically with activation; change_username() allows self-revert; display_name denylist
 │   ├── 021_settings_screen.sql       Phase 2.4 settings: set_preferred_language() + set_display_name() RPCs; account_settings.discoverable_by_email default true→false + handle_new_user trigger + backfill
-│   └── 022_realtime_conversation_members.sql  Phase 2.4: publishes conversation_members to supabase_realtime (idempotent, mirrors 004) so the list updates live when you're added to a conversation
+│   ├── 022_realtime_conversation_members.sql  Phase 2.4: publishes conversation_members to supabase_realtime (idempotent, mirrors 004) so the list updates live when you're added to a conversation
+│   └── 023_add_member_and_system_messages.sql  Phase 2.5 / Spec 11: messages.kind ('user'|'system') + payload jsonb; add_conversation_member() + _member_added_finalize() (block-gated add, direct→group promotion + null dedupe_key, member_added system message); redeem_invite() amended to run the same finalize
 ├── scripts/
 │   ├── rls-adversarial-test.mjs   Phase 2 Step 3 RLS gate (run on staging)
 │   ├── discovery-gate-test.mjs    Phase 2 Step 4 discovery gate (run on staging)
@@ -1015,6 +1023,7 @@ Plain-English definitions for jargon used here. Keeps the door open for non-tech
 
 *Reverse chronological. One line per change; project events link to `decisions.md`.*
 
+- **2026-07-16** — Spec 11 (Phase 2.5) reconciled: §7 `messages.kind`/`payload` columns + `add_conversation_member` / `_member_added_finalize` in the conversation-RPC list + `redeem_invite` 023 amendment; §13 file map migration 023. (→ decisions.md 2026-07-16 "Spec 11")
 - **2026-07-16** — §13 file map: added `scripts/auth-refresh-gate-test.mjs` (Phase 2.1 auth + refresh/rotation gate) and the previously-omitted `scripts/model-comparison-test.mjs`. (→ decisions.md 2026-07-16)
 - **2026-07-07** — §10: flagged the known RLS gap on `tenants`/`translation_events`/`agent_events` (parked High; see decisions.md "Roadmap promotions + RLS gap").
 - **2026-07-07** — Docs legibility cleanup: added Contents TOC; header de-blobbed; §7 wired to + slimmed against the new generated `docs/schema.sql` (per-table column grids removed; ~1,124 → ~970 lines); §13 file map updated (migration 020, `schema.sql`, `archive/`; phase2-implementation retired). (→ decisions.md 2026-07-07 "Docs legibility cleanup + new conventions")

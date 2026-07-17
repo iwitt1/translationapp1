@@ -2054,7 +2054,10 @@ Live behavior (no manual reload anywhere in these steps):
 
 ---
 
-## Spec 11 — Add-to-conversation + "X was added" system message (built 2026-07-16, ⏳ migration 023 + staging smoke pending)
+## Spec 11 — Add-to-conversation + "X was added" system message (✅ shipped to prod 2026-07-16)
+
+**Result 2026-07-16:** migration 023 applied on staging → 3-account Preview smoke GREEN → 023 replayed on prod → frontend merged to `main` + deployed via `vercel --prod` → prod add-member smoke GREEN. Deferred: group-naming polish (parking-lot "Name conversations / groups", High).
+
 
 **What was built (Cowork):**
 - **Migration 023** (`023_add_member_and_system_messages.sql`): `messages.kind` (`'user'` default / `'system'`, CHECK) + `messages.payload jsonb`; `add_conversation_member(conversation, account)` RPC (SECURITY DEFINER, tenant-scoped, block-gated, idempotent); `_member_added_finalize()` internal helper that promotes `direct`→`group` (+ nulls `dedupe_key`) past 2 members and posts the `member_added` system message; `redeem_invite` amended to run the same finalize on a real join. In-transaction verification block (rolls back on failure). **ALTER not recreate.**

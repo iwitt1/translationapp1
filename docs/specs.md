@@ -14,7 +14,7 @@
 **Linked roadmap item:** Phase 2.5 — Group-chat polish → add-member UX
 **Author:** Isaac (drafted with Cowork, from 3-user share-ready testing 2026-07-16)
 **Drafted:** 2026-07-16
-**Status:** **in-flight** — built 2026-07-16 (Cowork): migration `023_add_member_and_system_messages.sql` + frontend (`conversations.js`, `InviteModal`, `ConversationView`, `App.jsx`); local `vite build` GREEN. **Next: run 023 on staging, then a 3-account Preview smoke** (verification.md "Spec 11 — Add-to-conversation + system message"). Then prod-replay 023 before the frontend merge.
+**Status:** **shipped — on prod 2026-07-16** (Cowork): migration `023_add_member_and_system_messages.sql` + frontend (`conversations.js`, `InviteModal`, `ConversationView`, `App.jsx`). Staging smoke GREEN; 023 replayed on prod, frontend merged to `main` (feat/spec11-add-member) + deployed via `vercel --prod`; prod add-member smoke GREEN. Verification: verification.md "Spec 11 — Add-to-conversation + system message". Deferred polish → parking-lot "Name conversations / groups".
 
 ### Goal
 The current invite flow is link-first: `InviteModal` mints a join link and you copy/send it. Flip the primary path to **search a username/email and add the person directly** to the conversation, with **"copy link instead"** demoted to a secondary fallback. When someone is added, drop an iMessage-style **"X was added to the conversation"** system message into the feed — persisted, visible to every member, and surviving reload. Adding a third person to a 1:1 `direct` conversation **promotes it to `group`** (this also closes the known parking-lot quirk).

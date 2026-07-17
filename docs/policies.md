@@ -119,6 +119,13 @@
   exists. `is_verified` defaults false.
 - **Trust caveat:** "knows my email" is a weak trust signal (emails are scraped/leaked). The real
   anti-spam levers are verification + rate limits + the block/report system — not the handle type.
+- **Adding to a conversation (group membership) — open direct-add (2026-07-16 / Spec 11).** Distinct
+  from 1:1 DM-initiation above: any **active member** of a conversation may add any **discoverable,
+  non-blocking** account directly via `add_conversation_member` — no mutual-contact requirement,
+  matching how group chats work in mainstream messengers (being *added to a group* is expected).
+  Blocks (either direction) are still enforced; adding a 3rd member promotes a `direct` to a `group`.
+  Deliberately more permissive than DM-initiation; re-tighten (contacts-only, or an add-permission
+  tier) if abuse appears. See decisions.md 2026-07-16 "Spec 11".
 
 ## 4. Blocking & reporting
 
@@ -228,6 +235,7 @@ the claim and activation are atomic; the free system→user-chosen change is con
 *Reverse chronological. One line per review; material changes link to `decisions.md`.*
 
 - **2026-07-07** — §1 display-name charset flipped allowlist→enforced denylist; §6 P3 now requires a user-chosen username at onboarding, claimed atomically with activation (migration 020). (→ decisions.md 2026-07-07 "Username chosen at onboarding")
+- **2026-07-16** — §3 added "Adding to a conversation — open direct-add" (Spec 11): any active member can add any discoverable, non-blocking account; blocks enforced; more permissive than 1:1 DM-initiation. (→ decisions.md 2026-07-16 "Spec 11")
 - **2026-06-11** — §6 added "Data deletion / Right to Erasure (GDPR Art. 17)" at Step 7; two-phase 30-day grace, content de-identified not deleted; gate 37/37 GREEN. (→ decisions.md 2026-06-11 "Step 7 data deletion")
 - **2026-06-10** — §6 Abandonment resolved at Step 6: hash-over-plaintext confirmed; HMAC pepper in env not Postgres, key_version=1; username release automatic via FK cascade. (→ decisions.md 2026-06-10 "Step 6 abandonment")
 - **2026-06-09** — Initial draft: Phase 2 identity / discovery / lifecycle design.

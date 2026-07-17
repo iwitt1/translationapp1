@@ -24,6 +24,7 @@
 
 **Roadmap & security**
 
+- [2026-07-16 — Spec 11: add-to-conversation by search + system messages (migration 023)](#2026-07-16--spec-11-add-to-conversation-by-search--system-messages-migration-023)
 - [2026-07-16 — Kill the two Hermes-era Phase 2.1 items (stray `hermes_test` row + sandbox git-pull auth)](#2026-07-16--kill-the-two-hermes-era-phase-21-items-stray-hermes_test-row--sandbox-git-pull-auth)
 - [2026-07-08 — Branch protection on `main` after going public; deploy via admin bypass](#2026-07-08--branch-protection-on-main-after-going-public-deploy-via-admin-bypass)
 - [2026-07-08 — Make the repo public: full history, docs kept as-is (Phase 2.4)](#2026-07-08--make-the-repo-public-full-history-docs-kept-as-is-phase-24)
@@ -157,6 +158,17 @@
 
 
 ---
+
+## 2026-07-16 — Spec 11: add-to-conversation by search + system messages (migration 023)
+
+**Decision:** Ship "add someone to a conversation" as a search-first flow, with three sub-choices: (a) system/event messages live on the existing `messages` table via a new `kind` (`'user'`|`'system'`) column + `payload jsonb`, not a separate `conversation_events` table; (b) any active member can add any discoverable, non-blocking account directly ("open direct-add"), no contact-only gate; (c) adding a 3rd person to a `direct` conversation promotes it to `group` server-side and nulls its `dedupe_key` — parking-lot "direct→group promotion on invite", option (a) — applied identically in `add_conversation_member` and `redeem_invite`.
+**Context:** The 3-user share-ready test (Phase 2.2) exposed that the only add path was minting/copying an invite link, and that a 3rd person joining a `direct` chat left it mislabeled as a 1:1.
+**Alternatives considered:**
+- *System-message storage* — a dedicated `conversation_events` table (cleaner separation) vs. a `messages.kind` column. Chose the column: reuses the membership-scoped 018 SELECT RLS + the existing messages realtime channel + the render path (branch on `kind`), so event rows flow with no second subscription or policy.
+- *Add policy* — contacts-only vs. open direct-add. Chose open: matches mainstream group-chat behavior and keeps demo friction low; blocks still enforced; re-tighten if abuse appears (DM-initiation policy stays parked).
+- *Promotion* — (a) server-authoritative promote + null `dedupe_key` vs. (b) a UI "start a new group" leaving the 1:1 intact. Chose (a): one source of truth; nulling `dedupe_key` stops a later `create_conversation(direct, original pair)` from deduping back into the enlarged thread.
+**Implications:** `messages` now carries non-user rows — any query assuming every row is a person's message must filter `kind='user'` (done: the list-preview query; `MessageBubble` is only fed non-system rows; system rows are never translated). A promoted group with no title currently shows "Group" (deferred → parking-lot "Name conversations / groups", High). `add_conversation_member` / `_member_added_finalize` are the template for future membership mutations. Migration 023 is on staging + prod.
+**Revisit when:** abuse makes open direct-add untenable (add a policy gate), or the event vocabulary outgrows `member_added` enough to justify a typed events table after all.
 
 ## 2026-07-16 — Kill the two Hermes-era Phase 2.1 items (stray `hermes_test` row + sandbox git-pull auth)
 
