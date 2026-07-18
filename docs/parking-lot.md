@@ -196,6 +196,27 @@ Explicit event logging for the signup funnel beyond what account state already c
 - **Trigger:** We start optimizing signup conversion, or onboarding drop-off becomes a felt problem.
 - **Surfaced:** 2026-06-09, follow-up to the P1–P4 lifecycle design ("is a P2 page load logged?" — no, inferred from auth).
 
+### PWA implementation (installable home-screen app + push, engagement/usability)
+**Priority:** Med · **Blocks:** none
+
+Turn the existing Vite/React web app into an installable **PWA** (progressive web app): a web
+manifest + service worker + icon set so it adds to the phone home screen, launches fullscreen with
+no browser chrome, and — the real draw — supports **push notifications** for passive re-engagement
+(get pinged for inbound messages without opening the app). The "Sniffies route": reuses the current
+codebase with zero fork, ~1.5–2 days for a demo-grade shell (push excluded).
+- **Why interesting:** It's the cheap ~95%-of-the-value slice of "going mobile" (home-screen presence
+  + push) without the React Native rewrite (that stays Phase 5). Serves both a stronger demo and real
+  retention. Barely collides with feature work — it's an app-shell/packaging layer, not a UI redesign.
+- **Why deferred (decisions.md 2026-07-18):** it's an *engagement / usability* upgrade, not a product
+  feature, so Phase 4 (corrections capture) goes first. Deferring it costs ~no rework.
+- **Decisions to make first:** magic-link vs. **OTP-code** for standalone-launch auth (recommended:
+  add OTP — fixes the iOS PWA auth break); and, if push is in scope, the **push vendor** (raw
+  VAPID / OneSignal / Expo) — the lever that stops the push pipeline being rebuilt for native later.
+- **Full scope, tradeoffs, and build breakdown:** see [`pwa-mobile-considerations.md`](pwa-mobile-considerations.md).
+- **Trigger:** engagement/retention need (users not returning without a nudge) or a demo push — once
+  Phase 4 is underway/done.
+- **Surfaced:** prior session (scoping doc); decision to defer behind Phase 4 taken 2026-07-18 (Isaac).
+
 ---
 
 ## Known technical debt
@@ -849,6 +870,7 @@ in*. The two share the word "search" but are different surfaces with different b
 
 *Reverse chronological. One line per change; project events link to `decisions.md`.*
 
+- **2026-07-18** — Added **PWA implementation** (Med) under Product features, referencing the new `pwa-mobile-considerations.md` scoping doc; deferred behind Phase 4 (engagement/usability, not a feature). (→ decisions.md 2026-07-18)
 - **2026-07-07** — Reviewed with Isaac: added invite-to-app + custom-email items (High); promoted the account-settings screen, native-name/expanded languages, and conversation-list realtime to roadmap Phase 2.4; kept UI-localization + language-not-found parked at High; moved the conversation switcher to Resolved (unread + search split out); bumped the RLS-gaps item to High and added the no-RLS-on-`tenants`/event-tables finding. (→ decisions.md 2026-07-07 "Roadmap promotions + RLS gap")
 - **2026-07-07** — Docs legibility cleanup: header de-blobbed; **Priority/Blocks** convention added (reverses the prior "don't prioritize here" rule); resolved/built/promoted items swept into "Resolved & graduated." (→ decisions.md 2026-07-07 "Docs legibility cleanup + new conventions")
 - **2026-07-02** — "Apply finalized brand to the product frontend" added, then RESOLVED same day. (→ decisions.md 2026-07-02)

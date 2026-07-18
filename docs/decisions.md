@@ -16,6 +16,17 @@
 
 ---
 
+## 2026-07-18 — Phase 4 before PWA; PWA deferred as engagement/usability (new considerations doc)
+
+**Decision:** Build **Phase 4 (corrections capture) as it exists today first**, then take up a **PWA** (installable home-screen app + push) only when there's a felt engagement/usability need. Captured the PWA scope in a new `docs/pwa-mobile-considerations.md` and logged it as a Med-priority `parking-lot.md` item rather than promoting it to a roadmap phase.
+**Context:** Debated whether to start Phase 4 now or jump to a PWA build, with the stated worry of avoiding double-building. A prior session had produced a PWA/mobile scoping doc (demo-goal framing); this session reframed the motivation as engagement/retention (push, no-browser-login, passive re-engagement).
+**Alternatives considered:** (1) PWA first / reorder ahead of Phase 4 — the "grow reach before the flywheel" path. (2) Merge a mobile-UX pass with Phase 4 into one frontend effort. (3) Phase 4 first, PWA parked (chosen).
+**Reasoning:** The feared double-build is minimal between these two: the engagement-driven PWA is an app-shell/packaging layer (manifest, service worker, push) that barely touches Phase 4's per-bubble correction UI (`MessageBubble`/`ConversationView`). Corrections are the strategic core (the data flywheel behind the Phase 2 API), so they take priority; deferring PWA carries essentially no rework penalty. PWA is engagement/usability, not a product feature.
+**Implications:** Phase 4 proceeds unchanged. PWA stays parked (Med) with its scope in `pwa-mobile-considerations.md`. Two decisions are deferred until we actually scope the PWA build: magic-link vs. OTP-code for standalone-launch auth (OTP recommended), and — if push is in scope — the push vendor (raw VAPID vs. OneSignal vs. Expo), which is the lever that avoids rebuilding the push pipeline for native (Phase 5) later. New doc file justified here per the "no new doc without a decisions.md entry" convention. Roadmap unchanged (native mobile remains Phase 5; PWA is not a phase).
+**Revisit when:** Engagement/retention becomes a felt problem (users don't return without a nudge), or a demo need makes home-screen + push worth ~2 days — at which point promote the parking-lot item and make the auth + push-vendor calls first.
+
+---
+
 ## Index
 
 *Jump-list of every decision, newest first, grouped by month and topic. Dependent sequences on one topic are nested together. The log below is append-only and unchanged.*
@@ -24,6 +35,7 @@
 
 **Roadmap & security**
 
+- [2026-07-18 — Phase 4 before PWA; PWA deferred as engagement/usability (new considerations doc)](#2026-07-18--phase-4-before-pwa-pwa-deferred-as-engagementusability-new-considerations-doc)
 - [2026-07-16 — Spec 11: add-to-conversation by search + system messages (migration 023)](#2026-07-16--spec-11-add-to-conversation-by-search--system-messages-migration-023)
 - [2026-07-16 — Kill the two Hermes-era Phase 2.1 items (stray `hermes_test` row + sandbox git-pull auth)](#2026-07-16--kill-the-two-hermes-era-phase-21-items-stray-hermes_test-row--sandbox-git-pull-auth)
 - [2026-07-08 — Branch protection on `main` after going public; deploy via admin bypass](#2026-07-08--branch-protection-on-main-after-going-public-deploy-via-admin-bypass)
