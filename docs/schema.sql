@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict dXwDnGnbTQVrwFAhwurx4SowOHnJNYWyPeobWh2J7zUEaKxefkCTeeAeOrRx62a
+\restrict X8D8B7RaZPD72UiZGYpKonEITQVmANgNHp6KnIHPb2QJlvR0MINgSRKW2aQRUOj
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.10 (Ubuntu 17.10-1.pgdg24.04+1)
@@ -3856,5 +3856,5 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON T
 -- PostgreSQL database dump complete
 --
 
-\unrestrict dXwDnGnbTQVrwFAhwurx4SowOHnJNYWyPeobWh2J7zUEaKxefkCTeeAeOrRx62a
+\unrestrict X8D8B7RaZPD72UiZGYpKonEITQVmANgNHp6KnIHPb2QJlvR0MINgSRKW2aQRUOj
 
