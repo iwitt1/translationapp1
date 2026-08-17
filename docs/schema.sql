@@ -2,10 +2,10 @@
 -- PostgreSQL database dump
 --
 
-\restrict dEYSVqvmZxXjMSMLM9YTjc8rcZWHOV2UhOqaIBG2jPJn4ipssK4JgZFmbrWsuR2
+\restrict Bbu9NYCPqhbE6L8T5YdBqCXxPfMOk8N41oLJa9x4rUvncco1O23mT4T7a8VhH8z
 
 -- Dumped from database version 17.6
--- Dumped by pg_dump version 17.10 (Ubuntu 17.10-1.pgdg24.04+1)
+-- Dumped by pg_dump version 17.11 (Ubuntu 17.11-1.pgdg24.04+2)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -3856,5 +3856,5 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON T
 -- PostgreSQL database dump complete
 --
 
-\unrestrict dEYSVqvmZxXjMSMLM9YTjc8rcZWHOV2UhOqaIBG2jPJn4ipssK4JgZFmbrWsuR2
+\unrestrict Bbu9NYCPqhbE6L8T5YdBqCXxPfMOk8N41oLJa9x4rUvncco1O23mT4T7a8VhH8z
 
