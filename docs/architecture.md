@@ -268,8 +268,9 @@ subsections that follow.
 | `email_hash_abuse` | A privacy-preserving signal to catch signup-spam without storing deleted users' emails. |
 | `data_deletion_requests` | "Delete my account" (GDPR) requests + the audit trail proving it happened. |
 
-*(Designed but not built yet: `translation_corrections`, `translation_reviews` — the future
-corrections / quality-review store; sketches further down.)*
+*(`translation_corrections`, `translation_reviews` — the corrections / quality-review store;
+**capture built in migration 025** (Phase 4, staging-first — add to this table once on prod);
+design further down.)*
 
 ### Tables that exist today (MVP)
 
@@ -387,52 +388,83 @@ the partial unique index `(conversation_id, account_id) WHERE left_at IS NULL`. 
 (`owner`|`member`, creator = `owner`); `last_read_at` is the read-cursor for future unread counts.
 FKs to `conversations` and `profiles` are both ON DELETE CASCADE.
 
-### Tables to add in Phase 1–2 (build the schema even before features fill them)
+### Phase 4 tables — corrections capture (migration 025)
 
-*(`translation_corrections` and `translation_reviews` are **designed, not built** — not in
-`schema.sql`; the column sketches below are the design of record for when they land.)*
+> **Capture BUILT in migration 025** (staging-first; the *consumption* side — clustering,
+> few-shot retrieval, ai_audit, spam filtering — is deferred until the corpus has volume;
+> roadmap Phase 4). Both tables are **append-oriented, RLS SELECT-own, written only via
+> `SECURITY DEFINER` RPCs** (`record_correction` / `record_review`) that assemble the
+> snapshot from authoritative server reads — the client cannot forge context. Design +
+> rejected alternatives: decisions.md 2026-07-28.
 
-#### `translation_corrections` (append-only) — NOT BUILT YET
+#### `translation_corrections` (append-only, migration 025)
+The corrections corpus — the data-flywheel asset behind the Phase 2 API. A row is **self-contained
+and replayable**: every drifting field is *snapshotted* (copied), not referenced, because the source
+rows mutate or vanish. `message_id`+`target_language` are the retained **anchor** (join/audit), not
+the source of truth.
+
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid | Primary key |
-| `tenant_id` | uuid | FK to tenants |
-| `message_id` | uuid | FK to messages |
-| `source_language` | text | |
-| `target_language` | text | |
-| `dialect_region` | text | **Snapshot** at time of correction |
-| `original_text` | text | |
-| `model_output` | text | What the AI produced |
-| `corrected_text` | text | What the user changed it to |
-| `correction_source` | text+CHECK | `'user_edit' \| 'thumbs_down' \| 'bilingual_review' \| 'ai_audit'` |
-| `corrector_user_id` | uuid | nullable |
-| `corrector_known_languages` | text[] | **Snapshot** of corrector's profile |
-| `register_context` | jsonb | **Snapshot** of conversation register |
-| `ownership` | text+CHECK | `'platform' \| 'tenant' \| 'shared'` |
+| `tenant_id` | uuid | FK → tenants — **provenance** (who it came from) |
+| `message_id` | uuid | FK → messages **ON DELETE SET NULL** (correction survives message deletion) |
+| `target_language` | text | language of the translation corrected (with `message_id` = the anchor) |
+| `original_text` | text | **Snapshot** of the source message |
+| `model_output` | text | **Snapshot** of the translation we produced — the **canonical** rendering, never overwritten by `corrected_text` |
+| `corrected_text` | text | the user's fix (stored feedback; **never displayed as canonical** — decisions.md 2026-07-28) |
+| `source_language` | text | **Snapshot** |
+| `dialect_region` | text | **Snapshot** of corrector's dialect |
+| `prompt_version` | text | **Snapshot** from `message_translations` — the reproducibility/staleness anchor |
+| `model` | text | best-effort, **nullable / NULL today** — not per-message reconstructable (see gap below) |
+| `register_context` | jsonb | **Snapshot** of `conversation_contexts` |
+| `conversation_history` | jsonb | **Snapshot** of the (≤3) prior user messages actually in context — frozen, not re-fetched |
+| `context_snapshot` | jsonb | full assembled context object if the client passes it (nullable) |
+| `correction_source` | text+CHECK | `'user_edit' \| 'thumbs_down' \| 'bilingual_review' \| 'ai_audit'` (only `user_edit` written now) |
+| `corrector_user_id` | uuid | FK → profiles **ON DELETE SET NULL** (nulled on erasure) |
+| `corrector_known_languages` | text[] | **Snapshot** — THE bilingual-weight signal (highest-value, most-spoofable → server-assembled) |
+| `ownership` | text+CHECK | `'platform' \| 'tenant' \| 'shared'` — **reach** (does the learning enter the global pool). Defaults from `tenants.default_correction_ownership`; sole tenant = `platform` |
+| `pool_status` | text+CHECK | `'unreviewed' \| 'accepted' \| 'rejected' \| 'spam'` — the seam for the deferred spam/quality filter |
 | `created_at` | timestamptz | |
 
-Snapshots are critical: context drifts, so you need what was true at the moment of correction, not
-now. `corrector_known_languages` tells you whether the fix came from a native speaker of both
-languages; `register_context` tells you what conversation state the model was operating under when it
-failed.
+**Provenance vs. reach:** `tenant_id` never leaves (needed for siloing); `ownership` governs pooling.
+The training/retrieval "pool" is a **logical view** over `ownership IN ('platform','shared') AND
+tenants.training_data_agreement` — not a separate table. `conversation_history` embeds third-party
+content and is the first thing scrubbed before any pooling (parking-lot "PII scrub at pool-build").
+**Deletion:** `anonymize_corrections_for_account()` (service_role, migration 025) nulls the corrector's
+`user_id` + `known_languages` while keeping the pair — the Step 7 sweep calls it (§10).
 
-#### `translation_reviews` — NOT BUILT YET
+**Known gap (decisions.md 2026-07-28):** `message_translations` stores `prompt_version` but not `model`,
+and `translation_events` has `model_used` but no `message_id` — so a translation's `model` isn't
+per-message reconstructable. `prompt_version` is therefore the reproducibility anchor; `model` is
+nullable/best-effort. Follow-up (add `message_translations.model`) is parked.
+
+#### `translation_reviews` (migration 025)
+Quality signals. The user **good/bad** translation feedback writes here (the high-signal inline *edit*
+writes to `translation_corrections`); **ai_audit / human review writers are deferred** (consumption).
+**Deviation from the original sketch (decisions.md 2026-07-28):** anchored on `message_id` +
+`target_language` (the client's unit), **not** `translation_id → translation_events` — the client never
+sees an event id and events carry no `message_id`. Upsertable: one review per person per translation
+(`record_review` toggles good/bad/off).
+
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid | Primary key |
-| `tenant_id` | uuid | FK to tenants |
-| `translation_id` | uuid | References the specific translation event |
-| `reviewer_type` | text+CHECK | `'ai_audit' \| 'human' \| 'bilingual_user'` |
-| `reviewer_id` | uuid | nullable if ai_audit |
-| `reviewed_at` | timestamptz | |
-| `quality_score` | float | 0.0–1.0 |
-| `flags` | text[] | e.g. `["register_mismatch", "idiom_error", "gender_error", "dialect_wrong"]` |
+| `tenant_id` | uuid | FK → tenants |
+| `message_id` | uuid | FK → messages ON DELETE SET NULL — anchor (with `target_language`) |
+| `target_language` | text | |
+| `reviewer_id` | uuid | FK → profiles ON DELETE SET NULL |
+| `reviewer_type` | text+CHECK | `'user' \| 'human' \| 'bilingual_user' \| 'ai_audit'` (only `user` written now) |
+| `reviewer_known_languages` | text[] | **Snapshot** (bilingual weight, derived later) |
+| `rating` | text+CHECK | `'good' \| 'bad'` — the user signal |
+| `quality_score` | float | nullable; 0.0–1.0 for future ai_audit |
+| `flags` | text[] | nullable; e.g. `["register_mismatch", "idiom_error", "gender_error", "dialect_wrong"]` |
 | `suggested_fix` | text | nullable |
-| `confidence` | float | Reviewer's confidence in their assessment |
-| `model_version` | text | nullable; if `ai_audit`, which model/prompt version reviewed |
+| `prompt_version` | text | **Snapshot** |
+| `model` | text | best-effort, nullable (same gap as above) |
+| `created_at` | timestamptz | |
 
-Both human reviewers and AI auditors write into the same table — no schema changes when humans get
-involved.
+Both human reviewers and AI auditors write into the same table when built — no schema change when
+they land.
 
 #### `data_deletion_requests` (migration 013, Phase 2 Step 7)
 > **RLS:** SELECT own (`ddr_select_own`); all writes via SECURITY DEFINER RPCs.
@@ -653,6 +685,16 @@ field.
 
 (Migration 021 also flips `account_settings.discoverable_by_email` to default false and updates the `handle_new_user` trigger accordingly — see §7 `account_settings`.)
 
+### Phase 4 corrections functions (migration 025)
+
+The sole write path to the corrections corpus (both tables are RLS SELECT-own / no client write
+policy). The user RPCs assemble the snapshot from authoritative reads, so the client cannot forge
+context (decisions.md 2026-07-28).
+
+- **`record_correction(p_message_id, p_target_language, p_corrected_text, p_context DEFAULT NULL, p_source DEFAULT 'user_edit')`** → row — `SECURITY DEFINER`, `authenticated`. Membership-gated (`is_active_member`); reads the message + its cached translation + the corrector's profile + conversation register + the frozen ≤3-message history window, then appends one `translation_corrections` row with `ownership` defaulted from the tenant. Validates/length-caps `corrected_text`. Append-only.
+- **`record_review(p_message_id, p_target_language, p_rating)`** → row — `SECURITY DEFINER`, `authenticated`. Membership-gated. `p_rating IN ('good','bad')` upserts the caller's review (toggles); `NULL` clears it.
+- **`anonymize_corrections_for_account(p_account_id)`** → integer — `SECURITY DEFINER`, **service_role only**. The Step 7 deletion-sweep hook: nulls the corrector/reviewer `*_id` + `known_languages` while keeping the pair (§10).
+
 ---
 
 ## 8. How a translation moves through the system
@@ -780,8 +822,12 @@ Right-to-Erasure requests. The flow is **two-phase**: a user calls `request_acco
 - Hard-deletes the `auth.users` row via the admin API → the FK chain (007/008) anonymizes:
   profile + identifiers + settings + linguistic profile + events **cascade away**;
   `messages.sender_id` → **NULL** (content + future translation pairs retained, author link severed).
-- Will anonymize corrections (strip user_id + PII, keep pairs) — but `translation_corrections`
-  is **not built yet**, so the sweep logs `corrections_anonymized: 0` for now.
+- Anonymizes corrections (strip user_id + `known_languages`, keep the translation pair) via
+  `anonymize_corrections_for_account()` (service_role, migration 025), called **before** the
+  `auth.users` hard delete. The FK `ON DELETE SET NULL` would null the `*_id`, but
+  `known_languages` is a plain column the cascade won't touch — hence the explicit pass.
+  `server/lib/deletion.js` calls the hook before the admin delete (and records the count in
+  `deleted_fields.corrections_anonymized`); it tolerates a missing function pre-025 (decisions.md 2026-07-28).
 - Never hard-deletes corrections/translation pairs — that destroys irreplaceable training data.
 - Records the same keyed email HMAC as Step 6 (reuses `email_hash_abuse`) so delete-then-resignup
   abuse stays detectable without retaining PII.
@@ -876,7 +922,7 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │   │   ├── events.js         user_profile_events writer
 │   │   ├── auth.js           Request auth (Phase 2.1): verify user JWT via getClaims() (anon key) -> {userId}; B2B API-key seam
 │   │   ├── abandonment.js    Step 6 abandonment sweep (delete aged-pending, release username, HMAC)
-│   │   └── deletion.js       Step 7 deletion sweep (claim→hash→admin-delete→complete; SET-NULL retain)
+│   │   └── deletion.js       Step 7 deletion sweep (claim→hash→anonymize-corrections→admin-delete→complete; SET-NULL retain). Calls anonymize_corrections_for_account() before the admin delete (Phase 4, migration 025); tolerates 42883 pre-025
 │   └── .env                  Local OPENAI_API_KEY (not committed)
 ├── migrations/               Run in Supabase SQL editor, manually for now (000–020; 000–020 live on prod as of 2026-07-07)
 │   ├── 000_base_schema.sql … 006_user_profile_events_task_id.sql
@@ -897,7 +943,8 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │   ├── 021_settings_screen.sql       Phase 2.4 settings: set_preferred_language() + set_display_name() RPCs; account_settings.discoverable_by_email default true→false + handle_new_user trigger + backfill
 │   ├── 022_realtime_conversation_members.sql  Phase 2.4: publishes conversation_members to supabase_realtime (idempotent, mirrors 004) so the list updates live when you're added to a conversation
 │   ├── 023_add_member_and_system_messages.sql  Phase 2.5 / Spec 11: messages.kind ('user'|'system') + payload jsonb; add_conversation_member() + _member_added_finalize() (block-gated add, direct→group promotion + null dedupe_key, member_added system message); redeem_invite() amended to run the same finalize
-│   └── 024_set_conversation_title.sql  Phase 2.5 / Spec 13: set_conversation_title() (member-gated rename, empty→NULL clear) + posts group_renamed/group_name_cleared system message on change (groups only)
+│   ├── 024_set_conversation_title.sql  Phase 2.5 / Spec 13: set_conversation_title() (member-gated rename, empty→NULL clear) + posts group_renamed/group_name_cleared system message on change (groups only)
+│   └── 025_phase4_corrections_capture.sql  Phase 4 (capture): translation_corrections + translation_reviews tables + RLS (SELECT-own, RPC-only writes); record_correction()/record_review() (membership-gated, server-assembled snapshot) + anonymize_corrections_for_account() (service_role deletion hook)
 ├── scripts/
 │   ├── rls-adversarial-test.mjs   Phase 2 Step 3 RLS gate (run on staging)
 │   ├── discovery-gate-test.mjs    Phase 2 Step 4 discovery gate (run on staging)
@@ -907,7 +954,8 @@ backend env vars (Preview → staging, Production → prod), none `VITE_`-prefix
 │   ├── conversations-gate-test.mjs Phase 3 Step 1 conversations schema + RPC gate (run on staging)
 │   ├── messages-rls-gate-test.mjs  Phase 3 Step 2 membership-scoped messages RLS gate — adversarial matrix + explicit realtime check (run on staging)
 │   ├── auth-refresh-gate-test.mjs  Phase 2.1 token-auth (no-token/garbage/valid → 401/401/200) + refresh-token rotation & reuse-detection gate (run on staging; needs STAGING_API_BASE_URL for the endpoint checks)
-│   └── model-comparison-test.mjs   Translate model/effort comparison harness (23 frozen cases × configs; used 2026-07-07 to pick gpt-5.4:low + prompt v2.1.0)
+│   ├── model-comparison-test.mjs   Translate model/effort comparison harness (23 frozen cases × configs; used 2026-07-07 to pick gpt-5.4:low + prompt v2.1.0)
+│   └── corrections-gate-test.mjs   Phase 4 corrections capture gate — happy path + adversarial (non-member/forged-snapshot/append-only/canonical-unchanged) (run on staging)
 ├── src/
 │   ├── App.jsx               Orchestrator: auth state machine, conversation list (preview shows the translated last inbound message — cached translation at load + MessageBubble onTranslated callback live), active thread, two realtime subscriptions (messages + conversation_members), optimistic send + reconcile, modals
 │   ├── main.jsx              React entry point
@@ -1025,6 +1073,7 @@ Plain-English definitions for jargon used here. Keeps the door open for non-tech
 
 *Reverse chronological. One line per change; project events link to `decisions.md`.*
 
+- **2026-07-28** — Phase 4 corrections capture (migration 025): §7 rewrote the `translation_corrections`/`translation_reviews` design (snapshot fields, history window, ownership=reach, `pool_status`, model gap) + added the Phase 4 corrections-functions list; §10 updated the deletion path (anonymize hook, wiring due); §13 file map migration 025 + `corrections-gate-test.mjs`; "Live tables" note flipped to "capture built in 025". (→ decisions.md 2026-07-28 "Phase 4 corrections capture")
 - **2026-07-16** — Spec 13 (Phase 2.5): §7 `set_conversation_title` in the conversation-RPC list (+ group_renamed/group_name_cleared system message); §13 file map migration 024.
 - **2026-07-16** — Spec 11 (Phase 2.5) reconciled: §7 `messages.kind`/`payload` columns + `add_conversation_member` / `_member_added_finalize` in the conversation-RPC list + `redeem_invite` 023 amendment; §13 file map migration 023. (→ decisions.md 2026-07-16 "Spec 11")
 - **2026-07-16** — §13 file map: added `scripts/auth-refresh-gate-test.mjs` (Phase 2.1 auth + refresh/rotation gate) and the previously-omitted `scripts/model-comparison-test.mjs`. (→ decisions.md 2026-07-16)

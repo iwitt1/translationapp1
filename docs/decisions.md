@@ -16,6 +16,36 @@
 
 ---
 
+## 2026-07-28 — Phase 4 corrections capture: design (migration 025)
+
+**Decision:** Build the **capture half** of Phase 4 now — the `translation_corrections` + `translation_reviews` tables (migration 025), a server-authoritative write path, and the deletion-anonymization hook — and **defer all consumption** (weekly clustering, few-shot retrieval into live translation, ai_audit reviews, spam/quality filtering) until the corpus has volume. Seven sub-calls, below.
+
+**Context:** Phase 4 starts the data flywheel — the corrections corpus is the moat behind the Phase 2 (B2B API) plan; until it exists the product is "a smart wrapper." Ran a full design review first (capture UX, what's snapshotted, how it feeds translation, whether a backend is even needed yet).
+
+**Sub-decisions:**
+1. **Corrections improve nothing in Phase 4 — capture only.** The corpus pays off later in three stages: few-shot **retrieval** at translate time (cheap, no training, first real activation), **fine-tune** (~50k pairs, the actual moat), and **benchmark/dialect-clustering** (eval + sales asset). So the value now is purely *accumulating a reusable asset* — which makes context-richness (below) the whole game.
+2. **Snapshot, don't reference.** A correction is self-contained and replayable: we copy every field that drifts (`model_output` — cache is upsertable; `register_context` — updates; `conversation_history` — messages get deleted; `corrector_known_languages` — profile changes). `message_id`+`target_language` are retained as a cheap join/audit anchor, **not** the source of truth. Referencing-to-save-storage was rejected — the storage saved is trivial and it breaks reproducibility (principle #8).
+3. **Retain the conversation-history window.** Snapshot the (up to) 3 prior user messages that were actually available as context — the same slice translate uses — frozen at capture time (not re-fetched). Stored as its own `conversation_history` jsonb because history is a *separate* input from the structured context object. It embeds third-party content → it's the first thing scrubbed before any pooling (see #5, and parking-lot "PII scrub at pool-build").
+4. **Ownership = provenance vs. reach.** Corrections are **not** tenant-less. Every row keeps `tenant_id` (provenance); the existing `ownership` column (`platform`|`tenant`|`shared`) governs whether its learning may enter the global pool. The sole consumer tenant defaults to `platform`, so its flywheel is global from day one; a future B2B tenant can silo with `tenant`. The "pool" is a **logical view** over `ownership IN ('platform','shared') AND tenants.training_data_agreement`, not a separate table. Chose flag-method **A** (honor the ownership flag) now; methods **B** (abstract the *learning* from the utterance) and **C** (PII-scrub at pool-build) parked so they slot in later without a migration.
+5. **Write via SECURITY DEFINER RPC, not a client INSERT and not a new Express endpoint.** The correction's highest-value field (`corrector_known_languages`, the bilingual weight) is the most spoofable, so the snapshot is assembled from authoritative server reads. A client direct-INSERT was rejected (re-creates the `message_translations` cache-poison RLS gap; lets the client forge the snapshot). A dedicated `/api/v1/corrections` endpoint was rejected as heavier than needed — all snapshot inputs are in-DB, so an in-Postgres RPC (`record_correction`) is the lightest trustworthy write. Tables are RLS SELECT-own / no client write policy.
+6. **Capture UX: a hold/hover context menu, not thumbs.** Thumbs up/down are message *reactions* in every mainstream messenger and the app will want reactions later — overloading them would collide. Feedback lives in a long-press/hover menu with a **reserved reactions slot** (unbuilt), **"good / bad translation"** (→ `translation_reviews`), and **"suggest a correction"** (→ the editor → `translation_corrections`). This separates *reaction to what was said* from *judgment of how it was rendered* — different axes.
+7. **A correction never overwrites the canonical translation.** The bubble always shows `model_output` (what the system stands behind); the user's `corrected_text` is stored and surfaced only as a tap-to-reveal marker ("you suggested a correction"), never as a replacement. Reason: letting a view-time edit replace the displayed translation hands a bad actor a built-in tool to fabricate what someone said and screenshot it (the "you edited this" marker is trivially photoshopped). We can't stop a determined photoshop, but we don't ship the rewrite tool — consistent with messages being immutable server-side.
+
+**Deviations / gaps surfaced honestly (not silently fixed):**
+- **`model` is not per-message reconstructable.** `message_translations` stores `prompt_version` but not `model`; `translation_events` has `model_used` but no `message_id`. So `prompt_version` is the reproducibility/staleness anchor and `translation_corrections.model` is a best-effort nullable column (left NULL by the RPC). Follow-up (add `message_translations.model` on the translate write path) → parking-lot.
+- **`translation_reviews` anchored on `message_id`+`target_language`**, not architecture.md §7's sketched `translation_id → translation_events`. The client never sees an event id and events carry no `message_id`, so the event anchor is unusable from the client. §7 updated to match.
+- **`pool_status` seam added now** (`unreviewed`→`accepted`/`rejected`/`spam`) so the future spam/quality filter (data-poisoning defense) needs no migration. The filter itself is deferred (parking-lot).
+
+**Implications:**
+- Migration 025 is additive (two net-new tables + three functions), staging-first, idempotent. `record_correction` / `record_review` are `authenticated`; `anonymize_corrections_for_account` is `service_role` only.
+- **Deletion wiring is now due:** `server/lib/deletion.js` must call `anonymize_corrections_for_account(account_id)` before the `auth.users` hard delete (replaces the no-op `corrections_anonymized:0` stub). The FK `ON DELETE SET NULL` nulls the `*_id`, but `known_languages` is a plain column the cascade won't touch — hence the explicit pass.
+- **ToS dependency:** pooling consumer messages/corrections as `platform` assumes the ToS permits using content to improve the service — the schema already has the `tenants.training_data_agreement` gate; confirm ToS coverage before the corpus grows. (Flagged as a dependency, not legal advice.)
+- Capture UI is a Cursor spec (specs.md); the schema/RLS/RPCs are Cowork-built (this migration).
+
+**Revisit when:** the corpus has enough volume to activate consumption (build few-shot retrieval + the spam filter then — un-park B/C and the filter); a `model` per-translation becomes needed (do the `message_translations.model` follow-up); or a B2B tenant needs non-`platform` ownership defaults (move from column default to tenant policy).
+
+---
+
 ## 2026-07-18 — Phase 4 before PWA; PWA deferred as engagement/usability (new considerations doc)
 
 **Decision:** Build **Phase 4 (corrections capture) as it exists today first**, then take up a **PWA** (installable home-screen app + push) only when there's a felt engagement/usability need. Captured the PWA scope in a new `docs/pwa-mobile-considerations.md` and logged it as a Med-priority `parking-lot.md` item rather than promoting it to a roadmap phase.
@@ -35,6 +65,7 @@
 
 **Roadmap & security**
 
+- [2026-07-28 — Phase 4 corrections capture: design (migration 025)](#2026-07-28--phase-4-corrections-capture-design-migration-025)
 - [2026-07-18 — Phase 4 before PWA; PWA deferred as engagement/usability (new considerations doc)](#2026-07-18--phase-4-before-pwa-pwa-deferred-as-engagementusability-new-considerations-doc)
 - [2026-07-16 — Spec 11: add-to-conversation by search + system messages (migration 023)](#2026-07-16--spec-11-add-to-conversation-by-search--system-messages-migration-023)
 - [2026-07-16 — Kill the two Hermes-era Phase 2.1 items (stray `hermes_test` row + sandbox git-pull auth)](#2026-07-16--kill-the-two-hermes-era-phase-21-items-stray-hermes_test-row--sandbox-git-pull-auth)

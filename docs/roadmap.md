@@ -25,7 +25,7 @@
 | [Phase 2.4 — Demo-readiness polish + repo hardening](#phase-24--demo-readiness-polish--repo-hardening) | App usability (settings, languages, symbology, realtime) + repo scrub for sharing | ✅ Done (2026-07-08) |
 | [Phase 2.5 — Group-chat polish (surfaced in 3-user testing)](#phase-25--group-chat-polish-surfaced-in-3-user-testing) | Sender attribution + search-to-add / system messages + group naming | ✅ Done (2026-07-16 — Spec 11 + 12 + 13 on prod) |
 | [Phase 3 — Real conversation model](#phase-3--real-conversation-model) | Many conversations/participants (not one global room) | ✅ Done (prod cutover 2026-06-18) |
-| [Phase 4 — Corrections capture](#phase-4--corrections-capture) | Start the corrections data flywheel | 📋 Planned |
+| [Phase 4 — Corrections capture](#phase-4--corrections-capture) | Start the corrections data flywheel | 🔶 In progress — capture backend GREEN on staging (migration 025 gate 36/36, 2026-08-20); prod + Spec 14 UI pending; activation deferred |
 | [Phase 5 — Mobile](#phase-5--mobile) | Native mobile app (React Native) | 📋 Planned (future) |
 | [Phase 6 — Open the API (Phase 2 of the strategic plan)](#phase-6--open-the-api-phase-2-of-the-strategic-plan) | First external API customer — the actual business | 📋 Planned (strategic Phase 2) |
 | [Operating principles for this roadmap](#operating-principles-for-this-roadmap) | How this roadmap is maintained | — |
@@ -359,25 +359,35 @@
 
 ## Phase 4 — Corrections capture
 
-**Goal:** Start the data flywheel. Begin accumulating the corrections corpus that makes Phase 2's API defensible.
+**Goal:** Start the data flywheel. Begin accumulating the corrections corpus that makes Phase 2's API defensible — the moat. **In Phase 4 corrections do not yet improve any translation** (that's the deferred *activation* below); this phase's job is to capture a context-rich, reusable corpus. Design + rejected alternatives: decisions.md 2026-07-28.
 
-### Schema (build before features that fill them)
-- [ ] `translation_corrections` table
-- [ ] `translation_reviews` table
+**Structure:** the split that matters is **build-now (capture) vs. deferred (activation, gated on corpus volume)** — not a long dependency chain, so no numbered sub-phases (contrast Phase 2). Within build-now it's mildly sequential: schema → RPCs → capture UI.
 
-### Capture surfaces
-- [ ] Thumbs-up / thumbs-down on every translated message
-- [ ] Inline edit on the translation (the user fixes it; we record the original output and the fix)
-- [ ] Bilingual user identification (if a user has multiple `known_languages` covering both ends of a translation, their edits get the highest weight)
+### Build now — capture
 
-### Pipeline
-- [ ] Edits write to `translation_corrections` with full snapshots of profile and conversation register at correction time
-- [ ] Background job processes correction patterns weekly: cluster by dialect, identify recurring failure modes
+**Schema + write path (Cowork-built — migration 025, Isaac-run on staging first):**
+- [ ] **`translation_corrections` + `translation_reviews` tables + RLS** (SELECT-own, writes RPC-only) — migration `025_phase4_corrections_capture.sql`. Self-contained snapshot rows; `tenant_id`=provenance, `ownership`=reach (sole tenant → `platform`, globally poolable); `pool_status` seam for the deferred filter.
+- [ ] **`record_correction()` / `record_review()` RPCs** — SECURITY DEFINER, membership-gated; assemble the snapshot (original text, model output, prompt_version, corrector `known_languages`, register, frozen ≤3-msg history window) from authoritative reads so the client can't forge it. Inline edit → `record_correction`; good/bad → `record_review`.
+- [ ] **Wire deletion anonymization** — `server/lib/deletion.js` calls `anonymize_corrections_for_account()` (in 025) before the `auth.users` hard delete, replacing the `corrections_anonymized:0` stub (strip corrector PII, keep the pair). Deploy-order: migration first.
+- [ ] **Gate** — `scripts/corrections-gate-test.mjs` (staging): member correct → snapshot lands; non-member/left denied; direct-client INSERT denied; append-only; good/bad upsert+clear; canonical translation unchanged in the DB.
 
-### What "Phase 4 done" means
-- The app has surfaces for users to correct translations.
-- Corrections are flowing into the corrections table with all required snapshots.
-- We can produce a weekly report of "what kind of translations got corrected most."
+**Capture UI (Cursor/Sonnet spec — specs.md Spec 14):**
+- [ ] **Hold/hover context menu** on received translated bubbles (NOT thumbs — reserves the reactions slot). Items: (future) reactions row · **Good / bad translation** (→ `record_review`) · **Suggest a correction** (→ editor → `record_correction`).
+- [ ] **Correction editor** — pre-filled with the current translation, auto-expands the original; on save writes the correction. **Never overwrites the canonical translation** — shows a tap-to-reveal "you suggested a correction" marker instead (anti-fabrication).
+- [ ] **Bilingual weighting is captured, not enforced at UI** — the `known_languages` snapshot carries the signal; a monolingual "reads oddly" edit is still captured, weighted down later.
+
+### Deferred — activation (gated on corpus volume, not calendar)
+*You can't process a corpus you don't have. These build when there's data to process.*
+- [ ] **Weekly clustering report** — "what kind of translations got corrected most" (cluster by dialect/pair, recurring failure modes). Service-role sweep mirroring the abandonment/deletion crons.
+- [ ] **Few-shot retrieval into live translation** — the first activation: inject the k most-similar past corrections as examples at translate time (RAG over corrections; no training). See parking-lot "Multi-model AI routing" neighbors.
+- [ ] **Correction spam/quality filter (data-poisoning defense)** — populate `pool_status` before a correction enters the pool (bilingual weight, cross-corroboration, cross-model AI audit, rate limits). → parking-lot.
+- [ ] **`ai_audit` reviews** — the cross-model audit pipeline writes `translation_reviews` (schema ready). → parking-lot "Cross-model AI audit pipeline".
+
+### What "Phase 4 (capture) done" means
+- Received translated messages have a menu with good/bad + suggest-a-correction; the canonical translation is never overwritten.
+- Corrections/reviews flow into their tables via the RPCs with all required snapshots; a direct client write is rejected.
+- Account deletion anonymizes corrections (PII stripped, pairs kept).
+- *(Activation — retrieval/clustering/filter — is explicitly out of scope until the corpus has volume.)*
 
 ---
 
@@ -426,6 +436,8 @@ This phase will get detailed when we're approaching it. High-level items:
 
 *Reverse chronological. One line per change; details live in `decisions.md`.*
 
+- **2026-08-20** — Phase 4 capture **backend gate GREEN 36/36 on staging** (migration 025 applied on `translationapp1-staging`; `corrections-gate-test.mjs`). Prod replay + Spec 14 UI still pending.
+- **2026-07-28** — **Phase 4 started (capture)**: restructured into build-now (capture: migration 025 tables/RLS/RPCs, capture UI Spec 14, deletion wiring, gate) vs. deferred activation (clustering, few-shot retrieval, spam filter, ai_audit). Design + rejected alternatives → decisions.md 2026-07-28. Migration 025 + `corrections-gate-test.mjs` + `deletion.js` anonymize wiring written.
 - **2026-07-16** — Marked **Phase 2.2 done** (retroactive): the 3+-user share-ready smoke ran on prod on 2026-07-16 — its findings were split into Phase 2.5 (Specs 11/12/13, all shipped). Missed at the time because the smoke fed straight into 2.5 without circling back to close 2.2's box.
 - **2026-07-16** — **Phase 2.5 shipped** (Specs 11 + 12 + 13 on prod): sender attribution, add-to-conversation + system messages, group naming.
 - **2026-07-16** — Added **Phase 2.5 — Group-chat polish** (Spec 11 add-to-conversation search-to-add + "X was added" system message + migration 023; Spec 12 sender attribution avatar+name), both surfaced during the 3-user share-ready test. (→ specs.md Spec 11/12)
