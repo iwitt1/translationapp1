@@ -2143,7 +2143,7 @@ Live behavior (no manual reload anywhere in these steps):
 
 ---
 
-## Phase 4 — Corrections capture (migration 025 + Spec 14) — ✅ backend LIVE on prod 2026-08-20 (staging gate 36/36; 025 replayed on prod, deletion.js merged); Spec 14 UI pending
+## Phase 4 — Corrections capture (migration 025 + Spec 14) — ✅ COMPLETE on prod 2026-08-20 — backend (gate 36/36; 025 + deletion.js) + Spec 14 UI (staging-GREEN → merged)
 
 **Backend gate (migration 025) — PASSED 36/36 on staging 2026-08-20** (`translationapp1-staging`; one initial red was a harness-only predicate on the composite-return clear, fixed — the RPC behavior was correct). `scripts/corrections-gate-test.mjs`, run on **staging** with `RLS_TEST_CONFIRM_STAGING=yes` (never against prod). Uses the existing RLS test fixtures (tenant-1 members A/B, tenant-2 user C). The migration also embeds an in-transaction verification block (RLS on, SELECT-only policies, RPC grants) that rolls the migration back on failure.
 
@@ -2161,9 +2161,9 @@ Adversarial (the point of the gate):
 - [ ] Empty/over-long `corrected_text` rejected; correcting a `(message, lang)` with no cached translation rejected.
 - [ ] Deletion hook: `anonymize_corrections_for_account(A)` (as service_role) nulls A's `corrector_user_id` + `corrector_known_languages`, keeps `original_text`/`corrected_text`/`model_output`; **not** executable by `authenticated`.
 
-**Frontend (Spec 14, after 025 is on staging):** on a Vercel Preview against staging — the menu appears only on received translated bubbles (not own/system/untranslated); good/bad writes+toggles a review; suggest-a-correction writes a correction; the bubble keeps showing `model_output` and the "you suggested a correction" marker reveals the user's text; honest copy (no "sender sees this"). Then merge to `main`.
+**Frontend (Spec 14) — ✅ staging smoke GREEN → merged to `main` 2026-08-20.** On a Vercel Preview against staging: the menu appears only on received translated bubbles (not own/system/untranslated); good/bad writes+toggles a review; suggest-a-correction writes a correction; the bubble keeps showing `model_output` and the "you suggested a correction" marker reveals the user's text; honest copy (no "sender sees this"). UI feedback state is session-local (rows persist; markers reset on reload — persistent read-back deferred, roadmap Phase 4).
 
-**Deploy order:** migration 025 (staging → prod) → wire `server/lib/deletion.js` anonymize call → Spec 14 frontend. Docs to reconcile on ship: roadmap Phase 4 checkboxes, architecture §7 "Live tables at a glance" (move the two tables up once on prod), regenerate `schema.sql` (CI on migration merge), decisions.md already has the design entry (2026-07-28).
+**Deploy order (all completed 2026-08-20):** migration 025 (staging → prod) → `server/lib/deletion.js` anonymize call → Spec 14 frontend (staging → merged to `main`). Docs reconciled: roadmap Phase 4 checkboxes ✅, architecture §7 "Live tables at a glance" (two tables added) ✅, `schema.sql` regenerates via CI on the migration merge, decisions.md design entry (2026-07-28).
 
 ---
 
@@ -2171,6 +2171,7 @@ Adversarial (the point of the gate):
 
 *Reverse chronological. One line per change; project events link to `decisions.md`.*
 
+- **2026-08-20** — Phase 4 capture **COMPLETE on prod**: backend gate GREEN 36/36 (migration 025 + `deletion.js`) and Spec 14 UI (staging-GREEN → merged to `main`). Section flipped to ✅. (→ decisions.md 2026-07-28)
 - **2026-07-28** — Added "Phase 4 — Corrections capture" gate section (migration 025 backend gate `corrections-gate-test.mjs` + Spec 14 frontend checks; pending staging). (→ decisions.md 2026-07-28)
 - **2026-07-16** — Added "Spec 11 — Add-to-conversation + system message" section (migration 023 + frontend built Cowork; local build GREEN; migration + staging smoke pending). (→ specs.md Spec 11)
 - **2026-07-16** — Added "Spec 12 — Group-chat sender attribution" section (built Cowork, frontend-only; local build GREEN; staging GREEN). (→ specs.md Spec 12)

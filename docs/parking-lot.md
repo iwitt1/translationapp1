@@ -41,7 +41,7 @@ Every mainstream messenger lets you name a group and shows a sensible name when 
 **Priority:** Med · **Blocks:** none
 
 Let a member react to a message with an emoji/tapback (❤️👍😂…), shown on the bubble and aggregated per reaction. Every mainstream messenger has this; expected behavior.
-- **Why interesting:** Standard chat affordance; also the reason the Phase 4 correction UI uses a **hold/hover context menu with a reserved reactions row** rather than thumb buttons — thumbs would collide with reactions (decisions.md 2026-07-28). Building the menu scaffold in Phase 4 means reactions drop into the reserved slot without reworking the interaction.
+- **Why interesting:** Standard chat affordance; also the reason the Phase 4 correction UI uses a **hold/hover context menu** rather than thumb buttons — thumbs would collide with reactions (decisions.md 2026-07-28). The Phase 4 menu ships with **no** reserved reactions slot (decided at build, 2026-08-20 — a stub was judged messy and cheap to add later); reactions land as their own feature, added into that same menu when built.
 - **Shape (when built):** a `message_reactions` table (message_id, account_id, emoji, tenant_id), membership-scoped RLS, written via RPC; reactions ride the existing `messages` realtime channel or their own. Distinct axis from translation feedback (reaction = response to *what was said*; good/bad = judgment of *how it was rendered*).
 - **Surfaced:** 2026-07-28 (Isaac), during the Phase 4 capture-UI design.
 - **Trigger:** consumer chat polish pass, or when the reserved menu slot is ready to fill.

@@ -9,12 +9,12 @@
 
 ---
 
-## Spec 14 — Corrections capture UI (Phase 4) — Cursor/Sonnet-executed
+## Spec 14 — Corrections capture UI (Phase 4) — Cowork-built (on prod 2026-08-20)
 
 **Linked roadmap item:** Phase 4 — Corrections capture → "Capture UI" (build-now block)
 **Author:** Isaac (with Cowork)
 **Drafted:** 2026-07-28
-**Status:** **Cowork-built 2026-08-20 — staging smoke GREEN (Vercel Preview); merge to `main` pending.** Backend (migration 025 + RPCs + deletion wiring) is live on prod (staging gate GREEN 36/36). Frontend built directly in Cowork (Isaac's call, not Cursor): `src/lib/corrections.js` (`recordReview`/`recordCorrection` wrappers) + `MessageBubble.jsx` (hold/hover/right-click context menu → good/bad + suggest-a-correction; editor pre-filled + partial-ok; canonical never overwritten; tap-to-reveal marker). Next: branch → Vercel Preview against staging → smoke → merge to `main`. Design + rejected alternatives: decisions.md 2026-07-28.
+**Status:** **shipped — on prod 2026-08-20** (Cowork-built): staging smoke GREEN (Vercel Preview) → merged to `main`. Backend (migration 025 + RPCs + deletion wiring) is live on prod (staging gate GREEN 36/36). Frontend built directly in Cowork (Isaac's call, not Cursor): `src/lib/corrections.js` (`recordReview`/`recordCorrection` wrappers) + `MessageBubble.jsx` (hold/hover/right-click context menu → good/bad + suggest-a-correction; editor pre-filled + partial-ok; canonical never overwritten; tap-to-reveal marker). Next: branch → Vercel Preview against staging → smoke → merge to `main`. Design + rejected alternatives: decisions.md 2026-07-28.
 
 ### Goal
 Give users a way to signal translation quality and suggest corrections, feeding the Phase 4 corpus — **without** overwriting what the app shows and **without** using thumbs (which collide with the future message-reactions feature). Two write paths, both already built server-side in migration 025: good/bad → `record_review`; inline correction → `record_correction`.
@@ -887,7 +887,8 @@ The earlier Resume notes section (session 1, 2026-05-21) was built on a misdiagn
 
 *Reverse chronological. One line per change; project events link to `decisions.md`.*
 
-- **2026-07-28** — Added **Spec 14 — Corrections capture UI** (Phase 4): hold/hover context menu (reserved reactions slot, good/bad → `record_review`, suggest-a-correction → `record_correction`), correction editor that never overwrites the canonical translation, tap-to-reveal marker. Cursor/Sonnet-executed after migration 025 is on staging. (→ roadmap.md Phase 4; decisions.md 2026-07-28)
+- **2026-08-20** — **Spec 14 shipped to prod** (Cowork-built, not Cursor): stacked good/bad + suggest-a-correction context menu (**no** reactions slot), bad→funnel, partial corrections accepted, never overwrites the shown translation, tap-to-reveal marker. Staging-GREEN → merged to `main`. (→ roadmap.md Phase 4; decisions.md 2026-08-20 build refinement)
+- **2026-07-28** — Added **Spec 14 — Corrections capture UI** (Phase 4): hold/hover context menu (good/bad → `record_review`, suggest-a-correction → `record_correction`), correction editor that never overwrites the canonical translation, tap-to-reveal marker. (→ roadmap.md Phase 4; decisions.md 2026-07-28)
 - **2026-07-16** — Added Spec 11 (add-to-conversation: search-to-add + "X was added" system message + migration 023 `messages.kind`+`payload`/`add_conversation_member`/direct→group) + Spec 12 (group-chat sender attribution, avatar+name Option B, 12-color hash + within-conversation de-collision) for new roadmap Phase 2.5; both from 3-user testing, **approved 2026-07-16, Cowork-built** (migration 023 Isaac-run on staging). Open questions resolved: system-message storage → `messages` column, add policy → open direct-add, color keying → `account_id`. (→ roadmap.md Phase 2.5)
 - **2026-07-07** — Added Spec 8 (onboarding language list: ~40 native-name languages) + Spec 9 (core-controls symbology via lucide-react) for roadmap Phase 2.4; both Cursor/Sonnet-executed. (→ roadmap.md Phase 2.4)
 - **2026-07-07** — Docs legibility cleanup: header de-blobbed; added this Changelog + a "mostly historical" banner. (→ decisions.md 2026-07-07 "Docs legibility cleanup + new conventions")

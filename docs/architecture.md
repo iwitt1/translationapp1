@@ -392,7 +392,7 @@ FKs to `conversations` and `profiles` are both ON DELETE CASCADE.
 
 ### Phase 4 tables — corrections capture (migration 025)
 
-> **Capture BUILT in migration 025** (staging-first; the *consumption* side — clustering,
+> **Capture LIVE on prod (migration 025 + Spec 14 UI, 2026-08-20)** (the *consumption* side — clustering,
 > few-shot retrieval, ai_audit, spam filtering — is deferred until the corpus has volume;
 > roadmap Phase 4). Both tables are **append-oriented, RLS SELECT-own, written only via
 > `SECURITY DEFINER` RPCs** (`record_correction` / `record_review`) that assemble the
@@ -1075,6 +1075,7 @@ Plain-English definitions for jargon used here. Keeps the door open for non-tech
 
 *Reverse chronological. One line per change; project events link to `decisions.md`.*
 
+- **2026-08-20** — Phase 4 capture live on prod: flipped §7 "Live tables" + the capture-tables header to on-prod, §10 deletion-anonymization now wired in `deletion.js`, §13 file-map note updated. (→ roadmap.md Phase 4)
 - **2026-07-28** — Phase 4 corrections capture (migration 025): §7 rewrote the `translation_corrections`/`translation_reviews` design (snapshot fields, history window, ownership=reach, `pool_status`, model gap) + added the Phase 4 corrections-functions list; §10 updated the deletion path (anonymize hook, wiring due); §13 file map migration 025 + `corrections-gate-test.mjs`; "Live tables" note flipped to "capture built in 025". (→ decisions.md 2026-07-28 "Phase 4 corrections capture")
 - **2026-07-16** — Spec 13 (Phase 2.5): §7 `set_conversation_title` in the conversation-RPC list (+ group_renamed/group_name_cleared system message); §13 file map migration 024.
 - **2026-07-16** — Spec 11 (Phase 2.5) reconciled: §7 `messages.kind`/`payload` columns + `add_conversation_member` / `_member_added_finalize` in the conversation-RPC list + `redeem_invite` 023 amendment; §13 file map migration 023. (→ decisions.md 2026-07-16 "Spec 11")
