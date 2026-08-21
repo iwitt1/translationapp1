@@ -1,10 +1,11 @@
 import { useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, MoreHorizontal, Check, Flag, Pencil } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { CHAT_APP_TENANT_ID } from '../lib/config';
 import { PROMPT_VERSION } from '../../lib/translatePrompt.js';
 import { API_URL, INFER_API_URL, PROFILE_INFERENCE_ENABLED, normalizeLang, apiFetch } from '../lib/translation';
 import { initials } from './ConversationList';
+import { recordCorrection, recordReview } from '../lib/corrections';
 
 /*
 ========================================================
@@ -210,18 +211,78 @@ export default function MessageBubble({
     return () => ro.disconnect();
   }, [showOriginal, expanded, translatedText, message.original_text]);
 
+  // ── Corrections capture (Phase 4) ────────────────────────────────────────
+  // Feedback affordances live only on RECEIVED + TRANSLATED bubbles — the same
+  // condition as the original disclosure (a translation exists to judge). All
+  // state is session-local (optimistic); persisting across reload is a later pass.
+  const canFeedback = showOriginal;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [reviewState, setReviewState] = useState(null);        // 'good' | 'bad' | null
+  const [savedCorrection, setSavedCorrection] = useState(null); // the user's submitted text
+  const [revealCorrection, setRevealCorrection] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [actionErr, setActionErr] = useState('');
+  const pressTimer = useRef(null);
+
+  function submitReview(next) {
+    setReviewState(next);
+    setActionErr('');
+    recordReview(message.id, targetLanguage, next).catch(() =>
+      setActionErr("Couldn't save. Try again."));
+  }
+  function handleGood() {
+    setMenuOpen(false);
+    submitReview(reviewState === 'good' ? null : 'good');
+  }
+  function openEditor() {
+    setDraft(translatedText);
+    setActionErr('');
+    setMenuOpen(false);
+    setEditorOpen(true);
+  }
+  function handleBad() {
+    // Record 'bad' immediately so it's captured even if no correction is written,
+    // then funnel into the editor (decisions.md 2026-07-28 / Spec 14).
+    submitReview('bad');
+    openEditor();
+  }
+  async function handleSaveCorrection() {
+    const text = draft.trim();
+    if (!text) return;
+    setBusy(true);
+    setActionErr('');
+    try {
+      await recordCorrection(message.id, targetLanguage, text);
+      setSavedCorrection(text);
+      setEditorOpen(false);
+    } catch {
+      setActionErr("Couldn't save your correction. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  function startPress() { pressTimer.current = setTimeout(() => setMenuOpen(true), 450); }
+  function cancelPress() { if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; } }
+
   const attributed = showSenderName && !isSender;
   const avatarBg = senderColor?.bg || 'bg-slate-400';
   const nameText = senderColor?.text || 'text-slate-500';
 
   const bubbleBlock = (
     <>
+      <div className="relative group">
         <div
           className={`rounded-2xl px-3.5 py-2 ${
             isSender
               ? 'bg-violet-600 text-white rounded-br-md'
               : 'bg-white border border-slate-200 rounded-bl-md'
           }${message.pending ? ' opacity-60' : ''}${message.failed ? ' opacity-70' : ''}`}
+          onContextMenu={canFeedback ? (e) => { e.preventDefault(); setMenuOpen(true); } : undefined}
+          onTouchStart={canFeedback ? startPress : undefined}
+          onTouchEnd={canFeedback ? cancelPress : undefined}
+          onTouchMove={canFeedback ? cancelPress : undefined}
         >
           <div className="text-sm whitespace-pre-wrap break-words">
             {isSender ? message.original_text : (loading ? '…' : translatedText)}
@@ -275,6 +336,86 @@ export default function MessageBubble({
             )
           )}
         </div>
+
+        {canFeedback && (
+          <>
+            <button
+              type="button"
+              onClick={() => setMenuOpen((v) => !v)}
+              className="absolute -right-6 top-1 p-1 text-slate-400 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity hover:text-slate-600"
+              aria-label="Translation feedback"
+              aria-haspopup="menu"
+            >
+              <MoreHorizontal size={16} />
+            </button>
+
+            {menuOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} aria-hidden="true" />
+                <div className="absolute left-0 top-full mt-1 z-20 w-52 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden text-sm" role="menu">
+                  <button type="button" role="menuitem" onClick={handleGood} className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-slate-50">
+                    <Check size={16} className="text-slate-500 shrink-0" /> Good translation
+                    {reviewState === 'good' && <Check size={14} className="ml-auto text-violet-600" />}
+                  </button>
+                  <button type="button" role="menuitem" onClick={handleBad} className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-slate-50">
+                    <Flag size={16} className="text-slate-500 shrink-0" /> Bad translation
+                    {reviewState === 'bad' && <Check size={14} className="ml-auto text-violet-600" />}
+                  </button>
+                  <button type="button" role="menuitem" onClick={openEditor} className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-violet-700 border-t border-slate-100 hover:bg-slate-50">
+                    <Pencil size={16} className="shrink-0" /> Suggest a correction
+                  </button>
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </div>
+
+      {editorOpen && (
+        <div className="mt-1.5 w-full max-w-xs bg-white border border-slate-200 rounded-xl p-2.5 text-sm">
+          <div className="text-[11px] text-slate-400 mb-0.5">Original</div>
+          <div className="text-[13px] text-slate-600 mb-2 whitespace-pre-wrap break-words">{message.original_text}</div>
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={2}
+            autoFocus
+            className="w-full border border-violet-300 rounded-lg px-2 py-1.5 text-sm resize-y focus:outline-none focus:ring-1 focus:ring-violet-400"
+          />
+          <div className="text-[11px] text-slate-400 mt-1">Just fix what's wrong — no need to redo the whole message.</div>
+          {actionErr && <div className="text-[11px] text-rose-500 mt-1">{actionErr}</div>}
+          <div className="flex gap-2 mt-2">
+            <button type="button" onClick={handleSaveCorrection} disabled={busy || !draft.trim()} className="px-3 py-1 rounded-md bg-violet-600 text-white text-xs font-medium disabled:opacity-50">
+              {busy ? 'Saving…' : 'Save'}
+            </button>
+            <button type="button" onClick={() => { setEditorOpen(false); setActionErr(''); }} className="px-3 py-1 rounded-md border border-slate-300 text-slate-600 text-xs">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!editorOpen && savedCorrection && (
+        <div className="mt-1">
+          <button type="button" onClick={() => setRevealCorrection((v) => !v)} className="flex items-center gap-1 text-[11px] text-violet-600">
+            <Pencil size={12} className="shrink-0" /> You suggested a correction
+            {revealCorrection ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          </button>
+          {revealCorrection && (
+            <div className="mt-1 bg-violet-50 rounded-lg px-2.5 py-1.5">
+              <div className="text-[10px] text-violet-500">Your suggestion</div>
+              <div className="text-[13px] text-slate-700 whitespace-pre-wrap break-words">{savedCorrection}</div>
+            </div>
+          )}
+          <div className="text-[10px] text-slate-400 mt-0.5">Thanks — this helps improve translations.</div>
+        </div>
+      )}
+
+      {!editorOpen && !savedCorrection && reviewState && (
+        <div className="mt-1 text-[11px] text-slate-400">
+          {reviewState === 'good' ? 'Marked good' : 'Marked bad'} · thanks
+        </div>
+      )}
 
         {/* timestamp + send-state / retry */}
         <div className={`text-[10px] text-slate-400 mt-0.5 ${isSender ? 'text-right mr-1' : 'ml-1'}`}>

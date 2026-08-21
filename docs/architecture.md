@@ -267,10 +267,12 @@ subsections that follow.
 | `invites` + `invite_redemptions` | Shareable invite links and who redeemed them. |
 | `email_hash_abuse` | A privacy-preserving signal to catch signup-spam without storing deleted users' emails. |
 | `data_deletion_requests` | "Delete my account" (GDPR) requests + the audit trail proving it happened. |
+| `translation_corrections` | User-submitted corrections of translations — the append-only training corpus (the moat). |
+| `translation_reviews` | Good/bad quality signals on translations (+ future AI-audit reviews). |
 
-*(`translation_corrections`, `translation_reviews` — the corrections / quality-review store;
-**capture built in migration 025** (Phase 4, staging-first — add to this table once on prod);
-design further down.)*
+*(`translation_corrections` + `translation_reviews` are **live on prod as of migration 025**
+(Phase 4 capture, 2026-08-20); design + rationale further down. Consumption — clustering /
+retrieval / filter — is deferred.)*
 
 ### Tables that exist today (MVP)
 
