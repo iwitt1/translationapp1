@@ -2143,7 +2143,7 @@ Live behavior (no manual reload anywhere in these steps):
 
 ---
 
-## Phase 4 — Corrections capture (migration 025 + Spec 14) — ✅ backend GREEN on staging 2026-08-20 (36/36); prod + Spec 14 pending
+## Phase 4 — Corrections capture (migration 025 + Spec 14) — ✅ backend LIVE on prod 2026-08-20 (staging gate 36/36; 025 replayed on prod, deletion.js merged); Spec 14 UI pending
 
 **Backend gate (migration 025) — PASSED 36/36 on staging 2026-08-20** (`translationapp1-staging`; one initial red was a harness-only predicate on the composite-return clear, fixed — the RPC behavior was correct). `scripts/corrections-gate-test.mjs`, run on **staging** with `RLS_TEST_CONFIRM_STAGING=yes` (never against prod). Uses the existing RLS test fixtures (tenant-1 members A/B, tenant-2 user C). The migration also embeds an in-transaction verification block (RLS on, SELECT-only policies, RPC grants) that rolls the migration back on failure.
 

@@ -25,7 +25,7 @@
 | [Phase 2.4 — Demo-readiness polish + repo hardening](#phase-24--demo-readiness-polish--repo-hardening) | App usability (settings, languages, symbology, realtime) + repo scrub for sharing | ✅ Done (2026-07-08) |
 | [Phase 2.5 — Group-chat polish (surfaced in 3-user testing)](#phase-25--group-chat-polish-surfaced-in-3-user-testing) | Sender attribution + search-to-add / system messages + group naming | ✅ Done (2026-07-16 — Spec 11 + 12 + 13 on prod) |
 | [Phase 3 — Real conversation model](#phase-3--real-conversation-model) | Many conversations/participants (not one global room) | ✅ Done (prod cutover 2026-06-18) |
-| [Phase 4 — Corrections capture](#phase-4--corrections-capture) | Start the corrections data flywheel | 🔶 In progress — capture backend GREEN on staging (migration 025 gate 36/36, 2026-08-20); prod + Spec 14 UI pending; activation deferred |
+| [Phase 4 — Corrections capture](#phase-4--corrections-capture) | Start the corrections data flywheel | 🔶 In progress — capture backend LIVE on prod (migration 025); Spec 14 UI staging-GREEN, merge to prod pending; activation deferred |
 | [Phase 5 — Mobile](#phase-5--mobile) | Native mobile app (React Native) | 📋 Planned (future) |
 | [Phase 6 — Open the API (Phase 2 of the strategic plan)](#phase-6--open-the-api-phase-2-of-the-strategic-plan) | First external API customer — the actual business | 📋 Planned (strategic Phase 2) |
 | [Operating principles for this roadmap](#operating-principles-for-this-roadmap) | How this roadmap is maintained | — |
@@ -436,7 +436,7 @@ This phase will get detailed when we're approaching it. High-level items:
 
 *Reverse chronological. One line per change; details live in `decisions.md`.*
 
-- **2026-08-20** — Phase 4 capture **backend gate GREEN 36/36 on staging** (migration 025 applied on `translationapp1-staging`; `corrections-gate-test.mjs`). Prod replay + Spec 14 UI still pending.
+- **2026-08-20** — Phase 4 capture **backend on prod**: migration 025 replayed on prod, `deletion.js` anonymize wiring merged to `main`; staging gate GREEN 36/36 (`corrections-gate-test.mjs`). Spec 14 capture UI next (Cursor).
 - **2026-07-28** — **Phase 4 started (capture)**: restructured into build-now (capture: migration 025 tables/RLS/RPCs, capture UI Spec 14, deletion wiring, gate) vs. deferred activation (clustering, few-shot retrieval, spam filter, ai_audit). Design + rejected alternatives → decisions.md 2026-07-28. Migration 025 + `corrections-gate-test.mjs` + `deletion.js` anonymize wiring written.
 - **2026-07-16** — Marked **Phase 2.2 done** (retroactive): the 3+-user share-ready smoke ran on prod on 2026-07-16 — its findings were split into Phase 2.5 (Specs 11/12/13, all shipped). Missed at the time because the smoke fed straight into 2.5 without circling back to close 2.2's box.
 - **2026-07-16** — **Phase 2.5 shipped** (Specs 11 + 12 + 13 on prod): sender attribution, add-to-conversation + system messages, group naming.
