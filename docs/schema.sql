@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict Bbu9NYCPqhbE6L8T5YdBqCXxPfMOk8N41oLJa9x4rUvncco1O23mT4T7a8VhH8z
+\restrict j946OGJKg4YdaCuSME4O8hImFzYYppvIGS3HxHp4AI0oNsoSNQHO2DPyx7ih1rD
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.11 (Ubuntu 17.11-1.pgdg24.04+2)
@@ -173,6 +173,42 @@ $$;
 --
 
 COMMENT ON FUNCTION public.add_conversation_member(p_conversation_id uuid, p_account_id uuid) IS 'Add an account to a conversation the caller is an active member of. Tenant-scoped, block-gated, idempotent; promotes direct→group (+ nulls dedupe_key) past 2 members and posts a member_added system message. SECURITY DEFINER. (023, Spec 11.)';
+
+
+--
+-- Name: anonymize_corrections_for_account(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.anonymize_corrections_for_account(p_account_id uuid) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_n integer := 0;
+  v_m integer := 0;
+BEGIN
+  UPDATE public.translation_corrections
+     SET corrector_user_id = NULL,
+         corrector_known_languages = NULL
+   WHERE corrector_user_id = p_account_id;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+
+  UPDATE public.translation_reviews
+     SET reviewer_id = NULL,
+         reviewer_known_languages = NULL
+   WHERE reviewer_id = p_account_id;
+  GET DIAGNOSTICS v_m = ROW_COUNT;
+
+  RETURN v_n + v_m;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION anonymize_corrections_for_account(p_account_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.anonymize_corrections_for_account(p_account_id uuid) IS 'Step 7 deletion sweep hook: strip a corrector/reviewer''s PII (user_id + known_languages) while retaining the translation pair. service_role only. decisions.md 2026-07-28.';
 
 
 --
@@ -1026,6 +1062,287 @@ $$;
 COMMENT ON FUNCTION public.record_abandoned_email_hash(p_tenant_id uuid, p_email_hash_hex text, p_key_version smallint) IS 'Step 6 abandonment sweep: atomic insert-or-increment of a keyed email HMAC (passed as hex) into email_hash_abuse. Repeat abandon bumps abandon_count + last_seen; first_seen preserved. System function — service_role only. decisions.md 2026-06-10; policies.md §6.';
 
 
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: translation_corrections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.translation_corrections (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    tenant_id uuid NOT NULL,
+    message_id uuid,
+    target_language text NOT NULL,
+    original_text text,
+    model_output text,
+    corrected_text text NOT NULL,
+    source_language text,
+    dialect_region text,
+    prompt_version text,
+    model text,
+    register_context jsonb,
+    conversation_history jsonb,
+    context_snapshot jsonb,
+    correction_source text DEFAULT 'user_edit'::text NOT NULL,
+    corrector_user_id uuid,
+    corrector_known_languages text[],
+    ownership text DEFAULT 'platform'::text NOT NULL,
+    pool_status text DEFAULT 'unreviewed'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT translation_corrections_ownership_check CHECK ((ownership = ANY (ARRAY['platform'::text, 'tenant'::text, 'shared'::text]))),
+    CONSTRAINT translation_corrections_pool_status_check CHECK ((pool_status = ANY (ARRAY['unreviewed'::text, 'accepted'::text, 'rejected'::text, 'spam'::text]))),
+    CONSTRAINT translation_corrections_source_check CHECK ((correction_source = ANY (ARRAY['user_edit'::text, 'thumbs_down'::text, 'bilingual_review'::text, 'ai_audit'::text])))
+);
+
+
+--
+-- Name: TABLE translation_corrections; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.translation_corrections IS 'Append-only corrections corpus (Phase 4). Server-RPC-written, self-contained snapshot. tenant_id = provenance; ownership = reach (platform poolable). Canonical translation is never overwritten by corrected_text. architecture.md §7; decisions.md 2026-07-28.';
+
+
+--
+-- Name: record_correction(uuid, text, text, jsonb, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_correction(p_message_id uuid, p_target_language text, p_corrected_text text, p_context jsonb DEFAULT NULL::jsonb, p_source text DEFAULT 'user_edit'::text) RETURNS public.translation_corrections
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_uid       uuid := auth.uid();
+  v_tenant    uuid := public.auth_tenant_id();
+  v_conv      uuid;
+  v_orig      text;
+  v_srclang   text;
+  v_created   timestamptz;
+  v_output    text;
+  v_prompt    text;
+  v_known     text[];
+  v_dialect   text;
+  v_register  jsonb;
+  v_history   jsonb;
+  v_ownership text;
+  v_clean     text;
+  v_row       public.translation_corrections;
+BEGIN
+  IF v_uid IS NULL OR v_tenant IS NULL THEN
+    RAISE EXCEPTION 'record_correction: not authenticated' USING errcode = '28000';
+  END IF;
+
+  v_clean := nullif(btrim(coalesce(p_corrected_text, '')), '');
+  IF v_clean IS NULL THEN
+    RAISE EXCEPTION 'record_correction: corrected_text is empty';
+  END IF;
+  IF length(v_clean) > 4000 THEN
+    RAISE EXCEPTION 'record_correction: corrected_text too long (max 4000)';
+  END IF;
+  IF p_source NOT IN ('user_edit','thumbs_down','bilingual_review','ai_audit') THEN
+    RAISE EXCEPTION 'record_correction: invalid correction_source %', p_source;
+  END IF;
+
+  -- The corrected message (tenant-scoped) + membership gate.
+  SELECT m.conversation_id, m.original_text, m.source_language, m.created_at
+    INTO v_conv, v_orig, v_srclang, v_created
+  FROM public.messages m
+  WHERE m.id = p_message_id AND m.tenant_id = v_tenant AND m.kind = 'user';
+  IF v_conv IS NULL THEN
+    RAISE EXCEPTION 'record_correction: message not found in tenant';
+  END IF;
+  IF NOT public.is_active_member(v_conv, v_uid) THEN
+    RAISE EXCEPTION 'record_correction: not a member of the conversation';
+  END IF;
+
+  -- The translation being corrected (must exist — you can't correct a non-translation).
+  SELECT mt.translated_text, mt.prompt_version
+    INTO v_output, v_prompt
+  FROM public.message_translations mt
+  WHERE mt.message_id = p_message_id AND mt.language = p_target_language;
+  IF v_output IS NULL THEN
+    RAISE EXCEPTION 'record_correction: no cached translation for (message, %)', p_target_language;
+  END IF;
+
+  -- Corrector profile snapshot (bilingual-weight signal + dialect).
+  SELECT ulp.known_languages, ulp.dialect_region
+    INTO v_known, v_dialect
+  FROM public.user_linguistic_profiles ulp
+  WHERE ulp.user_id = v_uid AND ulp.tenant_id = v_tenant;
+
+  -- Conversation register snapshot (may be absent → NULL).
+  SELECT jsonb_build_object(
+           'detected_register',      cc.detected_register,
+           'register_confidence',    cc.register_confidence,
+           'relationship_closeness', cc.relationship_closeness
+         )
+    INTO v_register
+  FROM public.conversation_contexts cc
+  WHERE cc.conversation_id = v_conv;
+
+  -- Frozen history window: the (up to) 3 user messages that preceded this one — what the
+  -- model actually had as context. Snapshotted, not re-derived (messages can be deleted).
+  SELECT coalesce(jsonb_agg(h ORDER BY h_created), '[]'::jsonb)
+    INTO v_history
+  FROM (
+    SELECT jsonb_build_object(
+             'message_id',      m2.id,
+             'sender_id',       m2.sender_id,
+             'original_text',   m2.original_text,
+             'source_language', m2.source_language,
+             'created_at',      m2.created_at
+           ) AS h,
+           m2.created_at AS h_created
+    FROM public.messages m2
+    WHERE m2.conversation_id = v_conv
+      AND m2.kind = 'user'
+      AND m2.created_at < v_created
+    ORDER BY m2.created_at DESC
+    LIMIT 3
+  ) sub;
+
+  -- Reach: default from the tenant (sole consumer tenant = 'platform' → globally poolable).
+  SELECT coalesce(t.default_correction_ownership, 'platform')
+    INTO v_ownership
+  FROM public.tenants t WHERE t.id = v_tenant;
+
+  INSERT INTO public.translation_corrections (
+    tenant_id, message_id, target_language,
+    original_text, model_output, corrected_text,
+    source_language, dialect_region, prompt_version, model,
+    register_context, conversation_history, context_snapshot,
+    correction_source, corrector_user_id, corrector_known_languages,
+    ownership
+  ) VALUES (
+    v_tenant, p_message_id, p_target_language,
+    v_orig, v_output, v_clean,
+    v_srclang, v_dialect, v_prompt, NULL,
+    v_register, v_history, p_context,
+    p_source, v_uid, v_known,
+    coalesce(v_ownership, 'platform')
+  )
+  RETURNING * INTO v_row;
+
+  RETURN v_row;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION record_correction(p_message_id uuid, p_target_language text, p_corrected_text text, p_context jsonb, p_source text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.record_correction(p_message_id uuid, p_target_language text, p_corrected_text text, p_context jsonb, p_source text) IS 'Phase 4: append a correction. Membership-gated; assembles the snapshot from authoritative reads (client cannot forge context). Append-only. decisions.md 2026-07-28.';
+
+
+--
+-- Name: translation_reviews; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.translation_reviews (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    tenant_id uuid NOT NULL,
+    message_id uuid,
+    target_language text NOT NULL,
+    reviewer_id uuid,
+    reviewer_type text DEFAULT 'user'::text NOT NULL,
+    reviewer_known_languages text[],
+    rating text,
+    quality_score double precision,
+    flags text[],
+    suggested_fix text,
+    prompt_version text,
+    model text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT translation_reviews_rating_check CHECK ((rating = ANY (ARRAY['good'::text, 'bad'::text]))),
+    CONSTRAINT translation_reviews_reviewer_type_check CHECK ((reviewer_type = ANY (ARRAY['user'::text, 'human'::text, 'bilingual_user'::text, 'ai_audit'::text])))
+);
+
+
+--
+-- Name: TABLE translation_reviews; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.translation_reviews IS 'Translation quality signals (Phase 4). User good/bad now (reviewer_type=user); ai_audit/human deferred. Anchored on message_id+target_language, not translation_events. architecture.md §7; decisions.md 2026-07-28.';
+
+
+--
+-- Name: record_review(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_review(p_message_id uuid, p_target_language text, p_rating text) RETURNS public.translation_reviews
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_uid     uuid := auth.uid();
+  v_tenant  uuid := public.auth_tenant_id();
+  v_conv    uuid;
+  v_prompt  text;
+  v_known   text[];
+  v_row     public.translation_reviews;
+BEGIN
+  IF v_uid IS NULL OR v_tenant IS NULL THEN
+    RAISE EXCEPTION 'record_review: not authenticated' USING errcode = '28000';
+  END IF;
+  IF p_rating IS NOT NULL AND p_rating NOT IN ('good','bad') THEN
+    RAISE EXCEPTION 'record_review: invalid rating %', p_rating;
+  END IF;
+
+  SELECT m.conversation_id INTO v_conv
+  FROM public.messages m
+  WHERE m.id = p_message_id AND m.tenant_id = v_tenant AND m.kind = 'user';
+  IF v_conv IS NULL THEN
+    RAISE EXCEPTION 'record_review: message not found in tenant';
+  END IF;
+  IF NOT public.is_active_member(v_conv, v_uid) THEN
+    RAISE EXCEPTION 'record_review: not a member of the conversation';
+  END IF;
+
+  -- Clear (toggle off).
+  IF p_rating IS NULL THEN
+    DELETE FROM public.translation_reviews
+    WHERE message_id = p_message_id AND target_language = p_target_language AND reviewer_id = v_uid;
+    RETURN NULL;
+  END IF;
+
+  SELECT mt.prompt_version INTO v_prompt
+  FROM public.message_translations mt
+  WHERE mt.message_id = p_message_id AND mt.language = p_target_language;
+
+  SELECT ulp.known_languages INTO v_known
+  FROM public.user_linguistic_profiles ulp
+  WHERE ulp.user_id = v_uid AND ulp.tenant_id = v_tenant;
+
+  INSERT INTO public.translation_reviews (
+    tenant_id, message_id, target_language,
+    reviewer_id, reviewer_type, reviewer_known_languages,
+    rating, prompt_version
+  ) VALUES (
+    v_tenant, p_message_id, p_target_language,
+    v_uid, 'user', v_known,
+    p_rating, v_prompt
+  )
+  ON CONFLICT (message_id, target_language, reviewer_id) WHERE reviewer_id IS NOT NULL
+  DO UPDATE SET rating = EXCLUDED.rating,
+                reviewer_known_languages = EXCLUDED.reviewer_known_languages,
+                prompt_version = EXCLUDED.prompt_version,
+                created_at = now()
+  RETURNING * INTO v_row;
+
+  RETURN v_row;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION record_review(p_message_id uuid, p_target_language text, p_rating text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.record_review(p_message_id uuid, p_target_language text, p_rating text) IS 'Phase 4: upsert a good/bad translation review (NULL clears). Membership-gated. decisions.md 2026-07-28.';
+
+
 --
 -- Name: redeem_invite(text); Type: FUNCTION; Schema: public; Owner: -
 --
@@ -1198,10 +1515,6 @@ $$;
 
 COMMENT ON FUNCTION public.report_account(p_target uuid, p_reason text, p_details text) IS 'Record a report and ensure an active block in one transaction (atomic). Multiple reports of the same target are allowed. SECURITY DEFINER; tenant-scoped.';
 
-
-SET default_tablespace = '';
-
-SET default_table_access_method = heap;
 
 --
 -- Name: data_deletion_requests; Type: TABLE; Schema: public; Owner: -
@@ -2348,11 +2661,27 @@ ALTER TABLE ONLY public.tenants
 
 
 --
+-- Name: translation_corrections translation_corrections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.translation_corrections
+    ADD CONSTRAINT translation_corrections_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: translation_events translation_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.translation_events
     ADD CONSTRAINT translation_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: translation_reviews translation_reviews_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.translation_reviews
+    ADD CONSTRAINT translation_reviews_pkey PRIMARY KEY (id);
 
 
 --
@@ -2533,6 +2862,27 @@ CREATE INDEX reports_reported_idx ON public.reports USING btree (tenant_id, repo
 
 
 --
+-- Name: translation_corrections_corrector_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX translation_corrections_corrector_idx ON public.translation_corrections USING btree (corrector_user_id);
+
+
+--
+-- Name: translation_corrections_message_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX translation_corrections_message_idx ON public.translation_corrections USING btree (message_id, target_language);
+
+
+--
+-- Name: translation_corrections_pool_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX translation_corrections_pool_idx ON public.translation_corrections USING btree (tenant_id, source_language, target_language, ownership, pool_status);
+
+
+--
 -- Name: translation_events_task_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2544,6 +2894,13 @@ CREATE INDEX translation_events_task_id ON public.translation_events USING btree
 --
 
 CREATE INDEX translation_events_tenant_timestamp ON public.translation_events USING btree (tenant_id, "timestamp" DESC);
+
+
+--
+-- Name: translation_reviews_one_per_reviewer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX translation_reviews_one_per_reviewer ON public.translation_reviews USING btree (message_id, target_language, reviewer_id) WHERE (reviewer_id IS NOT NULL);
 
 
 --
@@ -2835,11 +3192,59 @@ ALTER TABLE ONLY public.reports
 
 
 --
+-- Name: translation_corrections translation_corrections_corrector_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.translation_corrections
+    ADD CONSTRAINT translation_corrections_corrector_user_id_fkey FOREIGN KEY (corrector_user_id) REFERENCES public.profiles(id) ON DELETE SET NULL;
+
+
+--
+-- Name: translation_corrections translation_corrections_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.translation_corrections
+    ADD CONSTRAINT translation_corrections_message_id_fkey FOREIGN KEY (message_id) REFERENCES public.messages(id) ON DELETE SET NULL;
+
+
+--
+-- Name: translation_corrections translation_corrections_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.translation_corrections
+    ADD CONSTRAINT translation_corrections_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.tenants(id);
+
+
+--
 -- Name: translation_events translation_events_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.translation_events
     ADD CONSTRAINT translation_events_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.tenants(id);
+
+
+--
+-- Name: translation_reviews translation_reviews_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.translation_reviews
+    ADD CONSTRAINT translation_reviews_message_id_fkey FOREIGN KEY (message_id) REFERENCES public.messages(id) ON DELETE SET NULL;
+
+
+--
+-- Name: translation_reviews translation_reviews_reviewer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.translation_reviews
+    ADD CONSTRAINT translation_reviews_reviewer_id_fkey FOREIGN KEY (reviewer_id) REFERENCES public.profiles(id) ON DELETE SET NULL;
+
+
+--
+-- Name: translation_reviews translation_reviews_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.translation_reviews
+    ADD CONSTRAINT translation_reviews_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.tenants(id);
 
 
 --
@@ -3134,6 +3539,32 @@ CREATE POLICY reports_select_own ON public.reports FOR SELECT TO authenticated U
 
 
 --
+-- Name: translation_corrections tc_select_own; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tc_select_own ON public.translation_corrections FOR SELECT TO authenticated USING (((corrector_user_id = auth.uid()) AND (tenant_id = public.auth_tenant_id())));
+
+
+--
+-- Name: translation_reviews tr_select_own; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tr_select_own ON public.translation_reviews FOR SELECT TO authenticated USING (((reviewer_id = auth.uid()) AND (tenant_id = public.auth_tenant_id())));
+
+
+--
+-- Name: translation_corrections; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.translation_corrections ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: translation_reviews; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.translation_reviews ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: user_linguistic_profiles ulp_select_same_tenant; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -3209,6 +3640,14 @@ GRANT ALL ON FUNCTION public.active_block_exists(p_a uuid, p_b uuid) TO service_
 REVOKE ALL ON FUNCTION public.add_conversation_member(p_conversation_id uuid, p_account_id uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.add_conversation_member(p_conversation_id uuid, p_account_id uuid) TO authenticated;
 GRANT ALL ON FUNCTION public.add_conversation_member(p_conversation_id uuid, p_account_id uuid) TO service_role;
+
+
+--
+-- Name: FUNCTION anonymize_corrections_for_account(p_account_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.anonymize_corrections_for_account(p_account_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.anonymize_corrections_for_account(p_account_id uuid) TO service_role;
 
 
 --
@@ -3348,6 +3787,42 @@ GRANT ALL ON FUNCTION public.list_due_deletion_requests() TO service_role;
 
 REVOKE ALL ON FUNCTION public.record_abandoned_email_hash(p_tenant_id uuid, p_email_hash_hex text, p_key_version smallint) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.record_abandoned_email_hash(p_tenant_id uuid, p_email_hash_hex text, p_key_version smallint) TO service_role;
+
+
+--
+-- Name: TABLE translation_corrections; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE public.translation_corrections TO authenticated;
+GRANT ALL ON TABLE public.translation_corrections TO service_role;
+GRANT SELECT ON TABLE public.translation_corrections TO hermes_readonly;
+
+
+--
+-- Name: FUNCTION record_correction(p_message_id uuid, p_target_language text, p_corrected_text text, p_context jsonb, p_source text); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.record_correction(p_message_id uuid, p_target_language text, p_corrected_text text, p_context jsonb, p_source text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.record_correction(p_message_id uuid, p_target_language text, p_corrected_text text, p_context jsonb, p_source text) TO authenticated;
+GRANT ALL ON FUNCTION public.record_correction(p_message_id uuid, p_target_language text, p_corrected_text text, p_context jsonb, p_source text) TO service_role;
+
+
+--
+-- Name: TABLE translation_reviews; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE public.translation_reviews TO authenticated;
+GRANT ALL ON TABLE public.translation_reviews TO service_role;
+GRANT SELECT ON TABLE public.translation_reviews TO hermes_readonly;
+
+
+--
+-- Name: FUNCTION record_review(p_message_id uuid, p_target_language text, p_rating text); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.record_review(p_message_id uuid, p_target_language text, p_rating text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.record_review(p_message_id uuid, p_target_language text, p_rating text) TO authenticated;
+GRANT ALL ON FUNCTION public.record_review(p_message_id uuid, p_target_language text, p_rating text) TO service_role;
 
 
 --
@@ -3856,5 +4331,5 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON T
 -- PostgreSQL database dump complete
 --
 
-\unrestrict Bbu9NYCPqhbE6L8T5YdBqCXxPfMOk8N41oLJa9x4rUvncco1O23mT4T7a8VhH8z
+\unrestrict j946OGJKg4YdaCuSME4O8hImFzYYppvIGS3HxHp4AI0oNsoSNQHO2DPyx7ih1rD
 
