@@ -150,6 +150,36 @@ export async function runDeletionSweep(config = {}) {
         deletedFields.email_hash_recorded = false;
       }
 
+      // 3b. Anonymize this account's corrections/reviews BEFORE the hard delete (Phase 4,
+      //     migration 025). Must precede the delete: the FK ON DELETE SET NULL would null
+      //     corrector_user_id on cascade, after which the rows can't be found by account_id.
+      //     Strips the corrector's PII (user_id + known_languages) but KEEPS the translation
+      //     pair. No-op (0) if translation_corrections/reviews don't exist yet on this env.
+      try {
+        const { data: anonN, error: anonErr } = await svc.rpc(
+          'anonymize_corrections_for_account',
+          { p_account_id: account_id },
+        );
+        if (anonErr) {
+          // 42883 = undefined_function (migration 025 not applied on this env yet) — tolerate
+          // so deletion still works pre-025; any other error is real and should surface.
+          if (anonErr.code === '42883') {
+            logger.warn(`[deletion] ${account_id}: anonymize_corrections_for_account absent (pre-025) — skipping`);
+            deletedFields.corrections_anonymized = 0;
+          } else {
+            throw new Error(`anonymize_corrections_for_account failed: ${anonErr.message}`);
+          }
+        } else {
+          deletedFields.corrections_anonymized = anonN ?? 0;
+        }
+      } catch (anonThrow) {
+        // A failure here must not strand the erasure — the account still gets deleted below,
+        // and the FK SET NULL still severs corrector_user_id (only known_languages would
+        // linger). Log loudly for reconciliation.
+        summary.errors += 1;
+        logger.error(`[deletion] ${account_id}: corrections anonymize error (continuing): ${anonThrow.message}`);
+      }
+
       // 4. Delete the auth.users row → cascade anonymizes; messages.sender_id → NULL.
       const { error: delErr } = await svc.auth.admin.deleteUser(account_id);
       if (delErr) {
@@ -205,7 +235,7 @@ async function snapshotDeletedFields(svc, accountId) {
     user_linguistic_profiles: await countOf('user_linguistic_profiles', 'user_id'),
     user_profile_events: await countOf('user_profile_events', 'user_id'),
     messages_anonymized: await countOf('messages', 'sender_id'),
-    corrections_anonymized: 0, // translation_corrections not built yet (architecture.md §7)
+    corrections_anonymized: 0, // overwritten in the sweep by anonymize_corrections_for_account() (migration 025)
     email_hash_recorded: false, // set true above when the hash is written
   };
 }

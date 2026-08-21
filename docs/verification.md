@@ -2143,10 +2143,35 @@ Live behavior (no manual reload anywhere in these steps):
 
 ---
 
+## Phase 4 — Corrections capture (migration 025 + Spec 14) — ✅ backend GREEN on staging 2026-08-20 (36/36); prod + Spec 14 pending
+
+**Backend gate (migration 025) — PASSED 36/36 on staging 2026-08-20** (`translationapp1-staging`; one initial red was a harness-only predicate on the composite-return clear, fixed — the RPC behavior was correct). `scripts/corrections-gate-test.mjs`, run on **staging** with `RLS_TEST_CONFIRM_STAGING=yes` (never against prod). Uses the existing RLS test fixtures (tenant-1 members A/B, tenant-2 user C). The migration also embeds an in-transaction verification block (RLS on, SELECT-only policies, RPC grants) that rolls the migration back on failure.
+
+Happy path:
+- [ ] Member A corrects a translation of a message A can see → a `translation_corrections` row lands with a **server-assembled** snapshot: `original_text`, `model_output` (= the cached `message_translations.translated_text`), `prompt_version`, `corrector_known_languages` (from A's ULP), `register_context`, `conversation_history` (≤3 prior user msgs, frozen), `ownership='platform'`, `pool_status='unreviewed'`, `corrector_user_id=A`.
+- [ ] `record_review(msg, lang, 'good')` then `'bad'` → one `translation_reviews` row that **toggles** (upsert), `NULL` → row deleted.
+- [ ] `model` is NULL (documented gap — prompt_version is the anchor).
+
+Adversarial (the point of the gate):
+- [ ] **Non-member** (C, tenant 2) calling `record_correction`/`record_review` on a tenant-1 message → rejected (`not a member` / `not found in tenant`).
+- [ ] A **left** member → rejected (`is_active_member` false).
+- [ ] **Direct client INSERT/UPDATE** into `translation_corrections` / `translation_reviews` (with A's token, bypassing the RPC) → **denied by RLS** (no write policy). Confirms the snapshot can't be forged.
+- [ ] **Append-only:** no client UPDATE/DELETE path on `translation_corrections`.
+- [ ] **Canonical unchanged:** after a correction, `message_translations` for `(message_id, language)` is byte-identical (correction never overwrites the translation).
+- [ ] Empty/over-long `corrected_text` rejected; correcting a `(message, lang)` with no cached translation rejected.
+- [ ] Deletion hook: `anonymize_corrections_for_account(A)` (as service_role) nulls A's `corrector_user_id` + `corrector_known_languages`, keeps `original_text`/`corrected_text`/`model_output`; **not** executable by `authenticated`.
+
+**Frontend (Spec 14, after 025 is on staging):** on a Vercel Preview against staging — the menu appears only on received translated bubbles (not own/system/untranslated); good/bad writes+toggles a review; suggest-a-correction writes a correction; the bubble keeps showing `model_output` and the "you suggested a correction" marker reveals the user's text; honest copy (no "sender sees this"). Then merge to `main`.
+
+**Deploy order:** migration 025 (staging → prod) → wire `server/lib/deletion.js` anonymize call → Spec 14 frontend. Docs to reconcile on ship: roadmap Phase 4 checkboxes, architecture §7 "Live tables at a glance" (move the two tables up once on prod), regenerate `schema.sql` (CI on migration merge), decisions.md already has the design entry (2026-07-28).
+
+---
+
 ## Changelog
 
 *Reverse chronological. One line per change; project events link to `decisions.md`.*
 
+- **2026-07-28** — Added "Phase 4 — Corrections capture" gate section (migration 025 backend gate `corrections-gate-test.mjs` + Spec 14 frontend checks; pending staging). (→ decisions.md 2026-07-28)
 - **2026-07-16** — Added "Spec 11 — Add-to-conversation + system message" section (migration 023 + frontend built Cowork; local build GREEN; migration + staging smoke pending). (→ specs.md Spec 11)
 - **2026-07-16** — Added "Spec 12 — Group-chat sender attribution" section (built Cowork, frontend-only; local build GREEN; staging GREEN). (→ specs.md Spec 12)
 

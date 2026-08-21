@@ -9,6 +9,41 @@
 
 ---
 
+## Spec 14 — Corrections capture UI (Phase 4) — Cursor/Sonnet-executed
+
+**Linked roadmap item:** Phase 4 — Corrections capture → "Capture UI" (build-now block)
+**Author:** Isaac (with Cowork)
+**Drafted:** 2026-07-28
+**Status:** **draft — approved for Cursor** once migration 025 is on staging. Backend (migration 025 + RPCs) is Cowork-built and Isaac-run on staging first; this spec is the **frontend** that calls the RPCs. Design + rejected alternatives: decisions.md 2026-07-28.
+
+### Goal
+Give users a way to signal translation quality and suggest corrections, feeding the Phase 4 corpus — **without** overwriting what the app shows and **without** using thumbs (which collide with the future message-reactions feature). Two write paths, both already built server-side in migration 025: good/bad → `record_review`; inline correction → `record_correction`.
+
+### Preconditions (backend, migration 025 — Isaac-run on staging first)
+- Tables `translation_corrections` / `translation_reviews` + RLS (SELECT-own, RPC-only writes).
+- RPCs: `record_correction(p_message_id, p_target_language, p_corrected_text, p_context DEFAULT NULL, p_source DEFAULT 'user_edit')`, `record_review(p_message_id, p_target_language, p_rating)` (rating `'good'|'bad'|NULL`-to-clear). Both membership-gated; both assemble the snapshot server-side — **the client passes only ids + the corrected text / rating**, never snapshot fields.
+
+### Acceptance criteria — UI (Cursor)
+- **Affordance surface.** On **received, translated** message bubbles only (not own messages, not same-language untranslated, not `kind='system'`): a **context menu** opens on hover (desktop) / long-press or tap (mobile). Do **not** add thumb buttons to the bubble. Reuse lucide-react icons.
+- **Menu contents (in order):** (1) a **reserved reactions row placeholder** — leave a clearly-marked empty slot / TODO for the future message-reactions feature (parking-lot); do **not** build reactions now. (2) **Good translation** / (3) **Bad translation** → call `recordReview(messageId, targetLang, 'good'|'bad')`; re-selecting the same one clears it (`null`). (4) **Suggest a correction** → opens the editor.
+- **Correction editor.** Opening it **auto-expands the original** (reuse the existing source-text disclosure in `MessageBubble`) and turns the translation into an editable field **pre-filled with the current translation**. Save → `recordCorrection(messageId, targetLang, correctedText)`; Cancel discards. Trim empty → disabled save.
+- **Canonical translation is never replaced.** After a correction is saved, the bubble **still shows `model_output`** (what the app translated). Surface the user's submission only as a small **tap-to-reveal marker** ("You suggested a correction" → reveals their text). The corrected text must **not** become the displayed translation, and must not be sent to anyone.
+- **Honest copy.** Confirmation is a soft "Thanks — this helps improve translations." Do **not** imply the sender sees it or that future translations will use it (not true in Phase 4).
+- **`bad` → correction funnel (nice-to-have).** After a "Bad translation" tap, offer a one-tap "Suggest a fix →" that opens the editor. Low priority; fine to skip in v1.
+- **Data layer.** Add `recordCorrection` / `recordReview` wrappers (e.g. `src/lib/corrections.js`) calling `supabase.rpc(...)`. Handle the RPC error surface (not-a-member, no-cached-translation) gracefully — inline, non-blocking.
+- **Own-state.** A user's existing good/bad and "you suggested a correction" markers should reflect their own rows (RLS SELECT-own already permits reading them) — at minimum show optimistic local state for the current session; persisting-across-reload can piggyback on a later enrichment pass.
+
+### Out of scope
+Message reactions themselves (reserved slot only — parking-lot); showing *other* users' corrections/reactions; any consumption of corrections (retrieval/clustering/filter — deferred); the sender-side "here's how your message was translated — fix it" surface (parking-lot idea); persisting cross-device correction/review state via a list-enrichment RPC (later).
+
+### Files (expected)
+`src/components/MessageBubble.jsx` (menu + editor + marker; branch off received-translated), `src/components/ConversationView.jsx` (if the menu is hoisted), `src/lib/corrections.js` (new — RPC wrappers), possibly `src/App.jsx` (wire session state). No schema/migration changes here (025 owns those).
+
+### Verification plan (→ verification.md)
+After 025 is on staging: menu appears only on received translated bubbles; good/bad writes + toggles a `translation_reviews` row; suggest-a-correction writes a `translation_corrections` row with a correct server-assembled snapshot; the bubble keeps showing `model_output` (DB `message_translations` unchanged); a non-member / direct-client write is rejected (covered by `scripts/corrections-gate-test.mjs`). Frontend on staging (Vercel Preview) before merge to `main`.
+
+---
+
 ## Spec 13 — Group naming (smart default + user-set title) — Cowork-built (migration 024 = Isaac-run on staging)
 
 **Linked roadmap item:** Phase 2.5 — Group-chat polish → name conversations / groups (promoted from parking-lot)
@@ -851,6 +886,7 @@ The earlier Resume notes section (session 1, 2026-05-21) was built on a misdiagn
 
 *Reverse chronological. One line per change; project events link to `decisions.md`.*
 
+- **2026-07-28** — Added **Spec 14 — Corrections capture UI** (Phase 4): hold/hover context menu (reserved reactions slot, good/bad → `record_review`, suggest-a-correction → `record_correction`), correction editor that never overwrites the canonical translation, tap-to-reveal marker. Cursor/Sonnet-executed after migration 025 is on staging. (→ roadmap.md Phase 4; decisions.md 2026-07-28)
 - **2026-07-16** — Added Spec 11 (add-to-conversation: search-to-add + "X was added" system message + migration 023 `messages.kind`+`payload`/`add_conversation_member`/direct→group) + Spec 12 (group-chat sender attribution, avatar+name Option B, 12-color hash + within-conversation de-collision) for new roadmap Phase 2.5; both from 3-user testing, **approved 2026-07-16, Cowork-built** (migration 023 Isaac-run on staging). Open questions resolved: system-message storage → `messages` column, add policy → open direct-add, color keying → `account_id`. (→ roadmap.md Phase 2.5)
 - **2026-07-07** — Added Spec 8 (onboarding language list: ~40 native-name languages) + Spec 9 (core-controls symbology via lucide-react) for roadmap Phase 2.4; both Cursor/Sonnet-executed. (→ roadmap.md Phase 2.4)
 - **2026-07-07** — Docs legibility cleanup: header de-blobbed; added this Changelog + a "mostly historical" banner. (→ decisions.md 2026-07-07 "Docs legibility cleanup + new conventions")

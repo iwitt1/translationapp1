@@ -37,6 +37,15 @@ Every mainstream messenger lets you name a group and shows a sensible name when 
 - **Smart default for unnamed groups.** Today an unnamed group — including a `direct` just promoted to `group` by Spec 11 — displays the literal "Group". Instead fall back to a comma-joined list of the **other** members' display names ("Ana, Kenji, Cai"), truncated for long lists ("Ana, Kenji +3") — the WhatsApp/iMessage convention. Cheap frontend-only change in `loadConversations()`'s `displayName` computation (`otherNames.join(', ')`); immediately fixes the Spec 11 "promoted group shows 'Group'" rough edge. A user-set title, when present, always wins.
 - **Surfaced:** 2026-07-16 (Isaac), alongside the Spec 11 add-member work.
 
+### Message reactions (iMessage/WhatsApp-style tapbacks)
+**Priority:** Med · **Blocks:** none
+
+Let a member react to a message with an emoji/tapback (❤️👍😂…), shown on the bubble and aggregated per reaction. Every mainstream messenger has this; expected behavior.
+- **Why interesting:** Standard chat affordance; also the reason the Phase 4 correction UI uses a **hold/hover context menu with a reserved reactions row** rather than thumb buttons — thumbs would collide with reactions (decisions.md 2026-07-28). Building the menu scaffold in Phase 4 means reactions drop into the reserved slot without reworking the interaction.
+- **Shape (when built):** a `message_reactions` table (message_id, account_id, emoji, tenant_id), membership-scoped RLS, written via RPC; reactions ride the existing `messages` realtime channel or their own. Distinct axis from translation feedback (reaction = response to *what was said*; good/bad = judgment of *how it was rendered*).
+- **Surfaced:** 2026-07-28 (Isaac), during the Phase 4 capture-UI design.
+- **Trigger:** consumer chat polish pass, or when the reserved menu slot is ready to fill.
+
 ### Conversation threads (multiple topic-chats within one group)
 **Priority:** Low · **Blocks:** none
 
@@ -221,6 +230,15 @@ codebase with zero fork, ~1.5–2 days for a demo-grade shell (push excluded).
 
 ## Known technical debt
 
+### `message_translations.model` — model not per-translation reconstructable
+**Priority:** Low · **Blocks:** none
+
+`message_translations` stores `prompt_version` but **not** `model`; `translation_events` has `model_used` but no `message_id` — so which model produced a given cached translation isn't reconstructable from the DB. Phase 4 corrections work around it: `prompt_version` is the reproducibility/staleness anchor and `translation_corrections.model` / `translation_reviews.model` are best-effort nullable (left NULL by the RPCs). Surfaced 2026-07-28 (decisions.md).
+- **Why interesting:** For fine-tuning / staleness analysis it's cleaner to know the exact model, not just the prompt version (they mostly move together but not perfectly). A cached translation should be self-describing.
+- **Sketch:** add `message_translations.model text` (additive), populate it on the translate write path (`App.jsx` / `translation.js` upsert), and have `record_correction`/`record_review` snapshot it. Backfill NULL for pre-existing rows. Optionally add `translation_events.message_id` so events link to messages too.
+- **Trigger:** first fine-tune or a corpus analysis that needs per-pair model attribution; or any other reason the translate write path is touched.
+- **Surfaced:** 2026-07-28, Phase 4 corrections design.
+
 ### Phase 3 conversation-aware frontend — follow-ups (deferred from the 2026-06-12 build)
 **Priority:** Med · **Blocks:** none
 
@@ -362,6 +380,33 @@ The `messages`-on-realtime-publication item was originally configured via the Su
 ---
 
 ## Translation quality and intelligence
+
+### Corrections pooling — abstract the learning from the utterance (method B)
+**Priority:** Med · **Blocks:** none
+
+The transferable value of a correction is usually a *pattern* ("no seas payaso → idiomatic, not 'don't be a clown'"; "usted required in professional es-AR"), not the specific sentence, which may carry names or proprietary content. Extracting the pattern lets a learning flow to the **global pool** even when the raw utterance can't leave its tenant. This is method **B** from the Phase 4 ownership design (decisions.md 2026-07-28); Phase 4 shipped method **A** (coarse `ownership` flag) and structured the rows so B slots in without a migration.
+- **Why interesting:** It's how cross-tenant learning becomes safe at B2B scale — share the *rule*, not the confidential text. Aligned with the trojan-horse "build for the API's customers" ethos.
+- **Shape (when built):** a processing pass (LLM or rules) over `translation_corrections` that emits a de-identified pattern record (idiom/register/dialect mapping) into a separate poolable store; the raw row stays tenant-scoped.
+- **Trigger:** first B2B tenant with confidential data, or the corpus is large enough that pattern-mining beats raw-pair retrieval.
+- **Surfaced:** 2026-07-28 (Isaac), Phase 4 cross-tenant sharing design.
+
+### Corrections pooling — PII scrub at pool-build (method C)
+**Priority:** Med · **Blocks:** none
+
+Before a correction (or its `conversation_history` snapshot) enters the shared training/retrieval pool, run a PII / named-entity scrub so the pooled version carries the linguistic signal without third-party identifiers. Method **C** from the Phase 4 ownership design (decisions.md 2026-07-28). Specifically handles the `conversation_history` field — retained on the row for replay/debug, but the first thing scrubbed before pooling.
+- **Why interesting:** The history embeds other participants' message text (the most likely place for PII); pooling it raw is a privacy risk. Scrub-at-pool-build keeps raw fidelity per-tenant while making a safe shared copy.
+- **Shape (when built):** the pool-build job filters `ownership IN ('platform','shared') AND tenants.training_data_agreement`, then NER-scrubs text fields into the pooled dataset. Pairs with method B.
+- **Trigger:** the pool is actually built (first few-shot retrieval or fine-tune run), or a B2B tenant requires it.
+- **Surfaced:** 2026-07-28 (Isaac), Phase 4 cross-tenant sharing design.
+
+### Correction spam / quality filter (data-poisoning defense)
+**Priority:** Med · **Blocks:** activation of corrections into live translation (close before few-shot retrieval or fine-tune uses the corpus)
+
+User-submitted corrections are an attack surface — someone can submit a *worse* or malicious "correction" to poison the corpus. Filtering happens **before** a correction enters the training/retrieval pool (capture stays append-only + unfiltered so nothing is lost); the seam is the `translation_corrections.pool_status` column (`unreviewed`→`accepted`/`rejected`/`spam`) shipped in migration 025, so the filter needs no migration.
+- **Mechanisms (when built):** bilingual weighting (trust native-both-languages `corrector_known_languages` over monolingual), cross-corroboration (multiple correctors agree), the parked cross-model AI audit (`translation_reviews` ai_audit), per-user rate limits / reputation, outlier detection. Doing double duty: quality *and* safety (a free-text correction can carry abuse/PII).
+- **Why deferred:** no corpus to filter yet; premature before there's volume and a consumer that reads the pool.
+- **Trigger:** first time the corpus feeds live translation (few-shot retrieval) or a fine-tune — filter before it does.
+- **Surfaced:** 2026-07-28 (Isaac), Phase 4 capture design.
 
 ### Prompt A/B testing framework
 **Priority:** Low · **Blocks:** none
@@ -870,6 +915,7 @@ in*. The two share the word "search" but are different surfaces with different b
 
 *Reverse chronological. One line per change; project events link to `decisions.md`.*
 
+- **2026-07-28** — Phase 4 corrections design spun off four items: **Message reactions** (Med, Product features — the reason the correction UI uses a menu not thumbs); **Corrections pooling — abstract the learning (method B)** + **PII scrub at pool-build (method C)** + **Correction spam/quality filter** (Med, Translation quality); **`message_translations.model` not per-translation reconstructable** (Low, technical debt). (→ decisions.md 2026-07-28 "Phase 4 corrections capture")
 - **2026-07-18** — Added **PWA implementation** (Med) under Product features, referencing the new `pwa-mobile-considerations.md` scoping doc; deferred behind Phase 4 (engagement/usability, not a feature). (→ decisions.md 2026-07-18)
 - **2026-07-07** — Reviewed with Isaac: added invite-to-app + custom-email items (High); promoted the account-settings screen, native-name/expanded languages, and conversation-list realtime to roadmap Phase 2.4; kept UI-localization + language-not-found parked at High; moved the conversation switcher to Resolved (unread + search split out); bumped the RLS-gaps item to High and added the no-RLS-on-`tenants`/event-tables finding. (→ decisions.md 2026-07-07 "Roadmap promotions + RLS gap")
 - **2026-07-07** — Docs legibility cleanup: header de-blobbed; **Priority/Blocks** convention added (reverses the prior "don't prioritize here" rule); resolved/built/promoted items swept into "Resolved & graduated." (→ decisions.md 2026-07-07 "Docs legibility cleanup + new conventions")
