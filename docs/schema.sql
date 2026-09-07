@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 467vxkONQ2tiTGHouWW7hqtbuEX38saM0iM1JxWxDLjZU4WVRkzPySxx1Bhlabs
+\restrict 69Tsy7uQfIGfhU7LXTHZlu9aHdxOPxzQnkiRXC7GvW9l4LJ1em1DuGJ58uiCBqB
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.11 (Ubuntu 17.11-1.pgdg24.04+2)
@@ -3313,6 +3313,26 @@ CREATE POLICY account_settings_update_own ON public.account_settings FOR UPDATE 
 
 
 --
+-- Name: agent_events ae_insert_hermes_writer; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY ae_insert_hermes_writer ON public.agent_events FOR INSERT TO hermes_writer WITH CHECK (true);
+
+
+--
+-- Name: agent_events ae_select_hermes_readonly; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY ae_select_hermes_readonly ON public.agent_events FOR SELECT TO hermes_readonly USING (true);
+
+
+--
+-- Name: agent_events; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.agent_events ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: blocks; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -3546,6 +3566,33 @@ CREATE POLICY tc_select_own ON public.translation_corrections FOR SELECT TO auth
 
 
 --
+-- Name: translation_events te_insert_hermes_writer; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY te_insert_hermes_writer ON public.translation_events FOR INSERT TO hermes_writer WITH CHECK (true);
+
+
+--
+-- Name: translation_events te_select_hermes_readonly; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY te_select_hermes_readonly ON public.translation_events FOR SELECT TO hermes_readonly USING (true);
+
+
+--
+-- Name: tenants; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tenants ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tenants tenants_select_hermes_readonly; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tenants_select_hermes_readonly ON public.tenants FOR SELECT TO hermes_readonly USING (true);
+
+
+--
 -- Name: translation_reviews tr_select_own; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -3557,6 +3604,12 @@ CREATE POLICY tr_select_own ON public.translation_reviews FOR SELECT TO authenti
 --
 
 ALTER TABLE public.translation_corrections ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: translation_events; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.translation_events ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: translation_reviews; Type: ROW SECURITY; Schema: public; Owner: -
@@ -3614,6 +3667,7 @@ GRANT USAGE ON SCHEMA public TO authenticated;
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT USAGE ON SCHEMA public TO hermes_readonly;
 GRANT USAGE ON SCHEMA public TO profile_writer;
+GRANT USAGE ON SCHEMA public TO hermes_writer;
 
 
 --
@@ -3966,8 +4020,6 @@ GRANT SELECT ON TABLE public.account_settings TO hermes_readonly;
 -- Name: TABLE agent_events; Type: ACL; Schema: public; Owner: -
 --
 
-GRANT ALL ON TABLE public.agent_events TO anon;
-GRANT ALL ON TABLE public.agent_events TO authenticated;
 GRANT ALL ON TABLE public.agent_events TO service_role;
 GRANT SELECT ON TABLE public.agent_events TO hermes_readonly;
 GRANT INSERT ON TABLE public.agent_events TO hermes_writer;
@@ -4130,8 +4182,6 @@ GRANT SELECT ON TABLE public.reports TO hermes_readonly;
 -- Name: TABLE tenants; Type: ACL; Schema: public; Owner: -
 --
 
-GRANT ALL ON TABLE public.tenants TO anon;
-GRANT ALL ON TABLE public.tenants TO authenticated;
 GRANT ALL ON TABLE public.tenants TO service_role;
 GRANT SELECT ON TABLE public.tenants TO hermes_readonly;
 
@@ -4140,8 +4190,6 @@ GRANT SELECT ON TABLE public.tenants TO hermes_readonly;
 -- Name: TABLE translation_events; Type: ACL; Schema: public; Owner: -
 --
 
-GRANT ALL ON TABLE public.translation_events TO anon;
-GRANT ALL ON TABLE public.translation_events TO authenticated;
 GRANT ALL ON TABLE public.translation_events TO service_role;
 GRANT SELECT ON TABLE public.translation_events TO hermes_readonly;
 GRANT INSERT ON TABLE public.translation_events TO hermes_writer;
@@ -4331,5 +4379,5 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON T
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 467vxkONQ2tiTGHouWW7hqtbuEX38saM0iM1JxWxDLjZU4WVRkzPySxx1Bhlabs
+\unrestrict 69Tsy7uQfIGfhU7LXTHZlu9aHdxOPxzQnkiRXC7GvW9l4LJ1em1DuGJ58uiCBqB
 
